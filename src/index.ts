@@ -246,8 +246,9 @@ bot.hears("🧮 1RM калькулятор", async (ctx) => {
   s.data = {};
   await ctx.reply(
     `🧮 <b>КАЛЬКУЛЯТОР 1RM</b>\n${HR}\n\n` +
-    `Введи рабочий подход в формате\n<b>вес × повторения</b>\n\n` +
-    `<code>Например:  100×5</code>\n<code>или просто: 90 8</code>`,
+    `<b>Вариант 1</b> — рассчитать по подходу:\n<code>вес × повторения</code>\n<i>Например: 100×5 или 90 8</i>\n\n` +
+    `<b>Вариант 2</b> — ввести известный максимум:\n<code>одно число</code>\n<i>Например: 140 (если делал одиночку)</i>\n\n` +
+    `💡 <i>Для расчёта точнее бери подход на 3–5 повторений.</i>`,
     HTML
   );
 });
@@ -628,25 +629,45 @@ bot.on("message:text", async (ctx) => {
   // ── 1RM input
   if (s.state === "orm_input") {
     const nums = text.replace(/[×xхХ]/g, " ").split(/\s+/).map(Number).filter((n) => !isNaN(n));
-    if (nums.length < 2) {
+    if (nums.length === 0 || nums[0] <= 0) {
       await ctx.reply(
-        `⚠️ Не понял формат.\n\n<i>Нужно:</i> <code>вес × повторения</code>\n<i>Например:</i> <code>100×5</code>`,
+        `⚠️ Не понял.\n\n<i>Расчёт:</i> <code>вес × повторения</code> (напр. 100×5)\n<i>Или известный 1RM:</i> <code>одно число</code> (напр. 140)`,
         HTML
       );
       return;
     }
-    const [weight, reps] = nums;
-    const oneRm = calcOneRm(weight, reps);
+
+    let oneRm: number;
+    let sourceLine: string;
+    let warning = "";
+
+    if (nums.length === 1) {
+      // Прямой ввод известного 1RM
+      oneRm = Math.round(nums[0] * 10) / 10;
+      sourceLine = `Введён известный максимум`;
+    } else {
+      const [weight, reps] = nums;
+      oneRm = calcOneRm(weight, reps);
+      sourceLine = `Расчёт из подхода <code>${weight} кг × ${reps}</code>`;
+      if (reps >= 8) {
+        warning =
+          `\n\n⚠️ <i>${reps} повторений — это тест выносливости. Формула на многоповторке ` +
+          `часто занижает реальный максимум. Для точности возьми подход на 3–5 повторений ` +
+          `или введи известную одиночку одним числом.</i>`;
+      }
+    }
+
     const table = pctTable(oneRm);
     const rows = table
       .map((r) => `${String(r.pct).padStart(3)}%  ${String(r.weightKg).padStart(5)} кг  ×${r.reps}`)
       .join("\n");
     resetSession(userId);
     await ctx.reply(
-      `🧮 <b>РАСЧЁТ 1RM</b>\n${HR}\n\n` +
-      `Из подхода <code>${weight} кг × ${reps}</code>\n\n` +
-      `💪 <b>Твой максимум ≈ ${oneRm} кг</b>\n\n` +
-      `<b>Таблица процентов:</b>\n<code>${rows}</code>`,
+      `🧮 <b>1RM${nums.length === 1 ? "" : " · РАСЧЁТ"}</b>\n${HR}\n\n` +
+      `${sourceLine}\n\n` +
+      `💪 <b>Максимум ${nums.length === 1 ? "" : "≈ "}${oneRm} кг</b>\n\n` +
+      `<b>Таблица процентов:</b>\n<code>${rows}</code>` +
+      warning,
       { reply_markup: MAIN_KEYBOARD, ...HTML }
     );
     return;
