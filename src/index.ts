@@ -204,8 +204,38 @@ bot.command("start", async (ctx) => {
     `🧮 <b>1RM</b> ${DOT} максимум и таблица %\n` +
     `⚖️ <b>Вес тела</b> ${DOT} динамика на графике\n` +
     `📈 <b>Отчёт недели</b> ${DOT} умный анализ прогресса\n\n` +
-    `<i>Каждое воскресенье пришлю сводку автоматически 👇</i>`,
-    { reply_markup: MAIN_KEYBOARD, ...HTML }
+    `<i>Каждое воскресенье пришлю сводку автоматически.</i>`,
+    {
+      reply_markup: { inline_keyboard: [[{ text: "🎓 Я новичок — с чего начать?", callback_data: "guide_start" }]] },
+      ...HTML,
+    }
+  );
+  await ctx.reply(`Меню внизу 👇`, { reply_markup: MAIN_KEYBOARD });
+});
+
+// ── Гид для новичка ─────────────────────────────────────────────────────────
+bot.callbackQuery("guide_start", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `🎓 <b>С ЧЕГО НАЧАТЬ — 3 ШАГА</b>\n${HR}\n\n` +
+    `<b>Шаг 1 ${DOT} Запиши первую тренировку</b>\n` +
+    `Нажми «📝 Записать тренировку», выбери упражнение и введи что сделал. ` +
+    `Например сделал 3 подхода по 8 повторений с весом 40 кг — пиши <code>3×8×40</code>. Всё.\n\n` +
+    `<b>Шаг 2 ${DOT} Получи программу</b>\n` +
+    `Нажми «📋 Программа». Не знаешь термины — не страшно:\n` +
+    `${DOT} выбирай <b>GZCLP</b> — она для новичков\n` +
+    `${DOT} 3 дня в неделю — оптимальный старт\n` +
+    `${DOT} свой максимум (1RM) знать <b>не обязательно</b> — введи рабочий подход, например <code>40×8</code>, бот посчитает сам\n\n` +
+    `<b>Шаг 3 ${DOT} Ходи в зал и жми «✅ Выполнено»</b>\n` +
+    `Бот покажет что делать на каждой тренировке: упражнение, вес, подходы, отдых. ` +
+    `Выполнил — отметил — получил следующую. Прогресс копится сам.\n\n` +
+    `${HR}\n` +
+    `💡 <b>Словарь на старте:</b>\n` +
+    `${DOT} <b>1RM</b> — максимальный вес, который ты можешь поднять 1 раз\n` +
+    `${DOT} <b>Подход (сет)</b> — серия повторений без отдыха\n` +
+    `${DOT} <b>4×8</b> — 4 подхода по 8 повторений\n\n` +
+    `<i>Остальное объясню по ходу — в программе есть кнопка «❓ Как читать».</i>`,
+    HTML
   );
 });
 
@@ -369,7 +399,9 @@ bot.hears("📋 Программа", async (ctx) => {
     await ctx.reply(
       `📋 <b>НОВАЯ ПРОГРАММА</b>\n${HR}\n\n` +
       `Активной программы нет — соберём с нуля.\n\n` +
-      `<b>Шаг 1 ${DOT} Модель периодизации</b>`,
+      `<b>Шаг 1 ${DOT} Выбери схему</b>\n\n` +
+      `🔰 <i>Новичок — бери <b>GZCLP</b>: простая и надёжная.\n` +
+      `Опытный — DUP или 5/3/1.</i>`,
       { reply_markup: modelKeyboard(), ...HTML }
     );
     return;
@@ -598,10 +630,12 @@ bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   s.state = "prog_lift_rm";
 
   await ctx.reply(
-    `🏋️ <b>1RM по движениям</b>\n${HR}\n\n` +
-    `Каждый день считается от своего максимума.\n\n` +
-    `<b>Движение 1/${days} ${DOT} ${esc(s.liftNames[0])}</b>\n` +
-    `<i>Введи 1RM в кг (вес на 1 раз):</i>\n\n<code>Например: 120</code>`,
+    `🏋️ <b>Рабочие веса</b>\n${HR}\n\n` +
+    `Для каждого движения нужен твой максимум (1RM). Два способа:\n\n` +
+    `${DOT} <b>Знаешь максимум</b> — введи одно число: <code>120</code>\n` +
+    `${DOT} <b>Не знаешь</b> — введи любой рабочий подход <code>вес×повторения</code>, ` +
+    `например <code>60×8</code> — посчитаю сам\n\n` +
+    `<b>Движение 1/${days} ${DOT} ${esc(s.liftNames[0])}</b>`,
     HTML
   );
 });
@@ -752,12 +786,34 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ── Program: ввод 1RM по каждому движению
+  // ── Program: ввод 1RM по каждому движению (число или вес×повторения)
   if (s.state === "prog_lift_rm" && s.lifts && s.liftNames && s.liftIdx !== undefined) {
-    const val = parseFloat(text.replace(",", "."));
-    if (isNaN(val) || val < 20 || val > 500) {
-      await ctx.reply(`⚠️ Введи корректный 1RM в кг.\n<i>Например:</i> <code>120</code>`, HTML);
+    const nums = text.replace(",", ".").replace(/[×xхХ]/g, " ").split(/\s+/).map(Number).filter((n) => !isNaN(n) && n > 0);
+    if (nums.length === 0) {
+      await ctx.reply(
+        `⚠️ Не понял.\n\n${DOT} Знаешь максимум: <code>120</code>\n${DOT} Не знаешь: рабочий подход <code>60×8</code>`,
+        HTML
+      );
       return;
+    }
+
+    let val: number;
+    let calcNote = "";
+    if (nums.length >= 2) {
+      // вес × повторения → расчёт 1RM
+      const [w, r] = nums;
+      if (w < 10 || w > 500 || r < 1 || r > 30) {
+        await ctx.reply(`⚠️ Странные числа. Пример: <code>60×8</code> (вес 60 кг, 8 повторений)`, HTML);
+        return;
+      }
+      val = calcOneRm(w, r);
+      calcNote = ` <i>(посчитал из ${w}×${r})</i>`;
+    } else {
+      val = Math.round(nums[0] * 10) / 10;
+      if (val < 20 || val > 500) {
+        await ctx.reply(`⚠️ Введи корректный вес в кг.\n<i>Например:</i> <code>120</code> или <code>60×8</code>`, HTML);
+        return;
+      }
     }
 
     s.lifts.push({ name: s.liftNames[s.liftIdx], oneRmKg: val });
@@ -767,9 +823,9 @@ bot.on("message:text", async (ctx) => {
     if (s.liftIdx < s.liftNames.length) {
       const total = s.liftNames.length;
       await ctx.reply(
-        `✅ ${esc(s.lifts[s.liftIdx - 1].name)}: ${val} кг\n${HR}\n\n` +
+        `✅ ${esc(s.lifts[s.liftIdx - 1].name)}: 1RM ${val} кг${calcNote}\n${HR}\n\n` +
         `<b>Движение ${s.liftIdx + 1}/${total} ${DOT} ${esc(s.liftNames[s.liftIdx])}</b>\n` +
-        `<i>Введи 1RM в кг:</i>`,
+        `<i>Максимум одним числом или подход</i> <code>вес×повторения</code>`,
         HTML
       );
       return;
