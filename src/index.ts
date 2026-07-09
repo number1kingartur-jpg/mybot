@@ -42,6 +42,7 @@ interface UserState {
   lifts?: { name: string; oneRmKg: number }[];
   liftNames?: string[];
   liftIdx?: number;
+  exList?: string[];
 }
 
 // Порядок базовых движений по дням недели
@@ -100,11 +101,33 @@ const MAIN_KEYBOARD = {
   resize_keyboard: true,
 };
 
-const EXERCISE_KEYBOARD = new InlineKeyboard()
-  .text("🦵 Присед", "ex_Присед").text("🏋️ Жим лёжа", "ex_Жим лёжа").row()
-  .text("💀 Становая", "ex_Становая").text("🔺 ОХ жим", "ex_ОХ жим").row()
-  .text("💪 Подтягивания", "ex_Подтягивания").text("🚣 Тяга", "ex_Тяга").row()
-  .text("✏️ Другое упражнение", "ex_custom");
+const PRESET_EXERCISES = ["Присед", "Жим лёжа", "Становая", "ОХ жим", "Подтягивания", "Тяга"];
+const EXERCISE_EMOJI: Record<string, string> = {
+  "Присед": "🦵", "Жим лёжа": "🏋️", "Становая": "💀",
+  "ОХ жим": "🔺", "Подтягивания": "💪", "Тяга": "🚣",
+};
+
+/** Базовые + упражнения из истории пользователя. Коллбэки по индексу (лимит 64 байта). */
+function buildExerciseList(userId: number): string[] {
+  const history = getExercises(userId);
+  const merged: string[] = [...PRESET_EXERCISES];
+  for (const ex of history) {
+    if (!merged.some((m) => m.toLowerCase() === ex.toLowerCase())) merged.push(ex);
+  }
+  return merged.slice(0, 20);
+}
+
+function exerciseKeyboard(list: string[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  list.forEach((ex, i) => {
+    const emoji = EXERCISE_EMOJI[ex];
+    const label = (emoji ? emoji + " " : "") + (ex.length > 26 ? ex.slice(0, 25) + "…" : ex);
+    kb.text(label, `exi_${i}`);
+    if ((i + 1) % 2 === 0) kb.row();
+  });
+  if (list.length % 2 !== 0) kb.row();
+  return kb.text("✏️ Другое упражнение", "exi_custom");
+}
 
 function modelKeyboard() {
   return new InlineKeyboard()
@@ -363,15 +386,50 @@ bot.command("help", async (ctx) => {
 
 // ── Запись тренировки ─────────────────────────────────────────────────────
 bot.hears("📝 Записать тренировку", async (ctx) => {
-  const s = getSession(ctx.from!.id);
+  const userId = ctx.from!.id;
+  const s = getSession(userId);
   s.state = null;
   s.data = {};
+  s.exList = buildExerciseList(userId);
   await ctx.reply(
-    `📝 <b>НОВАЯ ЗАПИСЬ</b>\n${HR}\n\n<i>Выбери упражнение:</i>`,
-    { reply_markup: EXERCISE_KEYBOARD, ...HTML }
+    `📝 <b>НОВАЯ ЗАПИСЬ</b>\n${HR}\n\n` +
+    `💡 <i>Быстрее без кнопок — просто напиши:</i> <code>присед 100 5х5</code>\n\n` +
+    `<i>Или выбери упражнение:</i>`,
+    { reply_markup: exerciseKeyboard(s.exList), ...HTML }
   );
 });
 
+bot.callbackQuery(/^exi_(.+)$/, async (ctx) => {
+  const raw = ctx.match[1];
+  const s = getSession(ctx.from!.id);
+  await ctx.answerCallbackQuery();
+
+  if (raw === "custom") {
+    s.state = "log_exercise_custom";
+    await ctx.reply(`✏️ <b>Своё упражнение</b>\n${HR}\n\n<i>Введи название:</i>`, HTML);
+    return;
+  }
+
+  const list = s.exList ?? buildExerciseList(ctx.from!.id);
+  const exercise = list[parseInt(raw)];
+  if (!exercise) {
+    await ctx.reply("Не нашёл упражнение — нажми «📝 Записать тренировку» заново.");
+    return;
+  }
+
+  s.data.exercise = exercise;
+  s.state = "log_sets";
+  await ctx.reply(
+    `✅ <b>${esc(exercise)}</b>\n${HR}\n\n` +
+    `Введи нагрузку — любой формат:\n\n` +
+    `<code>4×5×120</code> — 4 подхода по 5 на 120 кг\n` +
+    `<code>60х8, 80х5, 100х3</code> — разные веса\n` +
+    `<code>4 подхода по 10 раз 30 кг</code> — словами`,
+    HTML
+  );
+});
+
+// Совместимость со старыми сообщениями, где коллбэк содержит имя упражнения
 bot.callbackQuery(/^ex_(.+)$/, async (ctx) => {
   const raw = ctx.match[1];
   const s = getSession(ctx.from!.id);
@@ -386,9 +444,7 @@ bot.callbackQuery(/^ex_(.+)$/, async (ctx) => {
   s.data.exercise = raw;
   s.state = "log_sets";
   await ctx.reply(
-    `✅ <b>${esc(raw)}</b>\n${HR}\n\n` +
-    `Введи нагрузку в формате\n<b>подходы × повторения × вес</b>\n\n` +
-    `<code>Например:  4×5×120</code>\n<code>или просто: 3 8 100</code>`,
+    `✅ <b>${esc(raw)}</b>\n${HR}\n\nВведи нагрузку, например <code>4×5×120</code>`,
     HTML
   );
 });
