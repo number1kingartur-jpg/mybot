@@ -1,13 +1,18 @@
 import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import https from "https";
+import cron from "node-cron";
 import {
   addWorkout, getWorkouts, getExercises,
-  saveProgram, getActiveProgram, advanceProgramDay,
+  saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
+  checkPr, addBodyweight, getBodyweight,
+  registerUser, getUsers,
 } from "./db";
 import { calcOneRm, pctTable } from "./calc/orm";
 import { calculatePeriodization, type PeriodizationModel, type Goal } from "./calc/periodization";
-import { progressChartUrl } from "./chart";
+import { calc531, calcGzclp, type TemplateResult } from "./calc/templates";
+import { progressChartUrl, bodyweightChartUrl } from "./chart";
+import { buildWeeklyReport } from "./analysis";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -20,12 +25,12 @@ type State =
   | "log_exercise_custom"
   | "log_sets"
   | "orm_input"
+  | "bw_input"
   | "prog_1rm"
   | "prog_model"
   | "prog_goal"
   | "prog_weeks"
   | "prog_days"
-  | "prog_confirm"
   | "progress_exercise";
 
 interface UserState {
@@ -45,12 +50,12 @@ function resetSession(userId: number) {
 // ── Style helpers ───────────────────────────────────────────────────────────
 const HR = "━━━━━━━━━━━━━━━━━━━━";
 const DOT = "·";
+const HTML = { parse_mode: "HTML" as const };
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** ▰▰▰▱▱ прогресс-бар */
 function bar(done: number, total: number, len = 10): string {
   if (total <= 0) return "";
   const filled = Math.max(0, Math.min(len, Math.round((done / total) * len)));
@@ -66,13 +71,22 @@ const MODEL_LABELS: Record<string, string> = {
   dup: "DUP · ежедневная волна",
   linear: "Линейная прогрессия",
   wave: "Волновая нагрузка",
+  "531": "5/3/1 · Wendler",
+  gzclp: "GZCLP · линейная",
 };
+
+const MENU_BUTTONS = [
+  "📝 Записать тренировку", "📊 Прогресс",
+  "📋 Программа", "🧮 1RM калькулятор",
+  "⚖️ Вес тела", "📈 Отчёт недели",
+];
 
 // ── Keyboards ──────────────────────────────────────────────────────────────
 const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: "📝 Записать тренировку" }, { text: "📊 Прогресс" }],
     [{ text: "📋 Программа" }, { text: "🧮 1RM калькулятор" }],
+    [{ text: "⚖️ Вес тела" }, { text: "📈 Отчёт недели" }],
   ],
   resize_keyboard: true,
 };
@@ -87,7 +101,9 @@ function modelKeyboard() {
   return new InlineKeyboard()
     .text("🌊 DUP · ежедневная волна", "pm_dup").row()
     .text("📈 Линейная прогрессия", "pm_linear").row()
-    .text("〰️ Волновая нагрузка", "pm_wave");
+    .text("〰️ Волновая нагрузка", "pm_wave").row()
+    .text("🏆 5/3/1 · Wendler", "pm_531").row()
+    .text("🔩 GZCLP · для новичков+", "pm_gzclp");
 }
 
 function goalKeyboard() {
@@ -112,13 +128,26 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-interface Sess {
-  day: number; focus: string; intensity: number;
-  sets: number; reps: number; weightKg: number; rpe: number;
+const TEMPLATE_MODELS = new Set(["531", "gzclp"]);
+
+function buildProgram(
+  model: string,
+  input: { oneRmKg: number; weeks: number; daysPerWeek: number; goal: Goal }
+): TemplateResult {
+  if (model === "531") return calc531(input);
+  if (model === "gzclp") return calcGzclp(input);
+  return calculatePeriodization({ ...input, model: model as PeriodizationModel });
 }
 
-/** Красивая карточка тренировочной сессии */
+interface Sess {
+  day: number; focus: string; intensity: number;
+  sets: number; reps: number; weightKg: number; rpe: number; detail?: string;
+}
+
 function formatSession(sess: Sess): string {
+  if (sess.detail) {
+    return `🎯 <b>${esc(sess.focus)}</b>\n<code>${esc(sess.detail)}</code>\n<i>RPE ${sess.rpe}</i>`;
+  }
   return (
     `🎯 <b>${esc(sess.focus)}</b>\n` +
     `<code>Нагрузка   ${sess.sets} × ${sess.reps} @ ${sess.weightKg} кг</code>\n` +
@@ -138,21 +167,22 @@ async function fetchImageBuffer(url: string): Promise<Buffer> {
   });
 }
 
-const HTML = { parse_mode: "HTML" as const };
-
 // ── /start ────────────────────────────────────────────────────────────────
 bot.command("start", async (ctx) => {
   resetSession(ctx.from!.id);
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
   await ctx.reply(
     `<b>💎 STRENGTH LAB</b>\n` +
     `<i>Твой личный тренировочный штаб</i>\n` +
     `${HR}\n\n` +
-    `Привет, <b>Артур</b>. Здесь всё для системной работы:\n\n` +
-    `📝 <b>Запись тренировок</b> ${DOT} лог сетов и весов\n` +
-    `📊 <b>Прогресс</b> ${DOT} графики и рекорды\n` +
-    `📋 <b>Программа</b> ${DOT} периодизация по неделям\n` +
-    `🧮 <b>1RM</b> ${DOT} расчёт максимума и %\n\n` +
-    `<i>Выбери действие в меню ниже 👇</i>`,
+    `Привет, <b>${esc(ctx.from?.first_name ?? "атлет")}</b>. Всё для системной работы:\n\n` +
+    `📝 <b>Запись тренировок</b> ${DOT} лог + детект рекордов\n` +
+    `📊 <b>Прогресс</b> ${DOT} графики и PR\n` +
+    `📋 <b>Программа</b> ${DOT} DUP, 5/3/1, GZCLP по неделям\n` +
+    `🧮 <b>1RM</b> ${DOT} максимум и таблица %\n` +
+    `⚖️ <b>Вес тела</b> ${DOT} динамика на графике\n` +
+    `📈 <b>Отчёт недели</b> ${DOT} умный анализ прогресса\n\n` +
+    `<i>Каждое воскресенье пришлю сводку автоматически 👇</i>`,
     { reply_markup: MAIN_KEYBOARD, ...HTML }
   );
 });
@@ -175,10 +205,7 @@ bot.callbackQuery(/^ex_(.+)$/, async (ctx) => {
 
   if (raw === "custom") {
     s.state = "log_exercise_custom";
-    await ctx.reply(
-      `✏️ <b>Своё упражнение</b>\n${HR}\n\n<i>Введи название:</i>`,
-      HTML
-    );
+    await ctx.reply(`✏️ <b>Своё упражнение</b>\n${HR}\n\n<i>Введи название:</i>`, HTML);
     return;
   }
 
@@ -203,6 +230,26 @@ bot.hears("🧮 1RM калькулятор", async (ctx) => {
     `<code>Например:  100×5</code>\n<code>или просто: 90 8</code>`,
     HTML
   );
+});
+
+// ── Вес тела ───────────────────────────────────────────────────────────────
+bot.hears("⚖️ Вес тела", async (ctx) => {
+  const s = getSession(ctx.from!.id);
+  s.state = "bw_input";
+  s.data = {};
+  const bw = getBodyweight(1);
+  const last = bw.length ? `\n\n<i>Последняя запись: ${bw[bw.length - 1].weightKg} кг</i>` : "";
+  await ctx.reply(
+    `⚖️ <b>ВЕС ТЕЛА</b>\n${HR}\n\n` +
+    `Введи текущий вес в кг:\n\n<code>Например: 82.5</code>${last}`,
+    HTML
+  );
+});
+
+// ── Отчёт недели ─────────────────────────────────────────────────────────
+bot.hears("📈 Отчёт недели", async (ctx) => {
+  resetSession(ctx.from!.id);
+  await ctx.reply(buildWeeklyReport(), { reply_markup: MAIN_KEYBOARD, ...HTML });
 });
 
 // ── Прогресс ──────────────────────────────────────────────────────────────
@@ -260,12 +307,9 @@ bot.callbackQuery(/^prg_(.+)$/, async (ctx) => {
 
   if (entries.length >= 2) {
     try {
-      const url = progressChartUrl(entries);
-      const buf = await fetchImageBuffer(url);
+      const buf = await fetchImageBuffer(progressChartUrl(entries));
       await ctx.replyWithPhoto(new InputFile(buf, "progress.png"));
-    } catch {
-      // Chart fetch failed — skip
-    }
+    } catch { /* skip */ }
   }
 });
 
@@ -301,7 +345,8 @@ bot.hears("📋 Программа", async (ctx) => {
     .text("✅ Выполнено", "prog_done")
     .text("⏭ Пропустить", "prog_skip")
     .row()
-    .text("📄 Вся программа", "prog_full");
+    .text("📄 Вся программа", "prog_full")
+    .text("🗑 Сбросить", "prog_reset");
 
   const totalDays = prog.weeks * prog.daysPerWeek;
   const doneDays = (prog.currentWeek - 1) * prog.daysPerWeek + (prog.currentDay - 1);
@@ -312,7 +357,7 @@ bot.hears("📋 Программа", async (ctx) => {
 
   await ctx.reply(
     `📋 <b>${esc(MODEL_LABELS[prog.model] ?? prog.model)}</b>\n` +
-    `<i>${GOAL_LABELS[prog.goal] ?? prog.goal} ${DOT} 1RM ${prog.oneRmKg} кг</i>\n` +
+    `<i>1RM ${prog.oneRmKg} кг</i>\n` +
     `${HR}\n\n` +
     `${bar(doneDays, totalDays)}  ${pct}%\n` +
     `<i>Неделя ${prog.currentWeek}/${prog.weeks} ${DOT} День ${prog.currentDay}</i>${phaseTag}\n\n` +
@@ -373,6 +418,15 @@ bot.callbackQuery("prog_skip", async (ctx) => {
   );
 });
 
+bot.callbackQuery("prog_reset", async (ctx) => {
+  await ctx.answerCallbackQuery("Программа сброшена");
+  deactivatePrograms();
+  await ctx.reply(
+    `🗑 <b>Программа сброшена</b>\n${HR}\n\n<i>Открой «📋 Программа», чтобы собрать новую.</i>`,
+    { reply_markup: MAIN_KEYBOARD, ...HTML }
+  );
+});
+
 bot.callbackQuery("prog_full", async (ctx) => {
   await ctx.answerCallbackQuery();
   const prog = getActiveProgram();
@@ -389,35 +443,39 @@ bot.callbackQuery("prog_full", async (ctx) => {
       w.week === prog.deloadWeek ? "  💤 РАЗГРУЗКА" : "";
     lines.push(`\n<b>◆ Неделя ${w.week}</b>${mark}`);
     for (const s of w.sessions) {
-      lines.push(
-        `<code>Д${s.day} ${esc(s.focus).padEnd(12)} ${s.sets}×${s.reps} @ ${s.weightKg}кг RPE${s.rpe}</code>`
-      );
+      const load = s.detail ? esc(s.detail.split("\n")[0]) : `${s.sets}×${s.reps} @ ${s.weightKg}кг`;
+      lines.push(`<code>Д${s.day} ${esc(s.focus)} — ${load}</code>`);
     }
   }
 
   const chunks: string[] = [];
   let cur = "";
   for (const line of lines) {
-    if ((cur + line + "\n").length > 3800) {
-      chunks.push(cur);
-      cur = line + "\n";
-    } else {
-      cur += line + "\n";
-    }
+    if ((cur + line + "\n").length > 3800) { chunks.push(cur); cur = line + "\n"; }
+    else cur += line + "\n";
   }
   if (cur) chunks.push(cur);
-
-  for (const chunk of chunks) {
-    await ctx.reply(chunk, HTML);
-  }
+  for (const chunk of chunks) await ctx.reply(chunk, HTML);
 });
 
 // ── Callback: создание программы ─────────────────────────────────────────
 bot.callbackQuery(/^pm_(.+)$/, async (ctx) => {
   const s = getSession(ctx.from!.id);
   s.data.model = ctx.match[1];
-  s.state = "prog_goal";
   await ctx.answerCallbackQuery();
+
+  if (TEMPLATE_MODELS.has(String(s.data.model))) {
+    // Шаблоны не требуют выбора цели — сразу к длительности
+    s.data.goal = "strength";
+    s.state = "prog_weeks";
+    await ctx.reply(
+      `📅 <b>Длительность</b>\n${HR}\n\n<i>Сколько недель? (5/3/1 округлится до циклов по 4)</i>`,
+      { reply_markup: weeksKeyboard(), ...HTML }
+    );
+    return;
+  }
+
+  s.state = "prog_goal";
   await ctx.reply(
     `🎯 <b>Шаг 2/4 ${DOT} Цель</b>\n${HR}\n\n<i>Что тренируем в приоритете?</i>`,
     { reply_markup: goalKeyboard(), ...HTML }
@@ -452,15 +510,16 @@ bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
 
   const { model, goal, weeks, daysPerWeek, oneRm } = s.data as {
-    model: PeriodizationModel; goal: Goal; weeks: number; daysPerWeek: number; oneRm: number;
+    model: string; goal: Goal; weeks: number; daysPerWeek: number; oneRm: number;
   };
 
-  const result = calculatePeriodization({ oneRmKg: oneRm, weeks, daysPerWeek, model, goal });
+  const result = buildProgram(model, { oneRmKg: oneRm, weeks, daysPerWeek, goal });
+  const actualWeeks = result.weeks.length;
 
   saveProgram({
     model, goal,
     oneRmKg: oneRm,
-    weeks,
+    weeks: actualWeeks,
     daysPerWeek,
     weeksData: result.weeks,
     peakWeek: result.peakWeek,
@@ -473,11 +532,12 @@ bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   const firstSession = result.weeks[0]?.sessions[0];
   resetSession(ctx.from!.id);
 
+  const goalLine = TEMPLATE_MODELS.has(model) ? "" : `<code>Цель       ${esc(GOAL_LABELS[goal] ?? goal)}</code>\n`;
   await ctx.reply(
     `✨ <b>ПРОГРАММА ГОТОВА</b>\n${HR}\n\n` +
     `<code>Модель     ${esc(MODEL_LABELS[model] ?? model)}</code>\n` +
-    `<code>Цель       ${esc(GOAL_LABELS[goal] ?? goal)}</code>\n` +
-    `<code>Объём      ${weeks} нед × ${daysPerWeek} дн</code>\n` +
+    goalLine +
+    `<code>Объём      ${actualWeeks} нед × ${daysPerWeek} дн</code>\n` +
     `<code>База 1RM   ${oneRm} кг</code>\n\n` +
     `${HR}\n<b>🚀 Первая тренировка</b>\n\n` +
     (firstSession ? formatSession(firstSession) : ""),
@@ -491,9 +551,7 @@ bot.on("message:text", async (ctx) => {
   const s = getSession(userId);
   const text = ctx.message.text.trim();
 
-  if (text.startsWith("/") || ["📝 Записать тренировку", "📊 Прогресс", "📋 Программа", "🧮 1RM калькулятор"].includes(text)) {
-    return;
-  }
+  if (text.startsWith("/") || MENU_BUTTONS.includes(text)) return;
 
   // ── Custom exercise name
   if (s.state === "log_exercise_custom") {
@@ -501,8 +559,7 @@ bot.on("message:text", async (ctx) => {
     s.state = "log_sets";
     await ctx.reply(
       `✅ <b>${esc(text)}</b>\n${HR}\n\n` +
-      `Введи нагрузку в формате\n<b>подходы × повторения × вес</b>\n\n` +
-      `<code>Например:  4×5×120</code>`,
+      `Введи нагрузку в формате\n<b>подходы × повторения × вес</b>\n\n<code>Например:  4×5×120</code>`,
       HTML
     );
     return;
@@ -520,15 +577,24 @@ bot.on("message:text", async (ctx) => {
     }
     const [sets, reps, weightKg] = nums;
     const exercise = String(s.data.exercise);
+
+    const pr = checkPr(exercise, weightKg, reps);
     addWorkout({ date: today(), exercise, sets, reps, weightKg });
     resetSession(userId);
 
-    const est1rm = calcOneRm(weightKg, reps);
+    let prBanner = "";
+    if (pr.isWeightPr) {
+      prBanner = `\n\n🏆 <b>НОВЫЙ РЕКОРД ВЕСА!</b>\n<i>Прошлый лучший: ${pr.prevBestWeight} кг → теперь ${weightKg} кг</i>`;
+    } else if (pr.isE1rmPr) {
+      prBanner = `\n\n🥇 <b>РЕКОРД ПО СИЛЕ!</b>\n<i>Расчётный 1RM: ${pr.prevBestE1rm} → ${pr.e1rm} кг</i>`;
+    }
+
     await ctx.reply(
       `✅ <b>ЗАПИСАНО</b>\n${HR}\n\n` +
       `🎯 <b>${esc(exercise)}</b>\n` +
       `<code>${sets} × ${reps} @ ${weightKg} кг</code>\n` +
-      `<code>≈ 1RM ${est1rm} кг</code>`,
+      `<code>≈ 1RM ${pr.e1rm} кг</code>` +
+      prBanner,
       { reply_markup: MAIN_KEYBOARD, ...HTML }
     );
     return;
@@ -561,25 +627,64 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
+  // ── Bodyweight input
+  if (s.state === "bw_input") {
+    const val = parseFloat(text.replace(",", "."));
+    if (isNaN(val) || val < 30 || val > 300) {
+      await ctx.reply(`⚠️ Введи корректный вес в кг.\n<i>Например:</i> <code>82.5</code>`, HTML);
+      return;
+    }
+    addBodyweight(val);
+    const bw = getBodyweight(30);
+    resetSession(userId);
+
+    let deltaLine = "";
+    if (bw.length >= 2) {
+      const d = Math.round((bw[bw.length - 1].weightKg - bw[0].weightKg) * 10) / 10;
+      const arrow = d > 0 ? `📈 +${d}` : d < 0 ? `📉 ${d}` : "➡️ 0";
+      deltaLine = `\n<i>Динамика за период: ${arrow} кг</i>`;
+    }
+
+    await ctx.reply(
+      `⚖️ <b>ВЕС ЗАПИСАН</b>\n${HR}\n\n<b>${val} кг</b>${deltaLine}`,
+      { reply_markup: MAIN_KEYBOARD, ...HTML }
+    );
+
+    if (bw.length >= 2) {
+      try {
+        const buf = await fetchImageBuffer(bodyweightChartUrl(bw));
+        await ctx.replyWithPhoto(new InputFile(buf, "bodyweight.png"));
+      } catch { /* skip */ }
+    }
+    return;
+  }
+
   // ── Program: 1RM
   if (s.state === "prog_1rm") {
-    const val = parseFloat(text);
+    const val = parseFloat(text.replace(",", "."));
     if (isNaN(val) || val < 20) {
-      await ctx.reply(
-        `⚠️ Введи корректный вес.\n<i>Например:</i> <code>120</code>`,
-        HTML
-      );
+      await ctx.reply(`⚠️ Введи корректный вес.\n<i>Например:</i> <code>120</code>`, HTML);
       return;
     }
     s.data.oneRm = val;
     s.state = "prog_model";
     await ctx.reply(
-      `🌊 <b>Шаг 1/4 ${DOT} Модель</b>\n${HR}\n\n<i>Выбери схему периодизации:</i>`,
+      `🌊 <b>Шаг 1 ${DOT} Модель</b>\n${HR}\n\n<i>Выбери схему периодизации:</i>`,
       { reply_markup: modelKeyboard(), ...HTML }
     );
     return;
   }
 });
+
+// ── Авто-сводка по воскресеньям (18:00 Бангкок) ───────────────────────────
+cron.schedule("0 18 * * 0", async () => {
+  const report = buildWeeklyReport();
+  for (const u of getUsers()) {
+    try {
+      await bot.api.sendMessage(u.chatId, report, HTML);
+    } catch { /* пользователь заблокировал бота — пропускаем */ }
+  }
+}, { timezone: "Asia/Bangkok" });
 
 // ── Start polling ─────────────────────────────────────────────────────────
 bot.start({
