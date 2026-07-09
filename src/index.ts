@@ -9,6 +9,7 @@ import {
   registerUser, getUsers,
 } from "./db";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
+import { CATALOG } from "./exercises";
 import { transcribeVoice, voiceEnabled } from "./voice";
 import { calcOneRm, pctTable } from "./calc/orm";
 import { calculatePeriodization, type PeriodizationModel, type Goal, type GenResult } from "./calc/periodization";
@@ -126,7 +127,38 @@ function exerciseKeyboard(list: string[]): InlineKeyboard {
     if ((i + 1) % 2 === 0) kb.row();
   });
   if (list.length % 2 !== 0) kb.row();
-  return kb.text("✏️ Другое упражнение", "exi_custom");
+  return kb.text("📚 Все упражнения", "exi_custom");
+}
+
+function categoryKeyboard(): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  CATALOG.forEach((cat, i) => {
+    kb.text(`${cat.emoji} ${cat.name}`, `excat_${i}`);
+    if ((i + 1) % 2 === 0) kb.row();
+  });
+  if (CATALOG.length % 2 !== 0) kb.row();
+  return kb.text("✏️ Ввести название вручную", "excat_manual");
+}
+
+function categoryExercisesKeyboard(catIdx: number): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  CATALOG[catIdx].items.forEach((ex, i) => {
+    kb.text(ex, `cex_${catIdx}_${i}`);
+    if ((i + 1) % 2 === 0) kb.row();
+  });
+  if (CATALOG[catIdx].items.length % 2 !== 0) kb.row();
+  return kb.text("⬅️ Категории", "exi_custom");
+}
+
+async function promptLoad(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, exercise: string) {
+  await ctx.reply(
+    `✅ <b>${esc(exercise)}</b>\n${HR}\n\n` +
+    `Введи нагрузку — любой формат:\n\n` +
+    `<code>4×5×120</code> — 4 подхода по 5 на 120 кг\n` +
+    `<code>60х8, 80х5, 100х3</code> — разные веса\n` +
+    `<code>4 подхода по 10 раз 30 кг</code> — словами`,
+    HTML
+  );
 }
 
 function modelKeyboard() {
@@ -405,8 +437,11 @@ bot.callbackQuery(/^exi_(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
 
   if (raw === "custom") {
-    s.state = "log_exercise_custom";
-    await ctx.reply(`✏️ <b>Своё упражнение</b>\n${HR}\n\n<i>Введи название:</i>`, HTML);
+    // Каталог по категориям вместо ручного ввода
+    await ctx.reply(
+      `📚 <b>КАТАЛОГ УПРАЖНЕНИЙ</b>\n${HR}\n\n<i>Выбери группу:</i>`,
+      { reply_markup: categoryKeyboard(), ...HTML }
+    );
     return;
   }
 
@@ -419,14 +454,39 @@ bot.callbackQuery(/^exi_(.+)$/, async (ctx) => {
 
   s.data.exercise = exercise;
   s.state = "log_sets";
+  await promptLoad(ctx, exercise);
+});
+
+// Каталог: выбор категории
+bot.callbackQuery(/^excat_(.+)$/, async (ctx) => {
+  const raw = ctx.match[1];
+  const s = getSession(ctx.from!.id);
+  await ctx.answerCallbackQuery();
+
+  if (raw === "manual") {
+    s.state = "log_exercise_custom";
+    await ctx.reply(`✏️ <b>Своё упражнение</b>\n${HR}\n\n<i>Введи название:</i>`, HTML);
+    return;
+  }
+
+  const catIdx = parseInt(raw);
+  const cat = CATALOG[catIdx];
+  if (!cat) return;
   await ctx.reply(
-    `✅ <b>${esc(exercise)}</b>\n${HR}\n\n` +
-    `Введи нагрузку — любой формат:\n\n` +
-    `<code>4×5×120</code> — 4 подхода по 5 на 120 кг\n` +
-    `<code>60х8, 80х5, 100х3</code> — разные веса\n` +
-    `<code>4 подхода по 10 раз 30 кг</code> — словами`,
-    HTML
+    `${cat.emoji} <b>${esc(cat.name.toUpperCase())}</b>\n${HR}\n\n<i>Выбери упражнение:</i>`,
+    { reply_markup: categoryExercisesKeyboard(catIdx), ...HTML }
   );
+});
+
+// Каталог: выбор упражнения из категории
+bot.callbackQuery(/^cex_(\d+)_(\d+)$/, async (ctx) => {
+  const s = getSession(ctx.from!.id);
+  await ctx.answerCallbackQuery();
+  const exercise = CATALOG[parseInt(ctx.match[1])]?.items[parseInt(ctx.match[2])];
+  if (!exercise) return;
+  s.data.exercise = exercise;
+  s.state = "log_sets";
+  await promptLoad(ctx, exercise);
 });
 
 // Совместимость со старыми сообщениями, где коллбэк содержит имя упражнения
