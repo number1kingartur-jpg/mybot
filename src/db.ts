@@ -114,6 +114,13 @@ export function getAllWorkouts(): WorkoutEntry[] {
   return load().workouts;
 }
 
+export function removeWorkouts(ids: string[]) {
+  const db = load();
+  const set = new Set(ids);
+  db.workouts = db.workouts.filter((w) => !set.has(w.id));
+  save(db);
+}
+
 export function getExercises(): string[] {
   const db = load();
   const set = new Set(db.workouts.map((w) => w.exercise));

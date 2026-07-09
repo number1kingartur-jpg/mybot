@@ -3,11 +3,13 @@ import { Bot, InlineKeyboard, InputFile } from "grammy";
 import https from "https";
 import cron from "node-cron";
 import {
-  addWorkout, getWorkouts, getExercises,
+  addWorkout, getWorkouts, getExercises, removeWorkouts,
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
   registerUser, getUsers,
 } from "./db";
+import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
+import { transcribeVoice, voiceEnabled } from "./voice";
 import { calcOneRm, pctTable } from "./calc/orm";
 import { calculatePeriodization, type PeriodizationModel, type Goal, type GenResult } from "./calc/periodization";
 import { calc531, calcGzclp } from "./calc/templates";
@@ -176,6 +178,60 @@ function formatSession(sess: Sess): string {
   );
 }
 
+// ── Лог распарсенной тренировки + отмена ────────────────────────────────────
+const undoStore = new Map<number, string[]>();
+let undoCounter = 0;
+
+function logParsed(parsed: ParsedExercise[]): { html: string; undoId: number } {
+  const ids: string[] = [];
+  const lines: string[] = [];
+
+  for (const ex of parsed) {
+    // PR проверяем по самой тяжёлой группе ДО записи
+    const heaviest = ex.groups.reduce((a, b) => (b.weightKg > a.weightKg ? b : a));
+    const pr = checkPr(ex.exercise, heaviest.weightKg, heaviest.reps);
+
+    for (const g of ex.groups) {
+      const row = addWorkout({
+        date: today(),
+        exercise: ex.exercise,
+        sets: g.sets,
+        reps: g.reps,
+        weightKg: g.weightKg,
+      });
+      ids.push(row.id);
+    }
+
+    const groupsStr = ex.groups
+      .map((g) => `${g.sets}×${g.reps}${g.weightKg > 0 ? ` @ ${g.weightKg} кг` : " (свой вес)"}`)
+      .join(" · ");
+    lines.push(`🎯 <b>${esc(ex.exercise)}</b>\n<code>${groupsStr}</code>`);
+
+    if (pr.isWeightPr) {
+      lines.push(`🏆 <b>Новый рекорд веса: ${heaviest.weightKg} кг!</b> <i>(было ${pr.prevBestWeight})</i>`);
+    } else if (pr.isE1rmPr) {
+      lines.push(`🥇 <b>Рекорд по силе: расчётный 1RM ${pr.e1rm} кг!</b>`);
+    }
+  }
+
+  const undoId = ++undoCounter;
+  undoStore.set(undoId, ids);
+  // не копим бесконечно
+  if (undoStore.size > 50) {
+    const oldest = undoStore.keys().next().value;
+    if (oldest !== undefined) undoStore.delete(oldest);
+  }
+
+  return {
+    html: `✅ <b>ЗАПИСАНО</b>\n${HR}\n\n${lines.join("\n\n")}`,
+    undoId,
+  };
+}
+
+function undoKeyboard(undoId: number) {
+  return { inline_keyboard: [[{ text: "↩️ Отменить запись", callback_data: `undo_${undoId}` }]] };
+}
+
 async function fetchImageBuffer(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { timeout: 10_000 }, (res) => {
@@ -198,7 +254,7 @@ bot.command("start", async (ctx) => {
     `<i>Твой личный тренировочный штаб</i>\n` +
     `${HR}\n\n` +
     `Привет, <b>${esc(ctx.from?.first_name ?? "атлет")}</b>. Всё для системной работы:\n\n` +
-    `📝 <b>Запись тренировок</b> ${DOT} лог + детект рекордов\n` +
+    `📝 <b>Запись тренировок</b> ${DOT} текстом или голосом 🎙\n` +
     `📊 <b>Прогресс</b> ${DOT} графики и PR\n` +
     `📋 <b>Программа</b> ${DOT} DUP, 5/3/1, GZCLP по неделям\n` +
     `🧮 <b>1RM</b> ${DOT} максимум и таблица %\n` +
@@ -219,8 +275,9 @@ bot.callbackQuery("guide_start", async (ctx) => {
   await ctx.reply(
     `🎓 <b>С ЧЕГО НАЧАТЬ — 3 ШАГА</b>\n${HR}\n\n` +
     `<b>Шаг 1 ${DOT} Запиши первую тренировку</b>\n` +
-    `Нажми «📝 Записать тренировку», выбери упражнение и введи что сделал. ` +
-    `Например сделал 3 подхода по 8 повторений с весом 40 кг — пиши <code>3×8×40</code>. Всё.\n\n` +
+    `Просто напиши в чат что сделал. Например сделал 3 подхода по 8 повторений с весом 40 кг:\n` +
+    `<code>присед 40 3х8</code>\n` +
+    `Или скажи голосовым 🎙: <i>«Присед 40 килограмм 3 подхода по 8»</i>. Всё.\n\n` +
     `<b>Шаг 2 ${DOT} Получи программу</b>\n` +
     `Нажми «📋 Программа». Не знаешь термины — не страшно:\n` +
     `${DOT} выбирай <b>GZCLP</b> — она для новичков\n` +
@@ -244,7 +301,7 @@ bot.command("help", async (ctx) => {
   resetSession(ctx.from!.id);
   await ctx.reply(
     `❓ <b>СПРАВКА</b>\n${HR}\n\n` +
-    `📝 <b>Записать тренировку</b>\nВыбери упражнение → введи <code>4×5×120</code> (подходы × повторения × вес). Бот сам заметит рекорды.\n\n` +
+    `📝 <b>Записать тренировку</b>\nПросто напиши в чат: <code>присед 100 5х5</code>. Разные веса: <code>жим 60х8, 80х5, 100х3</code>. Несколько упражнений — с новой строки. Можно голосовым 🎙. Бот сам заметит рекорды. Кнопка «📝» — если удобнее пошагово.\n\n` +
     `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению.\n\n` +
     `📋 <b>Программа</b>\nГотовый план на недели: DUP, 5/3/1, GZCLP и другие. Вводишь 1RM по каждому движению — получаешь расписание с весами. Отмечай «Выполнено» — бот ведёт по циклу и логирует за тебя.\n\n` +
     `🧮 <b>1RM калькулятор</b>\n<code>100×5</code> — расчёт максимума, или одно число <code>140</code> — таблица % от известной одиночки.\n\n` +
@@ -640,6 +697,61 @@ bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   );
 });
 
+// ── Отмена записи ────────────────────────────────────────────────────────
+bot.callbackQuery(/^undo_(\d+)$/, async (ctx) => {
+  const undoId = parseInt(ctx.match[1]);
+  const ids = undoStore.get(undoId);
+  if (!ids) {
+    await ctx.answerCallbackQuery("Уже нельзя отменить");
+    return;
+  }
+  removeWorkouts(ids);
+  undoStore.delete(undoId);
+  await ctx.answerCallbackQuery("Запись удалена");
+  await ctx.editMessageText(`↩️ <b>Запись отменена</b>`, HTML);
+});
+
+// ── Голосовые сообщения → распознавание → лог ────────────────────────────
+bot.on(["message:voice", "message:audio"], async (ctx) => {
+  if (!voiceEnabled()) {
+    await ctx.reply(
+      `🎙 Голосовые пока не подключены.\n\n<i>Напиши тренировку текстом одной строкой:</i>\n<code>присед 100 5х5</code>`,
+      HTML
+    );
+    return;
+  }
+
+  try {
+    const file = await ctx.getFile();
+    const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
+    const text = await transcribeVoice(url);
+
+    if (!text) {
+      await ctx.reply("🎙 Не расслышал. Попробуй ещё раз или напиши текстом.");
+      return;
+    }
+
+    const parsed = parseWorkout(text);
+    if (parsed.length === 0) {
+      await ctx.reply(
+        `🎙 Услышал: <i>«${esc(text)}»</i>\n\n` +
+        `Не смог разобрать тренировку. Скажи в формате:\n<i>«Присед 100 килограмм 5 подходов по 5»</i>`,
+        HTML
+      );
+      return;
+    }
+
+    const { html, undoId } = logParsed(parsed);
+    await ctx.reply(
+      `🎙 <i>«${esc(text)}»</i>\n\n${html}`,
+      { reply_markup: undoKeyboard(undoId), ...HTML }
+    );
+  } catch (e) {
+    console.error("voice error:", e);
+    await ctx.reply("🎙 Ошибка распознавания. Напиши текстом: <code>присед 100 5х5</code>", HTML);
+  }
+});
+
 // ── Обработка текстовых ответов (state machine) ───────────────────────────
 bot.on("message:text", async (ctx) => {
   const userId = ctx.from!.id;
@@ -664,46 +776,23 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ── Log: parse sets × reps × weight
+  // ── Log: нагрузка выбранного упражнения (любой формат, разные веса)
   if (s.state === "log_sets") {
-    const nums = text.replace(/[×xхХ]/g, " ").split(/\s+/).map(Number).filter((n) => !isNaN(n));
-    if (nums.length < 3) {
+    const groups = parseGroups(text);
+    if (groups.length === 0) {
       await ctx.reply(
-        `⚠️ Не понял формат.\n\n<i>Нужно:</i> <code>подходы × повторения × вес</code>\n<i>Например:</i> <code>4×5×120</code>`,
-        HTML
-      );
-      return;
-    }
-    const [sets, reps, weightKg] = nums;
-    if (sets < 1 || sets > 30 || reps < 1 || reps > 100 || weightKg <= 0 || weightKg > 600) {
-      await ctx.reply(
-        `⚠️ Числа выглядят странно: <code>${sets} подходов × ${reps} повторений × ${weightKg} кг</code>\n\n` +
-        `<i>Порядок:</i> <code>подходы × повторения × вес</code>\n<i>Например:</i> <code>4×5×120</code>`,
+        `⚠️ Не понял формат. Примеры:\n\n` +
+        `<code>4×5×120</code> — 4 подхода по 5 на 120 кг\n` +
+        `<code>60х8, 80х5, 100х3</code> — разные веса\n` +
+        `<code>4 подхода по 10 раз 30 кг</code> — словами`,
         HTML
       );
       return;
     }
     const exercise = String(s.data.exercise);
-
-    const pr = checkPr(exercise, weightKg, reps);
-    addWorkout({ date: today(), exercise, sets, reps, weightKg });
     resetSession(userId);
-
-    let prBanner = "";
-    if (pr.isWeightPr) {
-      prBanner = `\n\n🏆 <b>НОВЫЙ РЕКОРД ВЕСА!</b>\n<i>Прошлый лучший: ${pr.prevBestWeight} кг → теперь ${weightKg} кг</i>`;
-    } else if (pr.isE1rmPr) {
-      prBanner = `\n\n🥇 <b>РЕКОРД ПО СИЛЕ!</b>\n<i>Расчётный 1RM: ${pr.prevBestE1rm} → ${pr.e1rm} кг</i>`;
-    }
-
-    await ctx.reply(
-      `✅ <b>ЗАПИСАНО</b>\n${HR}\n\n` +
-      `🎯 <b>${esc(exercise)}</b>\n` +
-      `<code>${sets} × ${reps} @ ${weightKg} кг</code>\n` +
-      `<code>≈ 1RM ${pr.e1rm} кг</code>` +
-      prBanner,
-      { reply_markup: MAIN_KEYBOARD, ...HTML }
-    );
+    const { html, undoId } = logParsed([{ exercise, groups }]);
+    await ctx.reply(html, { reply_markup: undoKeyboard(undoId), ...HTML });
     return;
   }
 
@@ -870,10 +959,22 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ── Нет активного диалога — подсказываем меню
+  // ── Нет активного диалога — пробуем распознать тренировку свободным текстом
+  const parsed = parseWorkout(text);
+  if (parsed.length > 0) {
+    const { html, undoId } = logParsed(parsed);
+    await ctx.reply(html, { reply_markup: undoKeyboard(undoId), ...HTML });
+    return;
+  }
+
   await ctx.reply(
-    `Не понял 🤔 Выбери действие в меню ниже или нажми /help.`,
-    { reply_markup: MAIN_KEYBOARD }
+    `Не понял 🤔\n\n` +
+    `<b>Записать тренировку — просто напиши:</b>\n` +
+    `<code>присед 100 5х5</code>\n` +
+    `<code>жим 60х8, 80х5, 100х3</code>\n` +
+    `<code>подтягивания 4х10</code>\n\n` +
+    `<i>Несколько упражнений — с новой строки. Или голосовым 🎙\nОстальное — в меню ниже, справка /help</i>`,
+    { reply_markup: MAIN_KEYBOARD, ...HTML }
   );
 });
 
