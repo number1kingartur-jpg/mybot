@@ -35,12 +35,18 @@ export interface WeekPlan {
   sessions: SessionPlan[];
 }
 
+export interface Lift {
+  name: string;
+  oneRmKg: number;
+}
+
 export interface Program {
   id: string;
   createdAt: string;
   model: string;
   goal: string;
-  oneRmKg: number;
+  oneRmKg: number;          // сохраняем для совместимости (= 1RM первого движения)
+  lifts?: Lift[];           // 1RM по каждому базовому движению
   weeks: number;
   daysPerWeek: number;
   weeksData: WeekPlan[];

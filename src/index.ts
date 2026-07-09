@@ -9,8 +9,9 @@ import {
   registerUser, getUsers,
 } from "./db";
 import { calcOneRm, pctTable } from "./calc/orm";
-import { calculatePeriodization, type PeriodizationModel, type Goal } from "./calc/periodization";
-import { calc531, calcGzclp, type TemplateResult } from "./calc/templates";
+import { calculatePeriodization, type PeriodizationModel, type Goal, type GenResult } from "./calc/periodization";
+import { calc531, calcGzclp } from "./calc/templates";
+import type { Lift } from "./db";
 import { progressChartUrl, bodyweightChartUrl } from "./chart";
 import { buildWeeklyReport } from "./analysis";
 
@@ -26,17 +27,23 @@ type State =
   | "log_sets"
   | "orm_input"
   | "bw_input"
-  | "prog_1rm"
   | "prog_model"
   | "prog_goal"
   | "prog_weeks"
   | "prog_days"
+  | "prog_lift_rm"
   | "progress_exercise";
 
 interface UserState {
   state: State;
   data: Record<string, string | number>;
+  lifts?: { name: string; oneRmKg: number }[];
+  liftNames?: string[];
+  liftIdx?: number;
 }
+
+// Порядок базовых движений по дням недели
+const LIFT_ORDER = ["Присед", "Жим лёжа", "Становая", "Жим стоя", "Тяга"];
 const sessions = new Map<number, UserState>();
 
 function getSession(userId: number): UserState {
@@ -132,8 +139,8 @@ const TEMPLATE_MODELS = new Set(["531", "gzclp"]);
 
 function buildProgram(
   model: string,
-  input: { oneRmKg: number; weeks: number; daysPerWeek: number; goal: Goal }
-): TemplateResult {
+  input: { lifts: Lift[]; weeks: number; goal: Goal }
+): GenResult {
   if (model === "531") return calc531(input);
   if (model === "gzclp") return calcGzclp(input);
   return calculatePeriodization({ ...input, model: model as PeriodizationModel });
@@ -318,14 +325,13 @@ bot.hears("📋 Программа", async (ctx) => {
   const prog = getActiveProgram();
   if (!prog) {
     const s = getSession(ctx.from!.id);
-    s.state = "prog_1rm";
+    s.state = "prog_model";
     s.data = {};
     await ctx.reply(
       `📋 <b>НОВАЯ ПРОГРАММА</b>\n${HR}\n\n` +
       `Активной программы нет — соберём с нуля.\n\n` +
-      `Введи свой <b>1RM</b> <i>(вес на 1 повторение)</i>:\n\n` +
-      `<code>Например: 120</code>`,
-      HTML
+      `<b>Шаг 1 ${DOT} Модель периодизации</b>`,
+      { reply_markup: modelKeyboard(), ...HTML }
     );
     return;
   }
@@ -355,9 +361,12 @@ bot.hears("📋 Программа", async (ctx) => {
     prog.currentWeek === prog.peakWeek ? "  🔥 <b>ПИК</b>" :
     prog.currentWeek === prog.deloadWeek ? "  💤 <b>РАЗГРУЗКА</b>" : "";
 
+  const subtitle = prog.lifts?.length
+    ? `${prog.lifts.length} движений`
+    : `1RM ${prog.oneRmKg} кг`;
   await ctx.reply(
     `📋 <b>${esc(MODEL_LABELS[prog.model] ?? prog.model)}</b>\n` +
-    `<i>1RM ${prog.oneRmKg} кг</i>\n` +
+    `<i>${subtitle}</i>\n` +
     `${HR}\n\n` +
     `${bar(doneDays, totalDays)}  ${pct}%\n` +
     `<i>Неделя ${prog.currentWeek}/${prog.weeks} ${DOT} День ${prog.currentDay}</i>${phaseTag}\n\n` +
@@ -434,7 +443,7 @@ bot.callbackQuery("prog_full", async (ctx) => {
 
   const lines: string[] = [
     `📄 <b>ПОЛНАЯ ПРОГРАММА</b>`,
-    `<i>${esc(MODEL_LABELS[prog.model] ?? prog.model)} ${DOT} ${prog.weeks} нед ${DOT} 1RM ${prog.oneRmKg} кг</i>`,
+    `<i>${esc(MODEL_LABELS[prog.model] ?? prog.model)} ${DOT} ${prog.weeks} нед ${DOT} ${prog.daysPerWeek} дн/нед</i>`,
     HR,
   ];
   for (const w of prog.weeksData) {
@@ -506,42 +515,22 @@ bot.callbackQuery(/^pw_(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   const s = getSession(ctx.from!.id);
-  s.data.daysPerWeek = parseInt(ctx.match[1]);
+  const days = parseInt(ctx.match[1]);
+  s.data.daysPerWeek = days;
   await ctx.answerCallbackQuery();
 
-  const { model, goal, weeks, daysPerWeek, oneRm } = s.data as {
-    model: string; goal: Goal; weeks: number; daysPerWeek: number; oneRm: number;
-  };
+  // Готовим последовательный ввод 1RM по каждому базовому движению
+  s.liftNames = LIFT_ORDER.slice(0, days);
+  s.lifts = [];
+  s.liftIdx = 0;
+  s.state = "prog_lift_rm";
 
-  const result = buildProgram(model, { oneRmKg: oneRm, weeks, daysPerWeek, goal });
-  const actualWeeks = result.weeks.length;
-
-  saveProgram({
-    model, goal,
-    oneRmKg: oneRm,
-    weeks: actualWeeks,
-    daysPerWeek,
-    weeksData: result.weeks,
-    peakWeek: result.peakWeek,
-    deloadWeek: result.deloadWeek,
-    currentWeek: 1,
-    currentDay: 1,
-    active: true,
-  });
-
-  const firstSession = result.weeks[0]?.sessions[0];
-  resetSession(ctx.from!.id);
-
-  const goalLine = TEMPLATE_MODELS.has(model) ? "" : `<code>Цель       ${esc(GOAL_LABELS[goal] ?? goal)}</code>\n`;
   await ctx.reply(
-    `✨ <b>ПРОГРАММА ГОТОВА</b>\n${HR}\n\n` +
-    `<code>Модель     ${esc(MODEL_LABELS[model] ?? model)}</code>\n` +
-    goalLine +
-    `<code>Объём      ${actualWeeks} нед × ${daysPerWeek} дн</code>\n` +
-    `<code>База 1RM   ${oneRm} кг</code>\n\n` +
-    `${HR}\n<b>🚀 Первая тренировка</b>\n\n` +
-    (firstSession ? formatSession(firstSession) : ""),
-    { reply_markup: MAIN_KEYBOARD, ...HTML }
+    `🏋️ <b>1RM по движениям</b>\n${HR}\n\n` +
+    `Каждый день считается от своего максимума.\n\n` +
+    `<b>Движение 1/${days} ${DOT} ${esc(s.liftNames[0])}</b>\n` +
+    `<i>Введи 1RM в кг (вес на 1 раз):</i>\n\n<code>Например: 120</code>`,
+    HTML
   );
 });
 
@@ -659,18 +648,63 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ── Program: 1RM
-  if (s.state === "prog_1rm") {
+  // ── Program: ввод 1RM по каждому движению
+  if (s.state === "prog_lift_rm" && s.lifts && s.liftNames && s.liftIdx !== undefined) {
     const val = parseFloat(text.replace(",", "."));
-    if (isNaN(val) || val < 20) {
-      await ctx.reply(`⚠️ Введи корректный вес.\n<i>Например:</i> <code>120</code>`, HTML);
+    if (isNaN(val) || val < 20 || val > 500) {
+      await ctx.reply(`⚠️ Введи корректный 1RM в кг.\n<i>Например:</i> <code>120</code>`, HTML);
       return;
     }
-    s.data.oneRm = val;
-    s.state = "prog_model";
+
+    s.lifts.push({ name: s.liftNames[s.liftIdx], oneRmKg: val });
+    s.liftIdx += 1;
+
+    // Ещё остались движения — спрашиваем следующее
+    if (s.liftIdx < s.liftNames.length) {
+      const total = s.liftNames.length;
+      await ctx.reply(
+        `✅ ${esc(s.lifts[s.liftIdx - 1].name)}: ${val} кг\n${HR}\n\n` +
+        `<b>Движение ${s.liftIdx + 1}/${total} ${DOT} ${esc(s.liftNames[s.liftIdx])}</b>\n` +
+        `<i>Введи 1RM в кг:</i>`,
+        HTML
+      );
+      return;
+    }
+
+    // Все движения введены — генерируем программу
+    const { model, goal, weeks } = s.data as { model: string; goal: Goal; weeks: number };
+    const lifts = s.lifts;
+    const result = buildProgram(model, { lifts, weeks, goal });
+    const actualWeeks = result.weeks.length;
+
+    saveProgram({
+      model, goal,
+      oneRmKg: lifts[0].oneRmKg,
+      lifts,
+      weeks: actualWeeks,
+      daysPerWeek: lifts.length,
+      weeksData: result.weeks,
+      peakWeek: result.peakWeek,
+      deloadWeek: result.deloadWeek,
+      currentWeek: 1,
+      currentDay: 1,
+      active: true,
+    });
+
+    const firstSession = result.weeks[0]?.sessions[0];
+    const liftsLine = lifts.map((l) => `<code>${esc(l.name)} — ${l.oneRmKg} кг</code>`).join("\n");
+    resetSession(userId);
+
+    const goalLine = TEMPLATE_MODELS.has(model) ? "" : `<code>Цель    ${esc(GOAL_LABELS[goal] ?? goal)}</code>\n`;
     await ctx.reply(
-      `🌊 <b>Шаг 1 ${DOT} Модель</b>\n${HR}\n\n<i>Выбери схему периодизации:</i>`,
-      { reply_markup: modelKeyboard(), ...HTML }
+      `✨ <b>ПРОГРАММА ГОТОВА</b>\n${HR}\n\n` +
+      `<code>Модель  ${esc(MODEL_LABELS[model] ?? model)}</code>\n` +
+      goalLine +
+      `<code>Объём   ${actualWeeks} нед × ${lifts.length} дн</code>\n\n` +
+      `<b>1RM по движениям:</b>\n${liftsLine}\n\n` +
+      `${HR}\n<b>🚀 Первая тренировка</b>\n\n` +
+      (firstSession ? formatSession(firstSession) : ""),
+      { reply_markup: MAIN_KEYBOARD, ...HTML }
     );
     return;
   }
