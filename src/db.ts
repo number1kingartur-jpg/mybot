@@ -6,6 +6,7 @@ const DB_PATH = process.env.DATA_PATH ?? path.join(__dirname, "..", "data.json")
 
 export interface WorkoutEntry {
   id: string;
+  userId: number;
   date: string;        // YYYY-MM-DD
   exercise: string;
   sets: number;
@@ -15,6 +16,7 @@ export interface WorkoutEntry {
 }
 
 export interface BodyweightEntry {
+  userId: number;
   date: string;        // YYYY-MM-DD
   weightKg: number;
 }
@@ -42,6 +44,7 @@ export interface Lift {
 
 export interface Program {
   id: string;
+  userId: number;
   createdAt: string;
   model: string;
   goal: string;
@@ -75,15 +78,28 @@ function load(): DB {
   if (!fs.existsSync(DB_PATH)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
-    return {
+    const db: DB = {
       workouts: parsed.workouts ?? [],
       programs: parsed.programs ?? [],
       bodyweight: parsed.bodyweight ?? [],
       users: parsed.users ?? [],
     };
+    migrate(db);
+    return db;
   } catch {
     return empty;
   }
+}
+
+/** Старые записи без userId принадлежат первому зарегистрированному пользователю (владельцу). */
+function migrate(db: DB) {
+  const owner = db.users[0]?.chatId;
+  if (owner === undefined) return;
+  let changed = false;
+  for (const w of db.workouts) if (w.userId === undefined) { w.userId = owner; changed = true; }
+  for (const p of db.programs) if (p.userId === undefined) { p.userId = owner; changed = true; }
+  for (const b of db.bodyweight) if (b.userId === undefined) { b.userId = owner; changed = true; }
+  if (changed) save(db);
 }
 
 function save(db: DB) {
@@ -103,15 +119,15 @@ export function addWorkout(entry: Omit<WorkoutEntry, "id">): WorkoutEntry {
   return row;
 }
 
-export function getWorkouts(exercise?: string, limit = 20): WorkoutEntry[] {
+export function getWorkouts(userId: number, exercise?: string, limit = 20): WorkoutEntry[] {
   const db = load();
-  let rows = db.workouts;
+  let rows = db.workouts.filter((w) => w.userId === userId);
   if (exercise) rows = rows.filter((w) => w.exercise.toLowerCase() === exercise.toLowerCase());
   return rows.slice(-limit);
 }
 
-export function getAllWorkouts(): WorkoutEntry[] {
-  return load().workouts;
+export function getAllWorkouts(userId: number): WorkoutEntry[] {
+  return load().workouts.filter((w) => w.userId === userId);
 }
 
 export function removeWorkouts(ids: string[]) {
@@ -121,10 +137,16 @@ export function removeWorkouts(ids: string[]) {
   save(db);
 }
 
-export function getExercises(): string[] {
+export function getExercises(userId: number): string[] {
   const db = load();
-  const set = new Set(db.workouts.map((w) => w.exercise));
+  const set = new Set(db.workouts.filter((w) => w.userId === userId).map((w) => w.exercise));
   return [...set].sort();
+}
+
+/** Даты тренировок пользователя (уникальные, YYYY-MM-DD). */
+export function getWorkoutDates(userId: number): string[] {
+  const db = load();
+  return [...new Set(db.workouts.filter((w) => w.userId === userId).map((w) => w.date))].sort();
 }
 
 /** Оценка 1RM по формуле Эпли для PR-детекта. */
@@ -141,10 +163,10 @@ export interface PrCheck {
 }
 
 /** Проверка рекорда ДО добавления новой записи. */
-export function checkPr(exercise: string, weightKg: number, reps: number): PrCheck {
+export function checkPr(userId: number, exercise: string, weightKg: number, reps: number): PrCheck {
   const db = load();
   const prior = db.workouts.filter(
-    (w) => w.exercise.toLowerCase() === exercise.toLowerCase()
+    (w) => w.userId === userId && w.exercise.toLowerCase() === exercise.toLowerCase()
   );
   const prevBestWeight = prior.reduce((m, w) => Math.max(m, w.weightKg), 0);
   const prevBestE1rm = prior.reduce((m, w) => Math.max(m, est1rm(w.weightKg, w.reps)), 0);
@@ -161,27 +183,31 @@ export function checkPr(exercise: string, weightKg: number, reps: number): PrChe
 // ── Programs ────────────────────────────────────────────────────────────────
 export function saveProgram(p: Omit<Program, "id" | "createdAt">): Program {
   const db = load();
-  db.programs = db.programs.map((pr) => ({ ...pr, active: false }));
+  db.programs = db.programs.map((pr) =>
+    pr.userId === p.userId ? { ...pr, active: false } : pr
+  );
   const row: Program = { id: uid(), createdAt: new Date().toISOString(), ...p };
   db.programs.push(row);
   save(db);
   return row;
 }
 
-export function getActiveProgram(): Program | null {
+export function getActiveProgram(userId: number): Program | null {
   const db = load();
-  return db.programs.find((p) => p.active) ?? null;
+  return db.programs.find((p) => p.userId === userId && p.active) ?? null;
 }
 
-export function deactivatePrograms() {
+export function deactivatePrograms(userId: number) {
   const db = load();
-  db.programs = db.programs.map((p) => ({ ...p, active: false }));
+  db.programs = db.programs.map((p) =>
+    p.userId === userId ? { ...p, active: false } : p
+  );
   save(db);
 }
 
-export function advanceProgramDay(): Program | null {
+export function advanceProgramDay(userId: number): Program | null {
   const db = load();
-  const idx = db.programs.findIndex((p) => p.active);
+  const idx = db.programs.findIndex((p) => p.userId === userId && p.active);
   if (idx === -1) return null;
   const prog = db.programs[idx];
   const week = prog.weeksData.find((w) => w.week === prog.currentWeek);
@@ -203,20 +229,20 @@ export function advanceProgramDay(): Program | null {
 }
 
 // ── Bodyweight ────────────────────────────────────────────────────────────────
-export function addBodyweight(weightKg: number): BodyweightEntry {
+export function addBodyweight(userId: number, weightKg: number): BodyweightEntry {
   const db = load();
   const date = new Date().toISOString().slice(0, 10);
   // одна запись в день — перезаписываем
-  db.bodyweight = db.bodyweight.filter((b) => b.date !== date);
-  const row: BodyweightEntry = { date, weightKg };
+  db.bodyweight = db.bodyweight.filter((b) => !(b.userId === userId && b.date === date));
+  const row: BodyweightEntry = { userId, date, weightKg };
   db.bodyweight.push(row);
   db.bodyweight.sort((a, b) => a.date.localeCompare(b.date));
   save(db);
   return row;
 }
 
-export function getBodyweight(limit = 30): BodyweightEntry[] {
-  return load().bodyweight.slice(-limit);
+export function getBodyweight(userId: number, limit = 30): BodyweightEntry[] {
+  return load().bodyweight.filter((b) => b.userId === userId).slice(-limit);
 }
 
 // ── Users (для рассылки сводок) ───────────────────────────────────────────────

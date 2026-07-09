@@ -3,7 +3,7 @@ import { Bot, InlineKeyboard, InputFile } from "grammy";
 import https from "https";
 import cron from "node-cron";
 import {
-  addWorkout, getWorkouts, getExercises, removeWorkouts,
+  addWorkout, getWorkouts, getExercises, getWorkoutDates, removeWorkouts,
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
   registerUser, getUsers,
@@ -182,17 +182,18 @@ function formatSession(sess: Sess): string {
 const undoStore = new Map<number, string[]>();
 let undoCounter = 0;
 
-function logParsed(parsed: ParsedExercise[]): { html: string; undoId: number } {
+function logParsed(userId: number, parsed: ParsedExercise[]): { html: string; undoId: number } {
   const ids: string[] = [];
   const lines: string[] = [];
 
   for (const ex of parsed) {
     // PR проверяем по самой тяжёлой группе ДО записи
     const heaviest = ex.groups.reduce((a, b) => (b.weightKg > a.weightKg ? b : a));
-    const pr = checkPr(ex.exercise, heaviest.weightKg, heaviest.reps);
+    const pr = checkPr(userId, ex.exercise, heaviest.weightKg, heaviest.reps);
 
     for (const g of ex.groups) {
       const row = addWorkout({
+        userId,
         date: today(),
         exercise: ex.exercise,
         sets: g.sets,
@@ -229,7 +230,54 @@ function logParsed(parsed: ParsedExercise[]): { html: string; undoId: number } {
 }
 
 function undoKeyboard(undoId: number) {
-  return { inline_keyboard: [[{ text: "↩️ Отменить запись", callback_data: `undo_${undoId}` }]] };
+  return {
+    inline_keyboard: [
+      [{ text: "↩️ Отменить запись", callback_data: `undo_${undoId}` }],
+      [
+        { text: "⏱ Отдых 2 мин", callback_data: "rest_120" },
+        { text: "3 мин", callback_data: "rest_180" },
+        { text: "4 мин", callback_data: "rest_240" },
+      ],
+    ],
+  };
+}
+
+// ── Календарь месяца ────────────────────────────────────────────────────────
+const MONTH_NAMES = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+];
+
+function monthCalendar(userId: number): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const trained = new Set(
+    getWorkoutDates(userId).filter((d) => d.startsWith(`${year}-${String(month + 1).padStart(2, "0")}`))
+      .map((d) => parseInt(d.slice(8)))
+  );
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Пн=0
+  const todayNum = now.getDate();
+
+  // эмодзи-сетка: 🟩 тренировка, 🔲 сегодня (без тренировки), ⬜ день без, ⬛ вне месяца
+  let grid = "";
+  let col = 0;
+  for (let i = 0; i < firstDow; i++) { grid += "⬛"; col++; }
+  for (let day = 1; day <= daysInMonth; day++) {
+    grid += trained.has(day) ? "🟩" : day === todayNum ? "🔲" : "⬜";
+    col++;
+    if (col === 7) { grid += "\n"; col = 0; }
+  }
+  while (col > 0 && col < 7) { grid += "⬛"; col++; }
+
+  return (
+    `🗓 <b>${MONTH_NAMES[month]} ${year}</b>\n` +
+    `<i>Тренировок: ${trained.size} ${DOT} ряд = неделя (Пн–Вс)</i>\n\n` +
+    grid.trimEnd() +
+    `\n\n🟩 тренировка ${DOT} 🔲 сегодня`
+  );
 }
 
 async function fetchImageBuffer(url: string): Promise<Buffer> {
@@ -302,7 +350,8 @@ bot.command("help", async (ctx) => {
   await ctx.reply(
     `❓ <b>СПРАВКА</b>\n${HR}\n\n` +
     `📝 <b>Записать тренировку</b>\nПросто напиши в чат: <code>присед 100 5х5</code>. Разные веса: <code>жим 60х8, 80х5, 100х3</code>. Несколько упражнений — с новой строки. Можно голосовым 🎙. Бот сам заметит рекорды. Кнопка «📝» — если удобнее пошагово.\n\n` +
-    `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению.\n\n` +
+    `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению. Внутри — календарь месяца: видно, в какие дни тренировался.\n\n` +
+    `⏱ <b>Таймер отдыха</b>\nПод каждой записью — кнопки 2/3/4 мин, бот напомнит о следующем подходе.\n\n` +
     `📋 <b>Программа</b>\nГотовый план на недели: DUP, 5/3/1, GZCLP и другие. Вводишь 1RM по каждому движению — получаешь расписание с весами. Отмечай «Выполнено» — бот ведёт по циклу и логирует за тебя.\n\n` +
     `🧮 <b>1RM калькулятор</b>\n<code>100×5</code> — расчёт максимума, или одно число <code>140</code> — таблица % от известной одиночки.\n\n` +
     `⚖️ <b>Вес тела</b>\nВводи вес — получишь график динамики.\n\n` +
@@ -363,7 +412,7 @@ bot.hears("⚖️ Вес тела", async (ctx) => {
   const s = getSession(ctx.from!.id);
   s.state = "bw_input";
   s.data = {};
-  const bw = getBodyweight(1);
+  const bw = getBodyweight(ctx.from!.id, 1);
   const last = bw.length ? `\n\n<i>Последняя запись: ${bw[bw.length - 1].weightKg} кг</i>` : "";
   await ctx.reply(
     `⚖️ <b>ВЕС ТЕЛА</b>\n${HR}\n\n` +
@@ -375,21 +424,22 @@ bot.hears("⚖️ Вес тела", async (ctx) => {
 // ── Отчёт недели ─────────────────────────────────────────────────────────
 bot.hears("📈 Отчёт недели", async (ctx) => {
   resetSession(ctx.from!.id);
-  await ctx.reply(buildWeeklyReport(), { reply_markup: MAIN_KEYBOARD, ...HTML });
+  await ctx.reply(buildWeeklyReport(ctx.from!.id), { reply_markup: MAIN_KEYBOARD, ...HTML });
 });
 
 // ── Прогресс ──────────────────────────────────────────────────────────────
 bot.hears("📊 Прогресс", async (ctx) => {
-  const exercises = getExercises();
+  const userId = ctx.from!.id;
+  const exercises = getExercises(userId);
   if (exercises.length === 0) {
     await ctx.reply(
       `📊 <b>ПРОГРЕСС</b>\n${HR}\n\n` +
-      `Пока нет ни одной записи.\n<i>Начни с «📝 Записать тренировку»</i>`,
+      `Пока нет ни одной записи.\n<i>Напиши в чат:</i> <code>присед 100 5х5</code>`,
       HTML
     );
     return;
   }
-  const s = getSession(ctx.from!.id);
+  const s = getSession(userId);
   s.state = "progress_exercise";
   s.data = {};
   // callback_data ограничен 64 байтами — передаём индекс, а не имя
@@ -399,21 +449,28 @@ bot.hears("📊 Прогресс", async (ctx) => {
     kb.text(label, `prg_${i}`);
     if ((i + 1) % 2 === 0) kb.row();
   });
+  kb.row().text("🗓 Календарь месяца", "cal_month");
   await ctx.reply(
     `📊 <b>ПРОГРЕСС</b>\n${HR}\n\n<i>Выбери упражнение:</i>`,
     { reply_markup: kb, ...HTML }
   );
 });
 
+bot.callbackQuery("cal_month", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(monthCalendar(ctx.from.id), HTML);
+});
+
 bot.callbackQuery(/^prg_(\d+)$/, async (ctx) => {
+  const userId = ctx.from.id;
   const idx = parseInt(ctx.match[1]);
-  const exercise = getExercises()[idx];
+  const exercise = getExercises(userId)[idx];
   await ctx.answerCallbackQuery();
   if (!exercise) {
     await ctx.reply("Упражнение не найдено — открой «📊 Прогресс» заново.");
     return;
   }
-  const entries = getWorkouts(exercise, 12);
+  const entries = getWorkouts(userId, exercise, 12);
   if (entries.length === 0) {
     await ctx.reply("Записей по этому упражнению нет.");
     return;
@@ -448,7 +505,7 @@ bot.callbackQuery(/^prg_(\d+)$/, async (ctx) => {
 
 // ── Программа ────────────────────────────────────────────────────────────
 bot.hears("📋 Программа", async (ctx) => {
-  const prog = getActiveProgram();
+  const prog = getActiveProgram(ctx.from!.id);
   if (!prog) {
     const s = getSession(ctx.from!.id);
     s.state = "prog_model";
@@ -507,7 +564,8 @@ bot.hears("📋 Программа", async (ctx) => {
 
 bot.callbackQuery("prog_done", async (ctx) => {
   await ctx.answerCallbackQuery("✅ Отмечено!");
-  const prog = getActiveProgram();
+  const userId = ctx.from.id;
+  const prog = getActiveProgram(userId);
   if (!prog) return;
 
   const weekData = prog.weeksData.find((w) => w.week === prog.currentWeek);
@@ -517,8 +575,9 @@ bot.callbackQuery("prog_done", async (ctx) => {
     // фокус имеет вид «Присед · тяжёлый день» — логируем под чистым именем движения,
     // чтобы прогресс и рекорды считались по упражнению
     const liftName = session.focus.split("·")[0].trim() || session.focus;
-    const pr = checkPr(liftName, session.weightKg, session.reps);
+    const pr = checkPr(userId, liftName, session.weightKg, session.reps);
     addWorkout({
+      userId,
       date: today(),
       exercise: liftName,
       sets: session.sets,
@@ -533,7 +592,7 @@ bot.callbackQuery("prog_done", async (ctx) => {
     }
   }
 
-  const updated = advanceProgramDay();
+  const updated = advanceProgramDay(userId);
   if (!updated || !updated.active) {
     await ctx.reply(
       `🏆 <b>ПРОГРАММА ЗАВЕРШЕНА</b>\n${prBanner}${HR}\n\nВесь цикл пройден. Красавчик!`,
@@ -560,7 +619,7 @@ bot.callbackQuery("prog_done", async (ctx) => {
 
 bot.callbackQuery("prog_skip", async (ctx) => {
   await ctx.answerCallbackQuery("⏭ Пропущено");
-  advanceProgramDay();
+  advanceProgramDay(ctx.from.id);
   await ctx.reply(
     `⏭ <b>День пропущен</b>\n\n<i>Нажми «📋 Программа» для следующей тренировки.</i>`,
     HTML
@@ -590,7 +649,7 @@ bot.callbackQuery("prog_help", async (ctx) => {
 
 bot.callbackQuery("prog_reset", async (ctx) => {
   await ctx.answerCallbackQuery("Программа сброшена");
-  deactivatePrograms();
+  deactivatePrograms(ctx.from.id);
   await ctx.reply(
     `🗑 <b>Программа сброшена</b>\n${HR}\n\n<i>Открой «📋 Программа», чтобы собрать новую.</i>`,
     { reply_markup: MAIN_KEYBOARD, ...HTML }
@@ -599,7 +658,7 @@ bot.callbackQuery("prog_reset", async (ctx) => {
 
 bot.callbackQuery("prog_full", async (ctx) => {
   await ctx.answerCallbackQuery();
-  const prog = getActiveProgram();
+  const prog = getActiveProgram(ctx.from.id);
   if (!prog) return;
 
   const lines: string[] = [
@@ -697,6 +756,20 @@ bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   );
 });
 
+// ── Таймер отдыха ────────────────────────────────────────────────────────
+bot.callbackQuery(/^rest_(\d+)$/, async (ctx) => {
+  const seconds = parseInt(ctx.match[1]);
+  const chatId = ctx.chat?.id;
+  const minutes = Math.round(seconds / 60);
+  await ctx.answerCallbackQuery(`⏱ Таймер на ${minutes} мин запущен`);
+  if (!chatId) return;
+  setTimeout(async () => {
+    try {
+      await bot.api.sendMessage(chatId, `⏱ <b>Отдых окончен — следующий подход!</b>`, HTML);
+    } catch { /* skip */ }
+  }, seconds * 1000);
+});
+
 // ── Отмена записи ────────────────────────────────────────────────────────
 bot.callbackQuery(/^undo_(\d+)$/, async (ctx) => {
   const undoId = parseInt(ctx.match[1]);
@@ -741,7 +814,7 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
       return;
     }
 
-    const { html, undoId } = logParsed(parsed);
+    const { html, undoId } = logParsed(ctx.from!.id, parsed);
     await ctx.reply(
       `🎙 <i>«${esc(text)}»</i>\n\n${html}`,
       { reply_markup: undoKeyboard(undoId), ...HTML }
@@ -791,7 +864,7 @@ bot.on("message:text", async (ctx) => {
     }
     const exercise = String(s.data.exercise);
     resetSession(userId);
-    const { html, undoId } = logParsed([{ exercise, groups }]);
+    const { html, undoId } = logParsed(userId, [{ exercise, groups }]);
     await ctx.reply(html, { reply_markup: undoKeyboard(undoId), ...HTML });
     return;
   }
@@ -850,8 +923,8 @@ bot.on("message:text", async (ctx) => {
       await ctx.reply(`⚠️ Введи корректный вес в кг.\n<i>Например:</i> <code>82.5</code>`, HTML);
       return;
     }
-    addBodyweight(val);
-    const bw = getBodyweight(30);
+    addBodyweight(userId, val);
+    const bw = getBodyweight(userId, 30);
     resetSession(userId);
 
     let deltaLine = "";
@@ -927,6 +1000,7 @@ bot.on("message:text", async (ctx) => {
     const actualWeeks = result.weeks.length;
 
     saveProgram({
+      userId,
       model, goal,
       oneRmKg: lifts[0].oneRmKg,
       lifts,
@@ -962,7 +1036,7 @@ bot.on("message:text", async (ctx) => {
   // ── Нет активного диалога — пробуем распознать тренировку свободным текстом
   const parsed = parseWorkout(text);
   if (parsed.length > 0) {
-    const { html, undoId } = logParsed(parsed);
+    const { html, undoId } = logParsed(userId, parsed);
     await ctx.reply(html, { reply_markup: undoKeyboard(undoId), ...HTML });
     return;
   }
@@ -980,10 +1054,9 @@ bot.on("message:text", async (ctx) => {
 
 // ── Авто-сводка по воскресеньям (18:00 Бангкок) ───────────────────────────
 cron.schedule("0 18 * * 0", async () => {
-  const report = buildWeeklyReport();
   for (const u of getUsers()) {
     try {
-      await bot.api.sendMessage(u.chatId, report, HTML);
+      await bot.api.sendMessage(u.chatId, buildWeeklyReport(u.chatId), HTML);
     } catch { /* пользователь заблокировал бота — пропускаем */ }
   }
 }, { timezone: "Asia/Bangkok" });

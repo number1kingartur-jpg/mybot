@@ -24,9 +24,9 @@ function categorize(exercise: string): Category {
 }
 
 /** Умная недельная сводка на правилах — без внешних AI-API. */
-export function buildWeeklyReport(): string {
+export function buildWeeklyReport(userId: number): string {
   const HR = "━━━━━━━━━━━━━━━━━━━━";
-  const all = getAllWorkouts();
+  const all = getAllWorkouts(userId);
 
   const wk1 = all.filter((w) => w.date >= daysAgo(7));
   const wk2 = all.filter((w) => w.date < daysAgo(7) && w.date >= daysAgo(14));
@@ -92,7 +92,7 @@ export function buildWeeklyReport(): string {
   }
 
   // вес тела
-  const bw = getBodyweight(30);
+  const bw = getBodyweight(userId, 30);
   let bwLine = "";
   if (bw.length >= 2) {
     const d = Math.round((bw[bw.length - 1].weightKg - bw[0].weightKg) * 10) / 10;
