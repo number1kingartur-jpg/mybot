@@ -10,10 +10,10 @@ function round2_5(n: number): number {
 // TM = 90% 1RM каждого движения. 4-недельный цикл. День = отдельное движение.
 // ─────────────────────────────────────────────────────────────────────────────
 const W531 = [
-  { label: "5s",     sets: [[65, 5], [75, 5], [85, 5]], top: [85, 5], rpe: 8 },
-  { label: "3s",     sets: [[70, 3], [80, 3], [90, 3]], top: [90, 3], rpe: 9 },
-  { label: "5/3/1",  sets: [[75, 5], [85, 3], [95, 1]], top: [95, 1], rpe: 9 },
-  { label: "Deload", sets: [[40, 5], [50, 5], [60, 5]], top: [60, 5], rpe: 5 },
+  { label: "Неделя пятёрок",  sets: [[65, 5], [75, 5], [85, 5]], top: [85, 5], rpe: 8, deload: false },
+  { label: "Неделя троек",    sets: [[70, 3], [80, 3], [90, 3]], top: [90, 3], rpe: 9, deload: false },
+  { label: "Пиковая неделя",  sets: [[75, 5], [85, 3], [95, 1]], top: [95, 1], rpe: 9, deload: false },
+  { label: "Разгрузка",       sets: [[40, 5], [50, 5], [60, 5]], top: [60, 5], rpe: 5, deload: true },
 ];
 
 export function calc531(input: GenInput): GenResult {
@@ -34,7 +34,7 @@ export function calc531(input: GenInput): GenResult {
 
       const detailLines = phase.sets
         .map(([pct, reps], i) => {
-          const amrap = i === phase.sets.length - 1 && phase.label !== "Deload" ? "+" : "";
+          const amrap = i === phase.sets.length - 1 && !phase.deload ? "+" : "";
           return `${round2_5((tm * pct) / 100)}кг × ${reps}${amrap} (${pct}%)`;
         })
         .join("\n");
@@ -80,26 +80,26 @@ export function calcGzclp(input: GenInput): GenResult {
         const weight = round2_5((lift.oneRmKg * pct) / 100);
         sessions.push({
           day: d,
-          focus: `${lift.name} · T1 сила`,
+          focus: `${lift.name} · тяжёлый день (сила)`,
           intensity: pct,
           sets: 5,
           reps: 3,
           weightKg: weight,
           rpe: isDeload ? 6 : 8,
-          detail: `${weight}кг · 5×3${isDeload ? "" : "  (последний AMRAP)"} · ${pct}%`,
+          detail: `${weight}кг × 5 подходов по 3${isDeload ? "" : "+"} (${pct}%)`,
         });
       } else {
         const pct = isDeload ? 55 : Math.min(75, 62 + (w - 1) * 2);
         const weight = round2_5((lift.oneRmKg * pct) / 100);
         sessions.push({
           day: d,
-          focus: `${lift.name} · T2 объём`,
+          focus: `${lift.name} · объёмный день`,
           intensity: pct,
           sets: 3,
           reps: 10,
           weightKg: weight,
           rpe: isDeload ? 6 : 8,
-          detail: `${weight}кг · 3×10 · ${pct}%`,
+          detail: `${weight}кг × 3 подхода по 10 (${pct}%)`,
         });
       }
     }

@@ -151,15 +151,28 @@ interface Sess {
   sets: number; reps: number; weightKg: number; rpe: number; detail?: string;
 }
 
+function rpeHint(rpe: number): string {
+  if (rpe >= 9) return `💪 Тяжесть RPE ${rpe} — почти предел (0–1 повтор в запасе)`;
+  if (rpe >= 8) return `💪 Тяжесть RPE ${rpe} — тяжело (~2 повтора в запасе)`;
+  if (rpe >= 7) return `💪 Тяжесть RPE ${rpe} — уверенно (~3 повтора в запасе)`;
+  return `💪 Тяжесть RPE ${rpe} — легко / разминочно`;
+}
+
 function formatSession(sess: Sess): string {
   if (sess.detail) {
-    return `🎯 <b>${esc(sess.focus)}</b>\n<code>${esc(sess.detail)}</code>\n<i>RPE ${sess.rpe}</i>`;
+    return (
+      `🎯 <b>${esc(sess.focus)}</b>\n\n` +
+      `<b>Рабочие подходы:</b>\n<code>${esc(sess.detail)}</code>\n\n` +
+      `💡 <i>Число в скобках — % от твоего 1RM. Знак «+» — в последнем подходе сделай максимум повторений (оставь 1–2 в запасе).</i>\n` +
+      `⏱ Отдых 2–4 мин · ${rpeHint(sess.rpe)}`
+    );
   }
   return (
-    `🎯 <b>${esc(sess.focus)}</b>\n` +
-    `<code>Нагрузка   ${sess.sets} × ${sess.reps} @ ${sess.weightKg} кг</code>\n` +
-    `<code>Интенсивн. ${sess.intensity}% 1RM</code>\n` +
-    `<code>Усилие     RPE ${sess.rpe}</code>`
+    `🎯 <b>${esc(sess.focus)}</b>\n\n` +
+    `▪️ <b>${sess.sets} подходов × ${sess.reps} повторений</b>\n` +
+    `▪️ Вес: <b>${sess.weightKg} кг</b> <i>(${sess.intensity}% от 1RM)</i>\n` +
+    `▪️ Отдых: 2–4 мин между подходами\n` +
+    `${rpeHint(sess.rpe)}`
   );
 }
 
@@ -352,6 +365,8 @@ bot.hears("📋 Программа", async (ctx) => {
     .text("⏭ Пропустить", "prog_skip")
     .row()
     .text("📄 Вся программа", "prog_full")
+    .text("❓ Как читать", "prog_help")
+    .row()
     .text("🗑 Сбросить", "prog_reset");
 
   const totalDays = prog.weeks * prog.daysPerWeek;
@@ -423,6 +438,27 @@ bot.callbackQuery("prog_skip", async (ctx) => {
   advanceProgramDay();
   await ctx.reply(
     `⏭ <b>День пропущен</b>\n\n<i>Нажми «📋 Программа» для следующей тренировки.</i>`,
+    HTML
+  );
+});
+
+bot.callbackQuery("prog_help", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `❓ <b>КАК ЧИТАТЬ ПРОГРАММУ</b>\n${HR}\n\n` +
+    `📊 <b>% (проценты)</b> — доля от твоего максимума на 1 раз (1RM).\n` +
+    `<i>Пример: 1RM приседа 100 кг, значит 80% = 80 кг.</i>\n\n` +
+    `🔢 <b>Подходы × повторения</b> — «5×3» значит 5 подходов по 3 повтора.\n\n` +
+    `➕ <b>Знак «+» (AMRAP)</b> — в последнем подходе сделай столько повторений, сколько сможешь в чистой технике. Оставь 1–2 в запасе, не до полного отказа.\n\n` +
+    `💪 <b>RPE (усилие, 1–10)</b> — насколько тяжело:\n` +
+    `<code>RPE 6–7  легко, 3–4 в запасе</code>\n` +
+    `<code>RPE 8    тяжело, ~2 в запасе</code>\n` +
+    `<code>RPE 9    почти предел, 0–1</code>\n` +
+    `<code>RPE 10   максимум, ничего не осталось</code>\n\n` +
+    `🔥 <b>Пиковая неделя</b> — самая тяжёлая в цикле.\n` +
+    `💤 <b>Разгрузка</b> — лёгкая неделя для восстановления.\n\n` +
+    `🧊 <b>Разминка</b> — перед рабочими подходами сделай 2–3 лёгких с весом 40–60%.\n` +
+    `⏱ <b>Отдых</b> между тяжёлыми подходами: 2–4 минуты.`,
     HTML
   );
 });
@@ -703,7 +739,8 @@ bot.on("message:text", async (ctx) => {
       `<code>Объём   ${actualWeeks} нед × ${lifts.length} дн</code>\n\n` +
       `<b>1RM по движениям:</b>\n${liftsLine}\n\n` +
       `${HR}\n<b>🚀 Первая тренировка</b>\n\n` +
-      (firstSession ? formatSession(firstSession) : ""),
+      (firstSession ? formatSession(firstSession) : "") +
+      `\n\n<i>Термины непонятны? «📋 Программа» → «❓ Как читать».</i>`,
       { reply_markup: MAIN_KEYBOARD, ...HTML }
     );
     return;
