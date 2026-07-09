@@ -178,12 +178,14 @@ function formatSession(sess: Sess): string {
 
 async function fetchImageBuffer(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    const req = https.get(url, { timeout: 10_000 }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => resolve(Buffer.concat(chunks)));
       res.on("error", reject);
-    }).on("error", reject);
+    });
+    req.on("timeout", () => req.destroy(new Error("chart timeout")));
+    req.on("error", reject);
   });
 }
 
@@ -203,6 +205,22 @@ bot.command("start", async (ctx) => {
     `⚖️ <b>Вес тела</b> ${DOT} динамика на графике\n` +
     `📈 <b>Отчёт недели</b> ${DOT} умный анализ прогресса\n\n` +
     `<i>Каждое воскресенье пришлю сводку автоматически 👇</i>`,
+    { reply_markup: MAIN_KEYBOARD, ...HTML }
+  );
+});
+
+// ── /help ─────────────────────────────────────────────────────────────────
+bot.command("help", async (ctx) => {
+  resetSession(ctx.from!.id);
+  await ctx.reply(
+    `❓ <b>СПРАВКА</b>\n${HR}\n\n` +
+    `📝 <b>Записать тренировку</b>\nВыбери упражнение → введи <code>4×5×120</code> (подходы × повторения × вес). Бот сам заметит рекорды.\n\n` +
+    `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению.\n\n` +
+    `📋 <b>Программа</b>\nГотовый план на недели: DUP, 5/3/1, GZCLP и другие. Вводишь 1RM по каждому движению — получаешь расписание с весами. Отмечай «Выполнено» — бот ведёт по циклу и логирует за тебя.\n\n` +
+    `🧮 <b>1RM калькулятор</b>\n<code>100×5</code> — расчёт максимума, или одно число <code>140</code> — таблица % от известной одиночки.\n\n` +
+    `⚖️ <b>Вес тела</b>\nВводи вес — получишь график динамики.\n\n` +
+    `📈 <b>Отчёт недели</b>\nТоннаж, тренды, застой, дисбаланс жим/тяга. Приходит сам по воскресеньям в 18:00.\n\n` +
+    `<i>Сбились кнопки? Нажми /start</i>`,
     { reply_markup: MAIN_KEYBOARD, ...HTML }
   );
 });
@@ -287,9 +305,11 @@ bot.hears("📊 Прогресс", async (ctx) => {
   const s = getSession(ctx.from!.id);
   s.state = "progress_exercise";
   s.data = {};
+  // callback_data ограничен 64 байтами — передаём индекс, а не имя
   const kb = new InlineKeyboard();
   exercises.forEach((ex, i) => {
-    kb.text(ex, `prg_${ex}`);
+    const label = ex.length > 28 ? ex.slice(0, 27) + "…" : ex;
+    kb.text(label, `prg_${i}`);
     if ((i + 1) % 2 === 0) kb.row();
   });
   await ctx.reply(
@@ -298,9 +318,14 @@ bot.hears("📊 Прогресс", async (ctx) => {
   );
 });
 
-bot.callbackQuery(/^prg_(.+)$/, async (ctx) => {
-  const exercise = ctx.match[1];
+bot.callbackQuery(/^prg_(\d+)$/, async (ctx) => {
+  const idx = parseInt(ctx.match[1]);
+  const exercise = getExercises()[idx];
   await ctx.answerCallbackQuery();
+  if (!exercise) {
+    await ctx.reply("Упражнение не найдено — открой «📊 Прогресс» заново.");
+    return;
+  }
   const entries = getWorkouts(exercise, 12);
   if (entries.length === 0) {
     await ctx.reply("Записей по этому упражнению нет.");
@@ -398,21 +423,31 @@ bot.callbackQuery("prog_done", async (ctx) => {
 
   const weekData = prog.weeksData.find((w) => w.week === prog.currentWeek);
   const session = weekData?.sessions.find((s) => s.day === prog.currentDay);
+  let prBanner = "";
   if (session) {
+    // фокус имеет вид «Присед · тяжёлый день» — логируем под чистым именем движения,
+    // чтобы прогресс и рекорды считались по упражнению
+    const liftName = session.focus.split("·")[0].trim() || session.focus;
+    const pr = checkPr(liftName, session.weightKg, session.reps);
     addWorkout({
       date: today(),
-      exercise: `Программа: ${session.focus}`,
+      exercise: liftName,
       sets: session.sets,
       reps: session.reps,
       weightKg: session.weightKg,
       notes: `${prog.model} W${prog.currentWeek}D${prog.currentDay}`,
     });
+    if (pr.isWeightPr) {
+      prBanner = `\n🏆 <b>Новый рекорд веса в «${esc(liftName)}»: ${session.weightKg} кг!</b>\n`;
+    } else if (pr.isE1rmPr) {
+      prBanner = `\n🥇 <b>Рекорд по силе в «${esc(liftName)}»: расчётный 1RM ${pr.e1rm} кг!</b>\n`;
+    }
   }
 
   const updated = advanceProgramDay();
   if (!updated || !updated.active) {
     await ctx.reply(
-      `🏆 <b>ПРОГРАММА ЗАВЕРШЕНА</b>\n${HR}\n\nВесь цикл пройден. Красавчик!`,
+      `🏆 <b>ПРОГРАММА ЗАВЕРШЕНА</b>\n${prBanner}${HR}\n\nВесь цикл пройден. Красавчик!`,
       { reply_markup: MAIN_KEYBOARD, ...HTML }
     );
     return;
@@ -425,7 +460,7 @@ bot.callbackQuery("prog_done", async (ctx) => {
     const doneDays = (updated.currentWeek - 1) * updated.daysPerWeek + (updated.currentDay - 1);
     const pct = Math.round((doneDays / totalDays) * 100);
     await ctx.reply(
-      `✅ <b>Записано в дневник!</b>\n${HR}\n\n` +
+      `✅ <b>Записано в дневник!</b>\n${prBanner}${HR}\n\n` +
       `${bar(doneDays, totalDays)}  ${pct}%\n` +
       `<b>Дальше</b> ${DOT} Неделя ${updated.currentWeek} ${DOT} День ${updated.currentDay}\n\n` +
       formatSession(nextSess),
@@ -581,6 +616,10 @@ bot.on("message:text", async (ctx) => {
 
   // ── Custom exercise name
   if (s.state === "log_exercise_custom") {
+    if (text.length > 40) {
+      await ctx.reply(`⚠️ Слишком длинное название (макс. 40 символов). Сократи.`, HTML);
+      return;
+    }
     s.data.exercise = text;
     s.state = "log_sets";
     await ctx.reply(
@@ -602,6 +641,14 @@ bot.on("message:text", async (ctx) => {
       return;
     }
     const [sets, reps, weightKg] = nums;
+    if (sets < 1 || sets > 30 || reps < 1 || reps > 100 || weightKg <= 0 || weightKg > 600) {
+      await ctx.reply(
+        `⚠️ Числа выглядят странно: <code>${sets} подходов × ${reps} повторений × ${weightKg} кг</code>\n\n` +
+        `<i>Порядок:</i> <code>подходы × повторения × вес</code>\n<i>Например:</i> <code>4×5×120</code>`,
+        HTML
+      );
+      return;
+    }
     const exercise = String(s.data.exercise);
 
     const pr = checkPr(exercise, weightKg, reps);
@@ -766,6 +813,12 @@ bot.on("message:text", async (ctx) => {
     );
     return;
   }
+
+  // ── Нет активного диалога — подсказываем меню
+  await ctx.reply(
+    `Не понял 🤔 Выбери действие в меню ниже или нажми /help.`,
+    { reply_markup: MAIN_KEYBOARD }
+  );
 });
 
 // ── Авто-сводка по воскресеньям (18:00 Бангкок) ───────────────────────────
@@ -778,7 +831,23 @@ cron.schedule("0 18 * * 0", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
-// ── Start polling ─────────────────────────────────────────────────────────
-bot.start({
-  onStart: () => console.log("✅ Bot running…"),
+// ── Отказоустойчивость ─────────────────────────────────────────────────────
+bot.catch((err) => {
+  console.error("Handler error:", err.error);
 });
+
+process.once("SIGINT", () => bot.stop());
+process.once("SIGTERM", () => bot.stop());
+
+// ── Start polling ─────────────────────────────────────────────────────────
+async function main() {
+  await bot.api.setMyCommands([
+    { command: "start", description: "Главное меню" },
+    { command: "help", description: "Справка по функциям" },
+  ]);
+  await bot.start({
+    onStart: () => console.log("✅ Bot running…"),
+  });
+}
+
+main();

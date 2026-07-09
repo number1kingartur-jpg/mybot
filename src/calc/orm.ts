@@ -1,8 +1,10 @@
 export function calcOneRm(weightKg: number, reps: number): number {
-  if (reps === 1) return weightKg;
-  const epley = weightKg * (1 + reps / 30);
-  const brzycki = weightKg * (36 / (37 - reps));
-  const lander = (100 * weightKg) / (101.3 - 2.67123 * reps);
+  // формулы валидны до ~15 повторений; выше — только Epley (Brzycki делит на ноль при 37)
+  const r = Math.max(1, Math.min(reps, 15));
+  if (r === 1) return weightKg;
+  const epley = weightKg * (1 + r / 30);
+  const brzycki = weightKg * (36 / (37 - r));
+  const lander = (100 * weightKg) / (101.3 - 2.67123 * r);
   return Math.round(((epley + brzycki + lander) / 3) * 10) / 10;
 }
 
