@@ -64,6 +64,8 @@ export interface UserRecord {
   chatId: number;
   firstName: string;
   registeredAt: string;
+  reminderDays?: number[];  // 0=Вс … 6=Сб
+  reminderHour?: number;    // час по Asia/Bangkok
 }
 
 interface DB {
@@ -231,7 +233,7 @@ export function advanceProgramDay(userId: number): Program | null {
 // ── Bodyweight ────────────────────────────────────────────────────────────────
 export function addBodyweight(userId: number, weightKg: number): BodyweightEntry {
   const db = load();
-  const date = new Date().toISOString().slice(0, 10);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
   // одна запись в день — перезаписываем
   db.bodyweight = db.bodyweight.filter((b) => !(b.userId === userId && b.date === date));
   const row: BodyweightEntry = { userId, date, weightKg };
@@ -256,4 +258,18 @@ export function registerUser(chatId: number, firstName: string) {
 
 export function getUsers(): UserRecord[] {
   return load().users;
+}
+
+export function setReminder(chatId: number, days: number[] | null, hour: number | null) {
+  const db = load();
+  const u = db.users.find((x) => x.chatId === chatId);
+  if (!u) return;
+  if (days === null) {
+    delete u.reminderDays;
+    delete u.reminderHour;
+  } else {
+    u.reminderDays = days;
+    if (hour !== null) u.reminderHour = hour;
+  }
+  save(db);
 }

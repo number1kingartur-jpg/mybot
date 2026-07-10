@@ -3,10 +3,10 @@ import { Bot, InlineKeyboard, InputFile } from "grammy";
 import https from "https";
 import cron from "node-cron";
 import {
-  addWorkout, getWorkouts, getExercises, getWorkoutDates, removeWorkouts,
+  addWorkout, getWorkouts, getAllWorkouts, getExercises, getWorkoutDates, removeWorkouts,
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
-  registerUser, getUsers,
+  registerUser, getUsers, setReminder,
 } from "./db";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
@@ -87,7 +87,8 @@ const MODEL_LABELS: Record<string, string> = {
 };
 
 const MENU_BUTTONS = [
-  "📝 Записать тренировку", "📊 Прогресс",
+  "📝 Записать тренировку", "📔 Сегодня",
+  "📊 Прогресс", "🏆 Рекорды",
   "📋 Программа", "🧮 1RM калькулятор",
   "⚖️ Вес тела", "📈 Отчёт недели",
 ];
@@ -95,7 +96,8 @@ const MENU_BUTTONS = [
 // ── Keyboards ──────────────────────────────────────────────────────────────
 const MAIN_KEYBOARD = {
   keyboard: [
-    [{ text: "📝 Записать тренировку" }, { text: "📊 Прогресс" }],
+    [{ text: "📝 Записать тренировку" }, { text: "📔 Сегодня" }],
+    [{ text: "📊 Прогресс" }, { text: "🏆 Рекорды" }],
     [{ text: "📋 Программа" }, { text: "🧮 1RM калькулятор" }],
     [{ text: "⚖️ Вес тела" }, { text: "📈 Отчёт недели" }],
   ],
@@ -189,7 +191,75 @@ function daysKeyboard() {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  // en-CA → YYYY-MM-DD; дата по Бангкоку, а не UTC
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
+}
+
+function bangkokNow(): { dow: number; hour: number } {
+  const s = new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" });
+  const d = new Date(s);
+  return { dow: d.getDay(), hour: d.getHours() };
+}
+
+// ── Стрик: сколько недель подряд есть хотя бы одна тренировка ───────────────
+function weekKey(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  const dow = (d.getUTCDay() + 6) % 7; // Пн=0
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
+function shiftWeek(key: string, weeks: number): string {
+  const d = new Date(key + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + weeks * 7);
+  return d.toISOString().slice(0, 10);
+}
+
+function weekStreak(userId: number): number {
+  const weeks = new Set(getWorkoutDates(userId).map(weekKey));
+  let cur = weekKey(today());
+  if (!weeks.has(cur)) cur = shiftWeek(cur, -1); // текущая неделя ещё может случиться
+  let streak = 0;
+  while (weeks.has(cur)) {
+    streak++;
+    cur = shiftWeek(cur, -1);
+  }
+  return streak;
+}
+
+// ── Разминка: ramp-подходы + раскладка блинов ────────────────────────────────
+const BAR_KG = 20;
+const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
+
+function platesPerSide(weight: number): string {
+  let rest = (weight - BAR_KG) / 2;
+  if (rest <= 0) return "пустой гриф";
+  const out: string[] = [];
+  for (const p of PLATES) {
+    while (rest >= p - 0.01) {
+      out.push(String(p));
+      rest -= p;
+    }
+  }
+  return out.join("+") || "пустой гриф";
+}
+
+function warmupText(workKg: number): string {
+  const steps: { pct: number; reps: number }[] = [
+    { pct: 0.4, reps: 5 }, { pct: 0.55, reps: 4 }, { pct: 0.7, reps: 3 }, { pct: 0.85, reps: 2 },
+  ];
+  const lines: string[] = [`Гриф ${BAR_KG} кг × 10`];
+  for (const st of steps) {
+    const w = Math.round((workKg * st.pct) / 2.5) * 2.5;
+    if (w <= BAR_KG + 2 || w >= workKg - 2) continue;
+    lines.push(`${w} кг × ${st.reps}   <i>(${platesPerSide(w)})</i>`);
+  }
+  return (
+    `🧊 <b>РАЗМИНКА до ${workKg} кг</b>\n${HR}\n\n` +
+    lines.map((l) => `▪️ ${l}`).join("\n") +
+    `\n▪️ <b>${workKg} кг — рабочий</b>   <i>(${platesPerSide(workKg)})</i>\n\n` +
+    `<i>В скобках — блины на одну сторону грифа ${BAR_KG} кг.\nОтдых между разминочными: 60–90 сек.</i>`
+  );
 }
 
 const TEMPLATE_MODELS = new Set(["531", "gzclp"]);
@@ -237,7 +307,7 @@ function formatSession(sess: Sess): string {
 const undoStore = new Map<number, string[]>();
 let undoCounter = 0;
 
-function logParsed(userId: number, parsed: ParsedExercise[]): { html: string; undoId: number } {
+function logParsed(userId: number, parsed: ParsedExercise[]): { html: string; undoId: number; maxW: number } {
   const ids: string[] = [];
   const lines: string[] = [];
 
@@ -278,23 +348,27 @@ function logParsed(userId: number, parsed: ParsedExercise[]): { html: string; un
     if (oldest !== undefined) undoStore.delete(oldest);
   }
 
+  const maxW = Math.max(...parsed.flatMap((p) => p.groups.map((g) => g.weightKg)));
   return {
     html: `✅ <b>ЗАПИСАНО</b>\n${HR}\n\n${lines.join("\n\n")}`,
     undoId,
+    maxW,
   };
 }
 
-function undoKeyboard(undoId: number) {
-  return {
-    inline_keyboard: [
-      [{ text: "↩️ Отменить запись", callback_data: `undo_${undoId}` }],
-      [
-        { text: "⏱ Отдых 2 мин", callback_data: "rest_120" },
-        { text: "3 мин", callback_data: "rest_180" },
-        { text: "4 мин", callback_data: "rest_240" },
-      ],
+function undoKeyboard(undoId: number, warmKg = 0) {
+  const rows = [
+    [{ text: "↩️ Отменить запись", callback_data: `undo_${undoId}` }],
+    [
+      { text: "⏱ Отдых 2 мин", callback_data: "rest_120" },
+      { text: "3 мин", callback_data: "rest_180" },
+      { text: "4 мин", callback_data: "rest_240" },
     ],
-  };
+  ];
+  if (warmKg >= 30) {
+    rows.push([{ text: `🧊 Разминка до ${warmKg} кг`, callback_data: `warm_${warmKg}` }]);
+  }
+  return { inline_keyboard: rows };
 }
 
 // ── Календарь месяца ────────────────────────────────────────────────────────
@@ -405,8 +479,11 @@ bot.command("help", async (ctx) => {
   await ctx.reply(
     `❓ <b>СПРАВКА</b>\n${HR}\n\n` +
     `📝 <b>Записать тренировку</b>\nПросто напиши в чат: <code>присед 100 5х5</code>. Разные веса: <code>жим 60х8, 80х5, 100х3</code>. Несколько упражнений — с новой строки. Можно голосовым 🎙. Бот сам заметит рекорды. Кнопка «📝» — если удобнее пошагово.\n\n` +
+    `📔 <b>Сегодня</b>\nВсё, что записано за день: тоннаж, стрик, удаление лишнего, экспорт CSV.\n\n` +
     `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению. Внутри — календарь месяца: видно, в какие дни тренировался.\n\n` +
-    `⏱ <b>Таймер отдыха</b>\nПод каждой записью — кнопки 2/3/4 мин, бот напомнит о следующем подходе.\n\n` +
+    `🏆 <b>Рекорды</b>\nЛучший вес и расчётный максимум по всем упражнениям на одном экране.\n\n` +
+    `⏱ <b>Таймер отдыха и 🧊 разминка</b>\nПод каждой записью — таймер 2/3/4 мин и разминочные подходы с раскладкой блинов.\n\n` +
+    `⏰ <b>Напоминания</b> — /remind\nВыбери дни и час — бот напомнит о тренировке, если её ещё нет в дневнике.\n\n` +
     `📋 <b>Программа</b>\nГотовый план на недели: DUP, 5/3/1, GZCLP и другие. Вводишь 1RM по каждому движению — получаешь расписание с весами. Отмечай «Выполнено» — бот ведёт по циклу и логирует за тебя.\n\n` +
     `🧮 <b>1RM калькулятор</b>\n<code>100×5</code> — расчёт максимума, или одно число <code>140</code> — таблица % от известной одиночки.\n\n` +
     `⚖️ <b>Вес тела</b>\nВводи вес — получишь график динамики.\n\n` +
@@ -654,8 +731,9 @@ bot.hears("📋 Программа", async (ctx) => {
     .row()
     .text("📄 Вся программа", "prog_full")
     .text("❓ Как читать", "prog_help")
-    .row()
-    .text("🗑 Сбросить", "prog_reset");
+    .row();
+  if (session.weightKg >= 30) kb.text("🧊 Разминка", `warm_${session.weightKg}`);
+  kb.text("🗑 Сбросить", "prog_reset");
 
   const totalDays = prog.weeks * prog.daysPerWeek;
   const doneDays = (prog.currentWeek - 1) * prog.daysPerWeek + (prog.currentDay - 1);
@@ -872,6 +950,183 @@ bot.callbackQuery(/^pd_(\d+)$/, async (ctx) => {
   );
 });
 
+// ── Сегодня: дневник дня ─────────────────────────────────────────────────
+function buildTodayView(userId: number): { text: string; kb: InlineKeyboard } {
+  const rows = getAllWorkouts(userId).filter((w) => w.date === today());
+  const streak = weekStreak(userId);
+  const streakLine = streak >= 2 ? `\n🔥 <b>Стрик: ${streak} нед. подряд с тренировками</b>` : "";
+
+  const kb = new InlineKeyboard();
+  if (rows.length === 0) {
+    kb.text("📤 Экспорт CSV", "exp_csv");
+    return {
+      text:
+        `📔 <b>СЕГОДНЯ</b>\n${HR}\n\n` +
+        `Записей пока нет.\n<i>Напиши в чат:</i> <code>присед 100 5х5</code>${streakLine}`,
+      kb,
+    };
+  }
+
+  const tonnage = rows.reduce((t, w) => t + w.sets * w.reps * w.weightKg, 0);
+  const lines = rows.map((w, i) => {
+    const load = w.weightKg > 0 ? ` @ ${w.weightKg} кг` : " (свой вес)";
+    return `${i + 1}. <b>${esc(w.exercise)}</b> — ${w.sets}×${w.reps}${load}`;
+  });
+
+  rows.forEach((w, i) => {
+    kb.text(`🗑 ${i + 1}`, `del_${w.id}`);
+    if ((i + 1) % 4 === 0) kb.row();
+  });
+  if (rows.length % 4 !== 0) kb.row();
+  kb.text("📤 Экспорт CSV", "exp_csv");
+
+  return {
+    text:
+      `📔 <b>СЕГОДНЯ</b> ${DOT} ${today().slice(8)}.${today().slice(5, 7)}\n${HR}\n\n` +
+      lines.join("\n") +
+      `\n\n💪 <b>Тоннаж дня: ${Math.round(tonnage)} кг</b>${streakLine}\n\n` +
+      `<i>🗑 с номером — удалить запись</i>`,
+    kb,
+  };
+}
+
+bot.hears("📔 Сегодня", async (ctx) => {
+  resetSession(ctx.from!.id);
+  const { text, kb } = buildTodayView(ctx.from!.id);
+  await ctx.reply(text, { reply_markup: kb, ...HTML });
+});
+
+bot.callbackQuery(/^del_(.+)$/, async (ctx) => {
+  removeWorkouts([ctx.match[1]]);
+  await ctx.answerCallbackQuery("Удалено");
+  const { text, kb } = buildTodayView(ctx.from.id);
+  try {
+    await ctx.editMessageText(text, { reply_markup: kb, ...HTML });
+  } catch { /* сообщение не изменилось */ }
+});
+
+bot.callbackQuery("exp_csv", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const rows = getAllWorkouts(ctx.from.id);
+  if (rows.length === 0) {
+    await ctx.reply("Экспортировать пока нечего.");
+    return;
+  }
+  const csv =
+    "\uFEFFdate,exercise,sets,reps,weight_kg,notes\n" +
+    rows
+      .map((w) => `${w.date},"${w.exercise.replace(/"/g, '""')}",${w.sets},${w.reps},${w.weightKg},"${(w.notes ?? "").replace(/"/g, '""')}"`)
+      .join("\n");
+  await ctx.replyWithDocument(new InputFile(Buffer.from(csv, "utf-8"), "workouts.csv"), {
+    caption: `📤 Все тренировки: ${rows.length} записей`,
+  });
+});
+
+// ── Рекорды ──────────────────────────────────────────────────────────────
+bot.hears("🏆 Рекорды", async (ctx) => {
+  resetSession(ctx.from!.id);
+  const all = getAllWorkouts(ctx.from!.id).filter((w) => w.weightKg > 0);
+  if (all.length === 0) {
+    await ctx.reply(
+      `🏆 <b>РЕКОРДЫ</b>\n${HR}\n\nПока пусто. Запиши тренировку — рекорды появятся сами.`,
+      HTML
+    );
+    return;
+  }
+
+  interface Rec { bestW: number; bestWDate: string; bestE1rm: number }
+  const map = new Map<string, Rec>();
+  for (const w of all) {
+    const e1 = w.reps <= 1 ? w.weightKg : w.weightKg * (1 + w.reps / 30);
+    const cur = map.get(w.exercise) ?? { bestW: 0, bestWDate: "", bestE1rm: 0 };
+    if (w.weightKg > cur.bestW) { cur.bestW = w.weightKg; cur.bestWDate = w.date; }
+    if (e1 > cur.bestE1rm) cur.bestE1rm = e1;
+    map.set(w.exercise, cur);
+  }
+
+  const lines = [...map.entries()]
+    .sort((a, b) => b[1].bestW - a[1].bestW)
+    .map(([ex, r]) => {
+      const d = `${r.bestWDate.slice(8)}.${r.bestWDate.slice(5, 7)}`;
+      return `<b>${esc(ex)}</b>\n<code>${String(r.bestW).padStart(5)} кг  ${DOT}  ${d}  ${DOT}  e1RM ${Math.round(r.bestE1rm)}</code>`;
+    });
+
+  await ctx.reply(
+    `🏆 <b>РЕКОРДЫ</b>\n${HR}\n\n${lines.join("\n\n")}\n\n` +
+    `<i>e1RM — расчётный максимум на 1 раз (Эпли).</i>`,
+    HTML
+  );
+});
+
+// ── Разминка ─────────────────────────────────────────────────────────────
+bot.callbackQuery(/^warm_(\d+(?:\.\d+)?)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(warmupText(parseFloat(ctx.match[1])), HTML);
+});
+
+// ── Напоминания ──────────────────────────────────────────────────────────
+const REMIND_PRESETS: Record<string, { label: string; days: number[] }> = {
+  mwf: { label: "Пн · Ср · Пт", days: [1, 3, 5] },
+  tts: { label: "Вт · Чт · Сб", days: [2, 4, 6] },
+  wkd: { label: "Пн – Пт", days: [1, 2, 3, 4, 5] },
+  all: { label: "Каждый день", days: [0, 1, 2, 3, 4, 5, 6] },
+};
+
+bot.command("remind", async (ctx) => {
+  resetSession(ctx.from!.id);
+  const kb = new InlineKeyboard();
+  for (const [key, p] of Object.entries(REMIND_PRESETS)) kb.text(p.label, `rem_${key}`).row();
+  kb.text("🔕 Выключить напоминания", "rem_off");
+  await ctx.reply(
+    `⏰ <b>НАПОМИНАНИЯ О ТРЕНИРОВКАХ</b>\n${HR}\n\n` +
+    `Выбери дни — пришлю напоминание, если в этот день ещё не было записи:`,
+    { reply_markup: kb, ...HTML }
+  );
+});
+
+bot.callbackQuery(/^rem_(.+)$/, async (ctx) => {
+  const key = ctx.match[1];
+  if (key === "off") {
+    setReminder(ctx.from.id, null, null);
+    await ctx.answerCallbackQuery("Выключено");
+    await ctx.editMessageText(`🔕 <b>Напоминания выключены</b>`, HTML);
+    return;
+  }
+  const preset = REMIND_PRESETS[key];
+  if (!preset) return;
+  const s = getSession(ctx.from.id);
+  s.data.remDays = key;
+  await ctx.answerCallbackQuery();
+  const kb = new InlineKeyboard();
+  [7, 9, 12, 15, 17, 19].forEach((h, i) => {
+    kb.text(`${h}:00`, `rh_${h}`);
+    if ((i + 1) % 3 === 0) kb.row();
+  });
+  await ctx.editMessageText(
+    `⏰ <b>${preset.label}</b>\n\nВ котором часу напоминать? <i>(время Бангкока)</i>`,
+    { reply_markup: kb, ...HTML }
+  );
+});
+
+bot.callbackQuery(/^rh_(\d+)$/, async (ctx) => {
+  const hour = parseInt(ctx.match[1]);
+  const s = getSession(ctx.from.id);
+  const preset = REMIND_PRESETS[String(s.data.remDays)];
+  if (!preset) {
+    await ctx.answerCallbackQuery("Начни заново: /remind");
+    return;
+  }
+  setReminder(ctx.from.id, preset.days, hour);
+  resetSession(ctx.from.id);
+  await ctx.answerCallbackQuery("Готово");
+  await ctx.editMessageText(
+    `✅ <b>Напоминания включены</b>\n${HR}\n\n` +
+    `📅 ${preset.label}\n🕐 ${hour}:00 (Бангкок)\n\n` +
+    `<i>Если тренировка уже записана — напоминание не приходит. Выключить: /remind</i>`,
+    HTML
+  );
+});
+
 // ── Таймер отдыха ────────────────────────────────────────────────────────
 bot.callbackQuery(/^rest_(\d+)$/, async (ctx) => {
   const seconds = parseInt(ctx.match[1]);
@@ -930,10 +1185,10 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
       return;
     }
 
-    const { html, undoId } = logParsed(ctx.from!.id, parsed);
+    const { html, undoId, maxW } = logParsed(ctx.from!.id, parsed);
     await ctx.reply(
       `🎙 <i>«${esc(text)}»</i>\n\n${html}`,
-      { reply_markup: undoKeyboard(undoId), ...HTML }
+      { reply_markup: undoKeyboard(undoId, maxW), ...HTML }
     );
   } catch (e) {
     console.error("voice error:", e);
@@ -980,8 +1235,8 @@ bot.on("message:text", async (ctx) => {
     }
     const exercise = String(s.data.exercise);
     resetSession(userId);
-    const { html, undoId } = logParsed(userId, [{ exercise, groups }]);
-    await ctx.reply(html, { reply_markup: undoKeyboard(undoId), ...HTML });
+    const { html, undoId, maxW } = logParsed(userId, [{ exercise, groups }]);
+    await ctx.reply(html, { reply_markup: undoKeyboard(undoId, maxW), ...HTML });
     return;
   }
 
@@ -1152,8 +1407,8 @@ bot.on("message:text", async (ctx) => {
   // ── Нет активного диалога — пробуем распознать тренировку свободным текстом
   const parsed = parseWorkout(text);
   if (parsed.length > 0) {
-    const { html, undoId } = logParsed(userId, parsed);
-    await ctx.reply(html, { reply_markup: undoKeyboard(undoId), ...HTML });
+    const { html, undoId, maxW } = logParsed(userId, parsed);
+    await ctx.reply(html, { reply_markup: undoKeyboard(undoId, maxW), ...HTML });
     return;
   }
 
@@ -1177,6 +1432,23 @@ cron.schedule("0 18 * * 0", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
+// ── Напоминания о тренировках (каждый час, по расписанию юзера) ────────────
+cron.schedule("0 * * * *", async () => {
+  const { dow, hour } = bangkokNow();
+  for (const u of getUsers()) {
+    if (!u.reminderDays?.includes(dow) || u.reminderHour !== hour) continue;
+    // уже тренировался сегодня — не дёргаем
+    if (getWorkoutDates(u.chatId).includes(today())) continue;
+    try {
+      await bot.api.sendMessage(
+        u.chatId,
+        `⏰ <b>Сегодня тренировка!</b>\n\n<i>После зала просто напиши сюда что сделал — например</i> <code>присед 100 5х5</code>`,
+        { parse_mode: "HTML" }
+      );
+    } catch { /* пользователь заблокировал бота */ }
+  }
+}, { timezone: "Asia/Bangkok" });
+
 // ── Отказоустойчивость ─────────────────────────────────────────────────────
 bot.catch((err) => {
   console.error("Handler error:", err.error);
@@ -1189,6 +1461,7 @@ process.once("SIGTERM", () => bot.stop());
 async function main() {
   await bot.api.setMyCommands([
     { command: "start", description: "Главное меню" },
+    { command: "remind", description: "Напоминания о тренировках" },
     { command: "help", description: "Справка по функциям" },
   ]);
   await bot.start({
