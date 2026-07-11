@@ -9,7 +9,7 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   type NutritionProfile,
 } from "./db";
-import { calcMacros } from "./nutrition";
+import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
@@ -178,13 +178,43 @@ function categoryExercisesKeyboard(catIdx: number): InlineKeyboard {
   return kb.text("⬅️ Категории", "exi_custom");
 }
 
-async function promptLoad(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, exercise: string) {
+/** Подсказка следующего веса по последней тренировке (подход Dr. Muscle). */
+function nextLoadHint(userId: number, exercise: string): string {
+  const prior = getWorkouts(userId, exercise, 50);
+  if (prior.length === 0) return "";
+
+  const lastDate = prior[prior.length - 1].date;
+  const lastDay = prior.filter((w) => w.date === lastDate);
+  const top = lastDay.reduce((a, b) => (b.weightKg > a.weightKg ? b : a));
+  if (top.weightKg <= 0) {
+    return `\n📌 <i>Прошлый раз (${lastDate.slice(8)}.${lastDate.slice(5, 7)}): ${top.sets}×${top.reps} со своим весом. Попробуй +1–2 повторения.</i>`;
+  }
+
+  // прогрессия: многоповторка растёт весом, малоповторка — повторением или +2.5 кг
+  const inc = top.weightKg >= 100 ? 5 : 2.5;
+  const suggestion =
+    top.reps >= 8
+      ? `попробуй <b>${top.weightKg + inc} кг</b> или +1–2 повторения`
+      : `попробуй <b>+1 повтор</b> с тем же весом или <b>${top.weightKg + 2.5} кг</b>`;
+
+  return (
+    `\n📌 <i>Прошлый раз (${lastDate.slice(8)}.${lastDate.slice(5, 7)}): ${top.sets}×${top.reps} @ ${top.weightKg} кг.</i>\n` +
+    `💡 <i>Если было с запасом — ${suggestion}.</i>`
+  );
+}
+
+async function promptLoad(
+  ctx: { reply: (t: string, o?: object) => Promise<unknown> },
+  userId: number,
+  exercise: string
+) {
   await ctx.reply(
     `✅ <b>${esc(exercise)}</b>\n${HR}\n\n` +
     `Введи нагрузку — любой формат:\n\n` +
     `<code>4×5×120</code> — 4 подхода по 5 на 120 кг\n` +
     `<code>60х8, 80х5, 100х3</code> — разные веса\n` +
-    `<code>4 подхода по 10 раз 30 кг</code> — словами`,
+    `<code>4 подхода по 10 раз 30 кг</code> — словами` +
+    nextLoadHint(userId, exercise),
     HTML
   );
 }
@@ -246,11 +276,36 @@ function weekStreak(userId: number): number {
   let cur = weekKey(today());
   if (!weeks.has(cur)) cur = shiftWeek(cur, -1); // текущая неделя ещё может случиться
   let streak = 0;
-  while (weeks.has(cur)) {
-    streak++;
+  let freezeUsed = false; // «заморозка» (как в Nike Run Club): одна пропущенная неделя стрик не рушит
+  while (true) {
+    if (weeks.has(cur)) {
+      streak++;
+    } else if (streak > 0 && !freezeUsed) {
+      freezeUsed = true; // пропуск прощён, но неделя в стрик не идёт
+    } else {
+      break;
+    }
     cur = shiftWeek(cur, -1);
   }
   return streak;
+}
+
+// ── Медали месяца (механика Keep: виртуальные награды за объём месяца) ───────
+const MEDALS: { min: number; emoji: string; label: string }[] = [
+  { min: 18, emoji: "🥇", label: "золото" },
+  { min: 14, emoji: "🥈", label: "серебро" },
+  { min: 10, emoji: "🥉", label: "бронза" },
+];
+
+function medalLine(trainedDays: number): string {
+  const earned = MEDALS.find((m) => trainedDays >= m.min);
+  if (earned) {
+    const next = MEDALS[MEDALS.indexOf(earned) - 1];
+    const upgrade = next ? ` ${DOT} до ${next.emoji} осталось ${next.min - trainedDays}` : " — максимум!";
+    return `${earned.emoji} <b>Медаль месяца: ${earned.label}</b>${upgrade}`;
+  }
+  const first = MEDALS[MEDALS.length - 1];
+  return `🎖 До медали ${first.emoji} осталось ${first.min - trainedDays} тренировок (нужно ${first.min} за месяц)`;
 }
 
 // ── Разминка: ramp-подходы + раскладка блинов ────────────────────────────────
@@ -431,7 +486,8 @@ function monthCalendar(userId: number): string {
     `🗓 <b>${MONTH_NAMES[month]} ${year}</b>\n` +
     `<i>Тренировок: ${trained.size} ${DOT} ряд = неделя (Пн–Вс)</i>\n\n` +
     grid.trimEnd() +
-    `\n\n🟩 тренировка ${DOT} 🔲 сегодня`
+    `\n\n🟩 тренировка ${DOT} 🔲 сегодня\n\n` +
+    medalLine(trained.size)
   );
 }
 
@@ -527,8 +583,25 @@ bot.callbackQuery(/^mode_(simple|pro)$/, async (ctx) => {
   registerUser(ctx.from.id, ctx.from.first_name ?? "");
   updateUser(ctx.from.id, { mode });
   await ctx.answerCallbackQuery();
-  if (mode === "simple") await sendSimpleWelcome(ctx, ctx.from.first_name ?? "друг");
-  else await sendProWelcome(ctx, ctx.from.first_name ?? "атлет");
+
+  // «Нулевой день» (находка MyFitnessPal): пользователь, сделавший реальное действие
+  // в первую же сессию, остаётся в разы чаще — сразу ведём к действию, а не к чтению меню.
+  if (mode === "simple") {
+    await sendSimpleWelcome(ctx, ctx.from.first_name ?? "друг");
+    await ctx.reply(
+      `🎯 <b>Начнём прямо сейчас — где тебе удобнее заниматься?</b>\n\n<i>Покажу первую тренировку, займёт 20–30 минут. Это можно поменять в любой момент.</i>`,
+      { reply_markup: PLACE_KEYBOARD, ...HTML }
+    );
+  } else {
+    await sendProWelcome(ctx, ctx.from.first_name ?? "атлет");
+    await ctx.reply(
+      `🎯 <b>Первый шаг — прямо сейчас, 10 секунд:</b>\n\n` +
+      `Вспомни последнюю тренировку и напиши её одной строкой, например:\n` +
+      `<code>присед 100 5х5</code>\n\n` +
+      `<i>С первой записи начнёт копиться история, рекорды и графики.</i>`,
+      HTML
+    );
+  }
 });
 
 // ── Простой режим: тренировка на сегодня ────────────────────────────────────
@@ -545,6 +618,21 @@ function currentSimpleWorkout(userId: number) {
   const idx = u?.simpleIdx ?? 0;
   const plan = SIMPLE_PLANS[place];
   return { place, idx, w: plan[idx % plan.length] };
+}
+
+/** Совет по сложности на основе фидбэка после прошлых тренировок (подход Freeletics). */
+function diffAdvice(userId: number, place: Place): string {
+  const diff = getUser(userId)?.simpleDiff ?? 0;
+  if (diff >= 3 && place === "home") {
+    return `\n\n🔥 <i>Тебе стабильно легко — пора усложняться! Открой «❓ Как делать» и переходи на следующий вариант упражнений (например, с отжиманий от стены — к отжиманиям от стола).</i>`;
+  }
+  if (diff >= 1) {
+    return `\n\n🔥 <i>Прошлый раз было легко — сегодня добавь по ${diff * 2} повторения к каждому подходу${place === "gym" ? " или +2.5 кг к весу" : ""}.</i>`;
+  }
+  if (diff <= -1) {
+    return `\n\n🟢 <i>Прошлый раз было тяжело — сегодня сделай на 2 повторения меньше в каждом подходе или возьми облегчённый вариант («❓ Как делать» → «Если тяжело»). Это нормально, форма придёт.</i>`;
+  }
+  return "";
 }
 
 async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, userId: number) {
@@ -564,6 +652,7 @@ async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promis
   });
   if (w.items.length % 2 !== 0) kb.row();
   kb.text("✅ Выполнил — записать", "simple_done").row();
+  kb.text("⚡ Нет времени — 15 минут", "simple_short").row();
   kb.text(place === "gym" ? "⚖️ Как выбрать вес" : "📈 Стало легко?", "simple_weight")
     .text("🔄 Дома/зал", "simple_place");
 
@@ -571,6 +660,7 @@ async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promis
     `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
     `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом. Тело должно согреться.</i>\n\n` +
     items +
+    diffAdvice(userId, place) +
     `\n\n⏱ <i>Отдых между подходами: 1.5–2 минуты.\nНе знаешь, как делать упражнение, — жми «❓ Как делать».</i>`,
     { reply_markup: kb, ...HTML }
   );
@@ -637,6 +727,46 @@ bot.callbackQuery("simple_weight", async (ctx) => {
   );
 });
 
+// Экспресс-версия на 15 минут: 3 упражнения × 2 подхода (у 400 млн юзеров Keep средняя тренировка — 20 мин)
+bot.callbackQuery("simple_short", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const userId = ctx.from.id;
+  const { place, w } = currentSimpleWorkout(userId);
+
+  const shortItems = w.items.slice(0, 3);
+  const items = shortItems
+    .map((e, i) =>
+      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(e.scheme.replace(/^3 подхода/, "2 подхода"))}\n` +
+      `<i>${esc(e.short)}</i>`
+    )
+    .join("\n\n");
+
+  const kb = new InlineKeyboard();
+  shortItems.forEach((_, i) => {
+    kb.text(`❓ ${i + 1}. Как делать`, `sdet_${i}`);
+    if (i % 2 === 1) kb.row();
+  });
+  if (shortItems.length % 2 !== 0) kb.row();
+  kb.text("✅ Выполнил — записать", "simple_done");
+
+  await ctx.reply(
+    `⚡ <b>ЭКСПРЕСС ${w.label}</b> ${DOT} ~15 минут ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
+    `<i>Разминка: 2–3 минуты ходьбы на месте и махов руками.</i>\n\n` +
+    items +
+    `\n\n⏱ <i>Отдых между подходами: 1 минута.\n` +
+    `Короткая тренировка лучше пропущенной — 15 минут тоже засчитываются!</i>`,
+    { reply_markup: kb, ...HTML }
+  );
+});
+
+const FEEDBACK_KEYBOARD = {
+  inline_keyboard: [[
+    { text: "😮‍💨 Тяжело", callback_data: "sfb_hard" },
+    { text: "👌 Норм", callback_data: "sfb_ok" },
+    { text: "😴 Легко", callback_data: "sfb_easy" },
+  ]],
+};
+
 bot.callbackQuery("simple_done", async (ctx) => {
   const userId = ctx.from.id;
   const { idx, w, place } = currentSimpleWorkout(userId);
@@ -661,9 +791,36 @@ bot.callbackQuery("simple_done", async (ctx) => {
   await ctx.reply(
     `✅ <b>ТРЕНИРОВКА ЗАПИСАНА</b>\n${HR}\n\n` +
     `Отличная работа! Это твоя тренировка №${total}.${streakLine}\n\n` +
-    `<i>Следующая — «Тренировка ${plan[(idx + 1) % plan.length].label}», через 1–2 дня отдыха.</i>`,
-    HTML
+    `<i>Следующая — «Тренировка ${plan[(idx + 1) % plan.length].label}», через 1–2 дня отдыха.</i>\n\n` +
+    `<b>Как зашло?</b> <i>По ответу подстрою следующую тренировку.</i>`,
+    { reply_markup: FEEDBACK_KEYBOARD, ...HTML }
   );
+});
+
+// Фидбэк → адаптация следующей тренировки (подход Freeletics)
+bot.callbackQuery(/^sfb_(hard|ok|easy)$/, async (ctx) => {
+  const userId = ctx.from.id;
+  const fb = ctx.match[1];
+  const cur = getUser(userId)?.simpleDiff ?? 0;
+
+  let next = cur;
+  let msg: string;
+  if (fb === "easy") {
+    next = Math.min(cur + 1, 4);
+    msg = `😴 Понял — в следующий раз будет посложнее: добавим повторений.`;
+  } else if (fb === "hard") {
+    next = Math.max(cur - 1, -1);
+    msg = `😮‍💨 Понял — следующую сделаем чуть легче. Тяжело — это нормально, тело адаптируется.`;
+  } else {
+    msg = `👌 Отлично — нагрузка в самый раз, продолжаем по плану.`;
+  }
+  updateUser(userId, { simpleDiff: next });
+
+  await ctx.answerCallbackQuery("Учёл!");
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+  } catch { /* skip */ }
+  await ctx.reply(msg);
 });
 
 // ── Простой режим: прогресс и помощь ────────────────────────────────────────
@@ -793,7 +950,7 @@ bot.callbackQuery(/^exi_(.+)$/, async (ctx) => {
 
   s.data.exercise = exercise;
   s.state = "log_sets";
-  await promptLoad(ctx, exercise);
+  await promptLoad(ctx, ctx.from!.id, exercise);
 });
 
 // Каталог: выбор категории
@@ -825,7 +982,7 @@ bot.callbackQuery(/^cex_(\d+)_(\d+)$/, async (ctx) => {
   if (!exercise) return;
   s.data.exercise = exercise;
   s.state = "log_sets";
-  await promptLoad(ctx, exercise);
+  await promptLoad(ctx, ctx.from!.id, exercise);
 });
 
 // Совместимость со старыми сообщениями, где коллбэк содержит имя упражнения
@@ -991,6 +1148,8 @@ bot.hears("📋 Программа", async (ctx) => {
     .text("✅ Выполнено", "prog_done")
     .text("⏭ Пропустить", "prog_skip")
     .row()
+    .text("🎚 Как самочувствие?", "rdy_ask")
+    .row()
     .text("📄 Вся программа", "prog_full")
     .text("❓ Как читать", "prog_help")
     .row();
@@ -1068,6 +1227,64 @@ bot.callbackQuery("prog_done", async (ctx) => {
       `${bar(doneDays, totalDays)}  ${pct}%\n` +
       `<b>Дальше</b> ${DOT} Неделя ${updated.currentWeek} ${DOT} День ${updated.currentDay}\n\n` +
       formatSession(nextSess),
+      HTML
+    );
+  }
+});
+
+// ── Готовность к тренировке (подход JuggernautAI: нагрузка подстраивается под состояние)
+bot.callbackQuery("rdy_ask", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `🎚 <b>КАК СОСТОЯНИЕ СЕГОДНЯ?</b>\n${HR}\n\n<i>Сон, усталость, настрой — подстрою сегодняшнюю нагрузку.</i>`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🔥 Отлично — полон сил", callback_data: "rdy_good" }],
+          [{ text: "👌 Нормально", callback_data: "rdy_mid" }],
+          [{ text: "😮‍💨 Разбит: плохо спал / устал", callback_data: "rdy_bad" }],
+        ],
+      },
+      ...HTML,
+    }
+  );
+});
+
+bot.callbackQuery(/^rdy_(good|mid|bad)$/, async (ctx) => {
+  const level = ctx.match[1];
+  await ctx.answerCallbackQuery();
+
+  const prog = getActiveProgram(ctx.from.id);
+  const weekData = prog?.weeksData.find((w) => w.week === prog.currentWeek);
+  const session = weekData?.sessions.find((s) => s.day === prog!.currentDay);
+
+  if (level === "good") {
+    const extra = session && session.weightKg > 0
+      ? `Идёшь по плану (${session.weightKg} кг). Чувствуешь запас в последнем подходе — можно добавить 2.5 кг или 1 повтор.`
+      : `Идёшь по плану. Чувствуешь запас — добавь чуть-чуть в последнем подходе.`;
+    await ctx.editMessageText(`🔥 <b>Полон сил — отлично!</b>\n\n${extra}`, HTML);
+    return;
+  }
+  if (level === "mid") {
+    await ctx.editMessageText(
+      `👌 <b>Рабочее состояние.</b>\n\nДелай ровно по плану, без героизма. Стабильность бьёт интенсивность.`,
+      HTML
+    );
+    return;
+  }
+  // bad: −10% к рабочему весу, объём сохраняем
+  if (session && session.weightKg > 0) {
+    const reduced = Math.round((session.weightKg * 0.9) / 2.5) * 2.5;
+    await ctx.editMessageText(
+      `😮‍💨 <b>Понял — сегодня работаем легче.</b>\n\n` +
+      `Возьми <b>${reduced} кг вместо ${session.weightKg}</b> (−10%), подходы и повторения те же.\n\n` +
+      `<i>Лёгкая тренировка в плохой день сохраняет прогресс лучше, чем пропуск или геройство. Выспись сегодня — недосып главный враг восстановления.</i>`,
+      HTML
+    );
+  } else {
+    await ctx.editMessageText(
+      `😮‍💨 <b>Понял — сегодня работаем легче.</b>\n\n` +
+      `Сократи нагрузку примерно на треть: меньше подходов или легче вариант. Главное — не пропускать совсем.`,
       HTML
     );
   }
@@ -1394,9 +1611,20 @@ const GOAL_NUT_LABELS: Record<string, string> = {
   bulk: "Набор массы", cut: "Сушка / снижение жира", maint: "Поддержание",
 };
 
-function nutritionText(p: NutritionProfile, actualWeight?: number): string {
+function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: number): string {
   const m = calcMacros(p, actualWeight);
   const w = actualWeight ?? p.weightKg;
+
+  // Адаптивная корректировка по фактическому тренду веса (подход MacroFactor)
+  let trendBlock = "";
+  if (userId !== undefined) {
+    const advice = weightTrendAdvice(getBodyweight(userId, 60), p.goal);
+    if (advice) {
+      const target = advice.kcalDelta !== 0 ? `\n<b>Новая цель: ${m.kcal + advice.kcalDelta} ккал/день</b>` : "";
+      trendBlock = `\n\n📊 <b>По твоим взвешиваниям:</b>\n<i>${esc(advice.text)}</i>${target}`;
+    }
+  }
+
   return (
     `🍗 <b>ПИТАНИЕ ${DOT} ${GOAL_NUT_LABELS[p.goal]}</b>\n${HR}\n\n` +
     `<i>Расчёт под вес ${w} кг (Миффлин – Сан-Жеор)</i>\n\n` +
@@ -1405,9 +1633,10 @@ function nutritionText(p: NutritionProfile, actualWeight?: number): string {
     `<code>Жиры      ${String(m.fatG).padStart(4)} г   ${m.fatG * 9} ккал</code>\n` +
     `<code>Углеводы  ${String(m.carbsG).padStart(4)} г   ${m.carbsG * 4} ккал</code>\n\n` +
     `<code>Базовый обмен   ${m.bmr} ккал</code>\n` +
-    `<code>Расход с учётом активности  ${m.tdee} ккал</code>\n\n` +
-    `💡 <i>Белок раскидай на 3–5 приёмов по 25–50 г. Вода: ~${Math.round(w * 35 / 100) * 100} мл/день. ` +
-    `Взвешивайся раз в неделю утром — если вес не движется 2–3 недели, скорректируй калории на ±200.</i>`
+    `<code>Расход с учётом активности  ${m.tdee} ккал</code>` +
+    trendBlock +
+    `\n\n💡 <i>Белок раскидай на 3–5 приёмов по 25–50 г. Вода: ~${Math.round(w * 35 / 100) * 100} мл/день. ` +
+    `Взвешивайся 2–3 раза в неделю утром — чем больше точек, тем точнее я скорректирую калории по реальному тренду.</i>`
   );
 }
 
@@ -1419,7 +1648,7 @@ bot.hears("🍗 Питание", async (ctx) => {
   if (u?.nutrition) {
     const bw = getBodyweight(userId, 1);
     const actual = bw.length ? bw[bw.length - 1].weightKg : undefined;
-    await ctx.reply(nutritionText(u.nutrition, actual), {
+    await ctx.reply(nutritionText(u.nutrition, actual, userId), {
       reply_markup: { inline_keyboard: [[{ text: "🔄 Заполнить заново", callback_data: "nut_restart" }]] },
       ...HTML,
     });
@@ -1854,7 +2083,7 @@ bot.on("message:text", async (ctx) => {
       finishNutrition(userId, bw[bw.length - 1].weightKg);
       const u = getUser(userId);
       if (u?.nutrition) {
-        await ctx.reply(nutritionText(u.nutrition, bw[bw.length - 1].weightKg), {
+        await ctx.reply(nutritionText(u.nutrition, bw[bw.length - 1].weightKg, userId), {
           reply_markup: mainKeyboardFor(userId), ...HTML,
         });
       }
@@ -1875,7 +2104,7 @@ bot.on("message:text", async (ctx) => {
     finishNutrition(userId, w);
     const u = getUser(userId);
     if (u?.nutrition) {
-      await ctx.reply(nutritionText(u.nutrition, w), { reply_markup: mainKeyboardFor(userId), ...HTML });
+      await ctx.reply(nutritionText(u.nutrition, w, userId), { reply_markup: mainKeyboardFor(userId), ...HTML });
     }
     return;
   }
@@ -1932,18 +2161,49 @@ cron.schedule("0 18 * * 0", async () => {
 }, { timezone: "Asia/Bangkok" });
 
 // ── Напоминания о тренировках (каждый час, по расписанию юзера) ────────────
+// Затухание (находка MyFitnessPal): если напоминания игнорируют — замолкаем,
+// иначе бот отправляется в мут и пользователь потерян навсегда.
 cron.schedule("0 * * * *", async () => {
   const { dow, hour } = bangkokNow();
   for (const u of getUsers()) {
+    if (u.remindersPaused) continue;
     if (!u.reminderDays?.includes(dow) || u.reminderHour !== hour) continue;
-    // уже тренировался сегодня — не дёргаем
-    if (getWorkoutDates(u.chatId).includes(today())) continue;
+
+    const dates = getWorkoutDates(u.chatId);
+    // уже тренировался сегодня — не дёргаем, счётчик игноров сбрасываем
+    if (dates.includes(today())) {
+      if (u.remindersMissed) updateUser(u.chatId, { remindersMissed: 0 });
+      continue;
+    }
+
+    // итог прошлого напоминания: была ли тренировка после него
+    let missed = u.remindersMissed ?? 0;
+    if (u.lastReminderDate && u.lastReminderDate < today()) {
+      const trainedSince = dates.some((d) => d >= u.lastReminderDate!);
+      missed = trainedSince ? 0 : missed + 1;
+    }
+
+    if (missed >= 3) {
+      updateUser(u.chatId, { remindersPaused: true, remindersMissed: missed });
+      try {
+        await bot.api.sendMessage(
+          u.chatId,
+          `🔕 <b>Ставлю напоминания на паузу.</b>\n\n` +
+          `Три подряд остались без тренировки — не хочу надоедать.\n` +
+          `<i>Когда будешь готов вернуться — включи заново: /remind. Я тут.</i>`,
+          { parse_mode: "HTML" }
+        );
+      } catch { /* пользователь заблокировал бота */ }
+      continue;
+    }
+
     try {
       await bot.api.sendMessage(
         u.chatId,
         `⏰ <b>Сегодня тренировка!</b>\n\n<i>После зала просто напиши сюда что сделал — например</i> <code>присед 100 5х5</code>`,
         { parse_mode: "HTML" }
       );
+      updateUser(u.chatId, { lastReminderDate: today(), remindersMissed: missed });
     } catch { /* пользователь заблокировал бота */ }
   }
 }, { timezone: "Asia/Bangkok" });

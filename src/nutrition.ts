@@ -38,3 +38,58 @@ export function calcMacros(p: NutritionProfile, actualWeightKg?: number): MacroR
 
   return { kcal, proteinG, fatG, carbsG, bmr: Math.round(bmr), tdee: Math.round(tdee) };
 }
+
+// ── Адаптивная корректировка по фактическому тренду веса ────────────────────
+// Идея MacroFactor: формула даёт стартовую точку, а дальше рулит реальный тренд.
+// Целевые скорости: набор +0.2…+0.5 кг/нед, сушка −0.3…−0.8, поддержание ±0.25.
+
+export interface TrendAdvice {
+  rateKgWeek: number;   // фактическая скорость изменения веса
+  days: number;         // за какой период посчитано
+  kcalDelta: number;    // рекомендованная корректировка калорий (0 = всё ок)
+  text: string;         // готовая рекомендация
+}
+
+export function weightTrendAdvice(
+  entries: { date: string; weightKg: number }[],
+  goal: NutritionProfile["goal"]
+): TrendAdvice | null {
+  // берём записи за последние 28 дней
+  const cutoff = new Date(Date.now() - 28 * 86400_000).toISOString().slice(0, 10);
+  const recent = entries.filter((e) => e.date >= cutoff);
+  if (recent.length < 4) return null;
+
+  const first = recent[0];
+  const last = recent[recent.length - 1];
+  const days = Math.round(
+    (new Date(last.date).getTime() - new Date(first.date).getTime()) / 86400_000
+  );
+  if (days < 10) return null; // слишком короткий период — тренд ненадёжен
+
+  const rate = Math.round(((last.weightKg - first.weightKg) / days) * 7 * 100) / 100;
+
+  let kcalDelta = 0;
+  let verdict: string;
+  if (goal === "bulk") {
+    if (rate < 0.15) { kcalDelta = 150; verdict = "вес почти не растёт — добавь калорий"; }
+    else if (rate > 0.6) { kcalDelta = -150; verdict = "вес растёт слишком быстро (лишний жир) — убавь"; }
+    else verdict = "скорость набора в норме, ничего не меняй";
+  } else if (goal === "cut") {
+    if (rate > -0.2) { kcalDelta = -200; verdict = "вес не снижается — урежь калории"; }
+    else if (rate < -1.0) { kcalDelta = 150; verdict = "слишком быстрое похудение (риск потери мышц) — добавь"; }
+    else verdict = "скорость снижения в норме, продолжай";
+  } else {
+    if (rate > 0.25) { kcalDelta = -150; verdict = "вес ползёт вверх — слегка убавь"; }
+    else if (rate < -0.25) { kcalDelta = 150; verdict = "вес уходит вниз — слегка добавь"; }
+    else verdict = "вес стабилен — цель выполняется";
+  }
+
+  const sign = rate > 0 ? "+" : "";
+  const deltaStr = kcalDelta === 0 ? "" : ` (${kcalDelta > 0 ? "+" : ""}${kcalDelta} ккал/день)`;
+  return {
+    rateKgWeek: rate,
+    days,
+    kcalDelta,
+    text: `Тренд веса: ${sign}${rate} кг/нед за ${days} дн. ${verdict}${deltaStr}.`,
+  };
+}

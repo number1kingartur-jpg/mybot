@@ -79,6 +79,10 @@ export interface UserRecord {
   mode?: "simple" | "pro";
   simpleIdx?: number;       // номер следующей тренировки в простом режиме (A/B чередование)
   simplePlace?: "home" | "gym";
+  simpleDiff?: number;      // накопленная сложность по фидбэку: >0 легко, <0 тяжело
+  lastReminderDate?: string;   // когда отправлено последнее напоминание (YYYY-MM-DD)
+  remindersMissed?: number;    // сколько напоминаний подряд проигнорировано
+  remindersPaused?: boolean;   // авто-пауза после 3 игноров
 }
 
 interface DB {
@@ -304,5 +308,9 @@ export function setReminder(chatId: number, days: number[] | null, hour: number 
     u.reminderDays = days;
     if (hour !== null) u.reminderHour = hour;
   }
+  // любое изменение настроек сбрасывает авто-паузу
+  u.remindersMissed = 0;
+  u.remindersPaused = false;
+  delete u.lastReminderDate;
   save(db);
 }
