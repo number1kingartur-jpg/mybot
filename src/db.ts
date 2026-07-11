@@ -76,6 +76,8 @@ export interface UserRecord {
   reminderDays?: number[];  // 0=Вс … 6=Сб
   reminderHour?: number;    // час по Asia/Bangkok
   nutrition?: NutritionProfile;
+  mode?: "simple" | "pro";
+  simpleIdx?: number;       // номер следующей тренировки в простом режиме (A/B чередование)
 }
 
 interface DB {
@@ -279,6 +281,14 @@ export function setNutrition(chatId: number, profile: NutritionProfile) {
   const u = db.users.find((x) => x.chatId === chatId);
   if (!u) return;
   u.nutrition = profile;
+  save(db);
+}
+
+export function updateUser(chatId: number, patch: Partial<UserRecord>) {
+  const db = load();
+  const u = db.users.find((x) => x.chatId === chatId);
+  if (!u) return;
+  Object.assign(u, patch);
   save(db);
 }
 

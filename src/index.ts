@@ -6,10 +6,11 @@ import {
   addWorkout, getWorkouts, getAllWorkouts, getExercises, getWorkoutDates, removeWorkouts,
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
-  registerUser, getUsers, getUser, setReminder, setNutrition,
+  registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   type NutritionProfile,
 } from "./db";
 import { calcMacros } from "./nutrition";
+import { SIMPLE_WORKOUTS, WEIGHT_RULE } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
 import { transcribeVoice, voiceEnabled } from "./voice";
@@ -97,6 +98,7 @@ const MENU_BUTTONS = [
   "📋 Программа", "🧮 1RM калькулятор",
   "⚖️ Вес тела", "📈 Отчёт недели",
   "🍗 Питание",
+  "🏋️ Тренировка на сегодня", "📈 Мой прогресс", "❓ Помощь",
 ];
 
 // ── Keyboards ──────────────────────────────────────────────────────────────
@@ -116,6 +118,23 @@ const EXERCISE_EMOJI: Record<string, string> = {
   "Присед": "🦵", "Жим лёжа": "🏋️", "Становая": "💀",
   "ОХ жим": "🔺", "Подтягивания": "💪", "Тяга": "🚣",
 };
+
+const SIMPLE_KEYBOARD = {
+  keyboard: [
+    [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
+    [{ text: "🍗 Питание" }, { text: "⚖️ Вес тела" }],
+    [{ text: "❓ Помощь" }],
+  ],
+  resize_keyboard: true,
+};
+
+function userMode(userId: number): "simple" | "pro" | null {
+  return getUser(userId)?.mode ?? null;
+}
+
+function mainKeyboardFor(userId: number) {
+  return userMode(userId) === "simple" ? SIMPLE_KEYBOARD : MAIN_KEYBOARD;
+}
 
 /** Базовые + упражнения из истории пользователя. Коллбэки по индексу (лимит 64 байта). */
 function buildExerciseList(userId: number): string[] {
@@ -430,19 +449,37 @@ async function fetchImageBuffer(url: string): Promise<Buffer> {
 }
 
 // ── /start ────────────────────────────────────────────────────────────────
-bot.command("start", async (ctx) => {
-  resetSession(ctx.from!.id);
-  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+const MODE_KEYBOARD = {
+  inline_keyboard: [
+    [{ text: "🙂 Хочу просто быть в форме", callback_data: "mode_simple" }],
+    [{ text: "🏋️ Тренируюсь серьёзно (1RM, программы)", callback_data: "mode_pro" }],
+  ],
+};
+
+async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, name: string) {
+  await ctx.reply(
+    `<b>💪 Привет, ${esc(name)}!</b>\n${HR}\n\n` +
+    `Я помогу тебе держать форму без сложных терминов:\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план: что делать, сколько раз, как выбрать вес. Просто приходи и повторяй.\n\n` +
+    `📈 <b>Мой прогресс</b> — сколько тренировок, календарь, серия недель без пропусков.\n\n` +
+    `🍗 <b>Питание</b> — сколько есть, чтобы худеть или набирать.\n\n` +
+    `⏰ Хочешь, буду напоминать о тренировках? Нажми /remind\n\n` +
+    `<i>Начни с кнопки «🏋️ Тренировка на сегодня» 👇</i>`,
+    { reply_markup: SIMPLE_KEYBOARD, ...HTML }
+  );
+}
+
+async function sendProWelcome(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, name: string) {
   await ctx.reply(
     `<b>💎 STRENGTH LAB</b>\n` +
     `<i>Твой личный тренировочный штаб</i>\n` +
     `${HR}\n\n` +
-    `Привет, <b>${esc(ctx.from?.first_name ?? "атлет")}</b>. Всё для системной работы:\n\n` +
+    `Привет, <b>${esc(name)}</b>. Всё для системной работы:\n\n` +
     `📝 <b>Запись тренировок</b> ${DOT} текстом или голосом 🎙\n` +
     `📊 <b>Прогресс</b> ${DOT} графики и PR\n` +
     `📋 <b>Программа</b> ${DOT} DUP, 5/3/1, GZCLP по неделям\n` +
+    `🍗 <b>Питание</b> ${DOT} КБЖУ под цель\n` +
     `🧮 <b>1RM</b> ${DOT} максимум и таблица %\n` +
-    `⚖️ <b>Вес тела</b> ${DOT} динамика на графике\n` +
     `📈 <b>Отчёт недели</b> ${DOT} умный анализ прогресса\n\n` +
     `<i>Каждое воскресенье пришлю сводку автоматически.</i>`,
     {
@@ -451,6 +488,154 @@ bot.command("start", async (ctx) => {
     }
   );
   await ctx.reply(`Меню внизу 👇`, { reply_markup: MAIN_KEYBOARD });
+}
+
+bot.command("start", async (ctx) => {
+  resetSession(ctx.from!.id);
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+  const mode = userMode(ctx.from!.id);
+
+  if (mode === "simple") {
+    await sendSimpleWelcome(ctx, ctx.from?.first_name ?? "друг");
+    return;
+  }
+  if (mode === "pro") {
+    await sendProWelcome(ctx, ctx.from?.first_name ?? "атлет");
+    return;
+  }
+
+  await ctx.reply(
+    `<b>💪 Привет, ${esc(ctx.from?.first_name ?? "друг")}!</b>\n${HR}\n\n` +
+    `Я тренировочный бот. Чтобы говорить с тобой на одном языке — один вопрос:\n\n` +
+    `<b>Как ты тренируешься?</b>`,
+    { reply_markup: MODE_KEYBOARD, ...HTML }
+  );
+});
+
+bot.command("mode", async (ctx) => {
+  resetSession(ctx.from!.id);
+  await ctx.reply(
+    `<b>Сменить режим?</b>\n\n` +
+    `🙂 <b>Простой</b> — готовые тренировки, без терминов\n` +
+    `🏋️ <b>Про</b> — программы с периодизацией, 1RM, аналитика`,
+    { reply_markup: MODE_KEYBOARD, ...HTML }
+  );
+});
+
+bot.callbackQuery(/^mode_(simple|pro)$/, async (ctx) => {
+  const mode = ctx.match[1] as "simple" | "pro";
+  registerUser(ctx.from.id, ctx.from.first_name ?? "");
+  updateUser(ctx.from.id, { mode });
+  await ctx.answerCallbackQuery();
+  if (mode === "simple") await sendSimpleWelcome(ctx, ctx.from.first_name ?? "друг");
+  else await sendProWelcome(ctx, ctx.from.first_name ?? "атлет");
+});
+
+// ── Простой режим: тренировка на сегодня ────────────────────────────────────
+bot.hears("🏋️ Тренировка на сегодня", async (ctx) => {
+  const userId = ctx.from!.id;
+  resetSession(userId);
+  const idx = getUser(userId)?.simpleIdx ?? 0;
+  const w = SIMPLE_WORKOUTS[idx % SIMPLE_WORKOUTS.length];
+
+  const items = w.items
+    .map((e, i) =>
+      `<b>${i + 1}. ${esc(e.name)}</b>\n` +
+      `${esc(e.scheme)}\n` +
+      `<i>💡 ${esc(e.hint)}</i>`
+    )
+    .join("\n\n");
+
+  await ctx.reply(
+    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b>\n${HR}\n\n` +
+    `<i>Сначала разминка: 5 минут ходьбы/велосипеда + пара лёгких подходов первого упражнения.</i>\n\n` +
+    items +
+    `\n\n⏱ <i>Отдых между подходами: 1.5–2 минуты.</i>`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Выполнил — записать", callback_data: "simple_done" }],
+          [{ text: "❓ Как выбрать вес", callback_data: "simple_weight" }],
+        ],
+      },
+      ...HTML,
+    }
+  );
+});
+
+bot.callbackQuery("simple_weight", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(`❓ <b>КАК ВЫБРАТЬ ВЕС</b>\n${HR}\n\n${esc(WEIGHT_RULE)}`, HTML);
+});
+
+bot.callbackQuery("simple_done", async (ctx) => {
+  const userId = ctx.from.id;
+  const idx = getUser(userId)?.simpleIdx ?? 0;
+  const w = SIMPLE_WORKOUTS[idx % SIMPLE_WORKOUTS.length];
+
+  addWorkout({
+    userId,
+    date: today(),
+    exercise: `Тренировка ${w.label} (фулбоди)`,
+    sets: 1,
+    reps: 1,
+    weightKg: 0,
+    notes: "simple",
+  });
+  updateUser(userId, { simpleIdx: idx + 1 });
+
+  const streak = weekStreak(userId);
+  const total = getAllWorkouts(userId).length;
+  const streakLine = streak >= 2 ? `\n🔥 Серия: <b>${streak} недель подряд</b> — так и держи!` : "";
+
+  await ctx.answerCallbackQuery("Записано! 💪");
+  await ctx.reply(
+    `✅ <b>ТРЕНИРОВКА ЗАПИСАНА</b>\n${HR}\n\n` +
+    `Отличная работа! Это твоя тренировка №${total}.${streakLine}\n\n` +
+    `<i>Следующая — «Тренировка ${SIMPLE_WORKOUTS[(idx + 1) % SIMPLE_WORKOUTS.length].label}», через 1–2 дня отдыха.</i>`,
+    HTML
+  );
+});
+
+// ── Простой режим: прогресс и помощь ────────────────────────────────────────
+bot.hears("📈 Мой прогресс", async (ctx) => {
+  const userId = ctx.from!.id;
+  resetSession(userId);
+  const dates = getWorkoutDates(userId);
+  if (dates.length === 0) {
+    await ctx.reply(
+      `📈 <b>МОЙ ПРОГРЕСС</b>\n${HR}\n\nПока нет ни одной тренировки.\n<i>Жми «🏋️ Тренировка на сегодня» — начнём!</i>`,
+      HTML
+    );
+    return;
+  }
+  const month = today().slice(0, 7);
+  const thisMonth = dates.filter((d) => d.startsWith(month)).length;
+  const streak = weekStreak(userId);
+
+  await ctx.reply(
+    `📈 <b>МОЙ ПРОГРЕСС</b>\n${HR}\n\n` +
+    `<code>Всего тренировок   ${dates.length}</code>\n` +
+    `<code>В этом месяце      ${thisMonth}</code>\n` +
+    `<code>Недель подряд      ${streak}</code>\n\n` +
+    monthCalendar(userId),
+    HTML
+  );
+});
+
+bot.hears("❓ Помощь", async (ctx) => {
+  resetSession(ctx.from!.id);
+  await ctx.reply(
+    `❓ <b>КАК ПОЛЬЗОВАТЬСЯ</b>\n${HR}\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план. Пришёл в зал, открыл, повторил, нажал «Выполнил».\n\n` +
+    `📈 <b>Мой прогресс</b> — календарь и серия недель без пропусков.\n\n` +
+    `🍗 <b>Питание</b> — сколько калорий и белка тебе нужно под твою цель.\n\n` +
+    `⚖️ <b>Вес тела</b> — записывай вес, увидишь график.\n\n` +
+    `⏰ <b>Напоминания</b> — /remind, выбери дни и время.\n\n` +
+    `💪 Ходишь в зал со своей программой? Просто напиши что сделал: <code>присед 50 3х10</code> — я запишу.\n\n` +
+    `<i>Опытный атлет? Переключись в про-режим: /mode — там программы с периодизацией, 1RM и аналитика.</i>`,
+    { reply_markup: SIMPLE_KEYBOARD, ...HTML }
+  );
 });
 
 // ── Гид для новичка ─────────────────────────────────────────────────────────
@@ -1476,7 +1661,7 @@ bot.on("message:text", async (ctx) => {
 
     await ctx.reply(
       `⚖️ <b>ВЕС ЗАПИСАН</b>\n${HR}\n\n<b>${val} кг</b>${deltaLine}`,
-      { reply_markup: MAIN_KEYBOARD, ...HTML }
+      { reply_markup: mainKeyboardFor(userId), ...HTML }
     );
 
     if (bw.length >= 2) {
@@ -1601,7 +1786,7 @@ bot.on("message:text", async (ctx) => {
       const u = getUser(userId);
       if (u?.nutrition) {
         await ctx.reply(nutritionText(u.nutrition, bw[bw.length - 1].weightKg), {
-          reply_markup: MAIN_KEYBOARD, ...HTML,
+          reply_markup: mainKeyboardFor(userId), ...HTML,
         });
       }
       return;
@@ -1621,7 +1806,7 @@ bot.on("message:text", async (ctx) => {
     finishNutrition(userId, w);
     const u = getUser(userId);
     if (u?.nutrition) {
-      await ctx.reply(nutritionText(u.nutrition, w), { reply_markup: MAIN_KEYBOARD, ...HTML });
+      await ctx.reply(nutritionText(u.nutrition, w), { reply_markup: mainKeyboardFor(userId), ...HTML });
     }
     return;
   }
@@ -1632,6 +1817,16 @@ bot.on("message:text", async (ctx) => {
     const { html, undoId, maxW } = logParsed(userId, parsed);
     await ctx.reply(html, { reply_markup: undoKeyboard(undoId, maxW), ...HTML });
     await maybeAutoRest(ctx.chat.id, parsed);
+    return;
+  }
+
+  if (userMode(userId) === "simple") {
+    await ctx.reply(
+      `Не понял 🤔\n\n` +
+      `Хочешь записать тренировку — напиши, например:\n<code>присед 50 3х10</code>\n\n` +
+      `<i>Или пользуйся кнопками внизу. Помощь — «❓ Помощь».</i>`,
+      { reply_markup: SIMPLE_KEYBOARD, ...HTML }
+    );
     return;
   }
 
@@ -1650,7 +1845,19 @@ bot.on("message:text", async (ctx) => {
 cron.schedule("0 18 * * 0", async () => {
   for (const u of getUsers()) {
     try {
-      await bot.api.sendMessage(u.chatId, buildWeeklyReport(u.chatId), HTML);
+      if (u.mode === "simple") {
+        const dates = getWorkoutDates(u.chatId);
+        const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+        const thisWeek = dates.filter((d) => d >= weekAgo).length;
+        const streak = weekStreak(u.chatId);
+        const msg = thisWeek > 0
+          ? `📈 <b>Итог недели: ${thisWeek} тренировк${thisWeek === 1 ? "а" : thisWeek < 5 ? "и" : "ок"}</b> 💪\n` +
+            (streak >= 2 ? `🔥 Серия: ${streak} недель подряд — так держать!` : `Продолжай в том же духе!`)
+          : `На этой неделе тренировок не было. Ничего страшного — новая неделя, новый старт. Жми «🏋️ Тренировка на сегодня» 💪`;
+        await bot.api.sendMessage(u.chatId, msg, HTML);
+      } else {
+        await bot.api.sendMessage(u.chatId, buildWeeklyReport(u.chatId), HTML);
+      }
     } catch { /* пользователь заблокировал бота — пропускаем */ }
   }
 }, { timezone: "Asia/Bangkok" });
@@ -1684,6 +1891,7 @@ process.once("SIGTERM", () => bot.stop());
 async function main() {
   await bot.api.setMyCommands([
     { command: "start", description: "Главное меню" },
+    { command: "mode", description: "Режим: простой / про" },
     { command: "remind", description: "Напоминания о тренировках" },
     { command: "help", description: "Справка по функциям" },
   ]);
