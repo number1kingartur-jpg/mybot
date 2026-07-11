@@ -60,12 +60,22 @@ export interface Program {
   active: boolean;
 }
 
+export interface NutritionProfile {
+  sex: "m" | "f";
+  age: number;
+  heightCm: number;
+  weightKg: number;         // запасной вес, если нет записей в дневнике веса
+  goal: "bulk" | "cut" | "maint";
+  activity: "low" | "mid" | "high";
+}
+
 export interface UserRecord {
   chatId: number;
   firstName: string;
   registeredAt: string;
   reminderDays?: number[];  // 0=Вс … 6=Сб
   reminderHour?: number;    // час по Asia/Bangkok
+  nutrition?: NutritionProfile;
 }
 
 interface DB {
@@ -258,6 +268,18 @@ export function registerUser(chatId: number, firstName: string) {
 
 export function getUsers(): UserRecord[] {
   return load().users;
+}
+
+export function getUser(chatId: number): UserRecord | undefined {
+  return load().users.find((u) => u.chatId === chatId);
+}
+
+export function setNutrition(chatId: number, profile: NutritionProfile) {
+  const db = load();
+  const u = db.users.find((x) => x.chatId === chatId);
+  if (!u) return;
+  u.nutrition = profile;
+  save(db);
 }
 
 export function setReminder(chatId: number, days: number[] | null, hour: number | null) {

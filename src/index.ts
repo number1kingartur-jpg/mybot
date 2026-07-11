@@ -6,8 +6,10 @@ import {
   addWorkout, getWorkouts, getAllWorkouts, getExercises, getWorkoutDates, removeWorkouts,
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
-  registerUser, getUsers, setReminder,
+  registerUser, getUsers, getUser, setReminder, setNutrition,
+  type NutritionProfile,
 } from "./db";
+import { calcMacros } from "./nutrition";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
 import { transcribeVoice, voiceEnabled } from "./voice";
@@ -35,7 +37,10 @@ type State =
   | "prog_weeks"
   | "prog_days"
   | "prog_lift_rm"
-  | "progress_exercise";
+  | "progress_exercise"
+  | "nut_age"
+  | "nut_height"
+  | "nut_weight";
 
 interface UserState {
   state: State;
@@ -91,6 +96,7 @@ const MENU_BUTTONS = [
   "📊 Прогресс", "🏆 Рекорды",
   "📋 Программа", "🧮 1RM калькулятор",
   "⚖️ Вес тела", "📈 Отчёт недели",
+  "🍗 Питание",
 ];
 
 // ── Keyboards ──────────────────────────────────────────────────────────────
@@ -98,8 +104,9 @@ const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: "📝 Записать тренировку" }, { text: "📔 Сегодня" }],
     [{ text: "📊 Прогресс" }, { text: "🏆 Рекорды" }],
-    [{ text: "📋 Программа" }, { text: "🧮 1RM калькулятор" }],
+    [{ text: "📋 Программа" }, { text: "🍗 Питание" }],
     [{ text: "⚖️ Вес тела" }, { text: "📈 Отчёт недели" }],
+    [{ text: "🧮 1RM калькулятор" }],
   ],
   resize_keyboard: true,
 };
@@ -486,6 +493,7 @@ bot.command("help", async (ctx) => {
     `⏰ <b>Напоминания</b> — /remind\nВыбери дни и час — бот напомнит о тренировке, если её ещё нет в дневнике.\n\n` +
     `📋 <b>Программа</b>\nГотовый план на недели: DUP, 5/3/1, GZCLP и другие. Вводишь 1RM по каждому движению — получаешь расписание с весами. Отмечай «Выполнено» — бот ведёт по циклу и логирует за тебя.\n\n` +
     `🧮 <b>1RM калькулятор</b>\n<code>100×5</code> — расчёт максимума, или одно число <code>140</code> — таблица % от известной одиночки.\n\n` +
+    `🍗 <b>Питание</b>\nКалории и БЖУ под цель (масса/сушка/поддержание) — по формуле Миффлина – Сан-Жеора, с учётом твоего веса из дневника.\n\n` +
     `⚖️ <b>Вес тела</b>\nВводи вес — получишь график динамики.\n\n` +
     `📈 <b>Отчёт недели</b>\nТоннаж, тренды, застой, дисбаланс жим/тяга. Приходит сам по воскресеньям в 18:00.\n\n` +
     `<i>Сбились кнопки? Нажми /start</i>`,
@@ -1127,6 +1135,165 @@ bot.callbackQuery(/^rh_(\d+)$/, async (ctx) => {
   );
 });
 
+// ── Питание (КБЖУ) ───────────────────────────────────────────────────────
+const GOAL_NUT_LABELS: Record<string, string> = {
+  bulk: "Набор массы", cut: "Сушка / снижение жира", maint: "Поддержание",
+};
+
+function nutritionText(p: NutritionProfile, actualWeight?: number): string {
+  const m = calcMacros(p, actualWeight);
+  const w = actualWeight ?? p.weightKg;
+  return (
+    `🍗 <b>ПИТАНИЕ ${DOT} ${GOAL_NUT_LABELS[p.goal]}</b>\n${HR}\n\n` +
+    `<i>Расчёт под вес ${w} кг (Миффлин – Сан-Жеор)</i>\n\n` +
+    `🔥 <b>Калории: ${m.kcal} ккал/день</b>\n\n` +
+    `<code>Белки     ${String(m.proteinG).padStart(4)} г   ${m.proteinG * 4} ккал</code>\n` +
+    `<code>Жиры      ${String(m.fatG).padStart(4)} г   ${m.fatG * 9} ккал</code>\n` +
+    `<code>Углеводы  ${String(m.carbsG).padStart(4)} г   ${m.carbsG * 4} ккал</code>\n\n` +
+    `<code>Базовый обмен   ${m.bmr} ккал</code>\n` +
+    `<code>Расход с учётом активности  ${m.tdee} ккал</code>\n\n` +
+    `💡 <i>Белок раскидай на 3–5 приёмов по 25–50 г. Вода: ~${Math.round(w * 35 / 100) * 100} мл/день. ` +
+    `Взвешивайся раз в неделю утром — если вес не движется 2–3 недели, скорректируй калории на ±200.</i>`
+  );
+}
+
+bot.hears("🍗 Питание", async (ctx) => {
+  const userId = ctx.from!.id;
+  resetSession(userId);
+  const u = getUser(userId);
+
+  if (u?.nutrition) {
+    const bw = getBodyweight(userId, 1);
+    const actual = bw.length ? bw[bw.length - 1].weightKg : undefined;
+    await ctx.reply(nutritionText(u.nutrition, actual), {
+      reply_markup: { inline_keyboard: [[{ text: "🔄 Заполнить заново", callback_data: "nut_restart" }]] },
+      ...HTML,
+    });
+    return;
+  }
+
+  await ctx.reply(
+    `🍗 <b>РАСЧЁТ ПИТАНИЯ</b>\n${HR}\n\n<b>Шаг 1/5 ${DOT} Цель:</b>`,
+    {
+      reply_markup: new InlineKeyboard()
+        .text("📈 Набор массы", "ng_bulk").row()
+        .text("🔥 Сушка / снижение жира", "ng_cut").row()
+        .text("⚖️ Поддержание", "ng_maint"),
+      ...HTML,
+    }
+  );
+});
+
+bot.callbackQuery("nut_restart", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  resetSession(ctx.from.id);
+  await ctx.reply(
+    `🍗 <b>РАСЧЁТ ПИТАНИЯ</b>\n${HR}\n\n<b>Шаг 1/5 ${DOT} Цель:</b>`,
+    {
+      reply_markup: new InlineKeyboard()
+        .text("📈 Набор массы", "ng_bulk").row()
+        .text("🔥 Сушка / снижение жира", "ng_cut").row()
+        .text("⚖️ Поддержание", "ng_maint"),
+      ...HTML,
+    }
+  );
+});
+
+bot.callbackQuery(/^ng_(bulk|cut|maint)$/, async (ctx) => {
+  const s = getSession(ctx.from.id);
+  s.data.nutGoal = ctx.match[1];
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `<b>Шаг 2/5 ${DOT} Активность:</b>`,
+    {
+      reply_markup: new InlineKeyboard()
+        .text("🪑 1–3 тренировки/нед", "na_low").row()
+        .text("🏃 3–5 тренировок/нед", "na_mid").row()
+        .text("⚡ 6+ или физическая работа", "na_high"),
+      ...HTML,
+    }
+  );
+});
+
+bot.callbackQuery(/^na_(low|mid|high)$/, async (ctx) => {
+  const s = getSession(ctx.from.id);
+  s.data.nutActivity = ctx.match[1];
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `<b>Шаг 3/5 ${DOT} Пол:</b>`,
+    {
+      reply_markup: new InlineKeyboard().text("♂ Мужской", "ns_m").text("♀ Женский", "ns_f"),
+      ...HTML,
+    }
+  );
+});
+
+function finishNutrition(userId: number, weightKg: number) {
+  const s = getSession(userId);
+  const profile: NutritionProfile = {
+    sex: s.data.nutSex === "f" ? "f" : "m",
+    age: Number(s.data.nutAge),
+    heightCm: Number(s.data.nutHeight),
+    weightKg,
+    goal: (s.data.nutGoal as NutritionProfile["goal"]) ?? "maint",
+    activity: (s.data.nutActivity as NutritionProfile["activity"]) ?? "mid",
+  };
+  setNutrition(userId, profile);
+  resetSession(userId);
+}
+
+bot.callbackQuery(/^ns_(m|f)$/, async (ctx) => {
+  const s = getSession(ctx.from.id);
+  s.data.nutSex = ctx.match[1];
+  s.state = "nut_age";
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(`<b>Шаг 4/5 ${DOT} Возраст</b>\n\n<i>Введи число, например:</i> <code>32</code>`, HTML);
+});
+
+// ── Авто-таймер отдыха ───────────────────────────────────────────────────
+const restTimers = new Map<number, NodeJS.Timeout>();
+let restCounter = 0;
+
+async function maybeAutoRest(chatId: number, parsed: ParsedExercise[]) {
+  // авто-таймер только при записи одиночного подхода — так логируют прямо в зале
+  if (parsed.length !== 1 || parsed[0].groups.length !== 1 || parsed[0].groups[0].sets !== 1) return;
+  const g = parsed[0].groups[0];
+  const secs = g.reps <= 5 && g.weightKg > 0 ? 180 : 120;
+
+  const tid = ++restCounter;
+  const timer = setTimeout(async () => {
+    restTimers.delete(tid);
+    try {
+      await bot.api.sendMessage(chatId, `⏱ <b>Отдых окончен — следующий подход!</b>`, { parse_mode: "HTML" });
+    } catch { /* skip */ }
+  }, secs * 1000);
+  restTimers.set(tid, timer);
+
+  try {
+    await bot.api.sendMessage(
+      chatId,
+      `⏱ Авто-отдых: <b>${secs / 60} мин</b> — напомню.`,
+      {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "✖️ Стоп таймер", callback_data: `tstop_${tid}` }]] },
+      }
+    );
+  } catch { /* skip */ }
+}
+
+bot.callbackQuery(/^tstop_(\d+)$/, async (ctx) => {
+  const tid = parseInt(ctx.match[1]);
+  const t = restTimers.get(tid);
+  if (t) {
+    clearTimeout(t);
+    restTimers.delete(tid);
+  }
+  await ctx.answerCallbackQuery("Остановлен");
+  try {
+    await ctx.editMessageText(`⏱ <i>Таймер остановлен</i>`, HTML);
+  } catch { /* skip */ }
+});
+
 // ── Таймер отдыха ────────────────────────────────────────────────────────
 bot.callbackQuery(/^rest_(\d+)$/, async (ctx) => {
   const seconds = parseInt(ctx.match[1]);
@@ -1190,6 +1357,7 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
       `🎙 <i>«${esc(text)}»</i>\n\n${html}`,
       { reply_markup: undoKeyboard(undoId, maxW), ...HTML }
     );
+    await maybeAutoRest(ctx.chat.id, parsed);
   } catch (e) {
     console.error("voice error:", e);
     await ctx.reply("🎙 Ошибка распознавания. Напиши текстом: <code>присед 100 5х5</code>", HTML);
@@ -1237,6 +1405,7 @@ bot.on("message:text", async (ctx) => {
     resetSession(userId);
     const { html, undoId, maxW } = logParsed(userId, [{ exercise, groups }]);
     await ctx.reply(html, { reply_markup: undoKeyboard(undoId, maxW), ...HTML });
+    await maybeAutoRest(ctx.chat.id, [{ exercise, groups }]);
     return;
   }
 
@@ -1404,11 +1573,65 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
+  // ── Питание: возраст → рост → вес
+  if (s.state === "nut_age") {
+    const age = parseInt(text);
+    if (isNaN(age) || age < 10 || age > 90) {
+      await ctx.reply(`⚠️ Введи возраст числом, например <code>32</code>`, HTML);
+      return;
+    }
+    s.data.nutAge = age;
+    s.state = "nut_height";
+    await ctx.reply(`<b>Шаг 5/5 ${DOT} Рост в см</b>\n\n<i>Например:</i> <code>180</code>`, HTML);
+    return;
+  }
+
+  if (s.state === "nut_height") {
+    const h = parseInt(text);
+    if (isNaN(h) || h < 120 || h > 230) {
+      await ctx.reply(`⚠️ Введи рост в сантиметрах, например <code>180</code>`, HTML);
+      return;
+    }
+    s.data.nutHeight = h;
+
+    // Вес берём из дневника, если он там есть
+    const bw = getBodyweight(userId, 1);
+    if (bw.length > 0) {
+      finishNutrition(userId, bw[bw.length - 1].weightKg);
+      const u = getUser(userId);
+      if (u?.nutrition) {
+        await ctx.reply(nutritionText(u.nutrition, bw[bw.length - 1].weightKg), {
+          reply_markup: MAIN_KEYBOARD, ...HTML,
+        });
+      }
+      return;
+    }
+
+    s.state = "nut_weight";
+    await ctx.reply(`<b>И последнее ${DOT} Вес в кг</b>\n\n<i>Например:</i> <code>82.5</code>`, HTML);
+    return;
+  }
+
+  if (s.state === "nut_weight") {
+    const w = parseFloat(text.replace(",", "."));
+    if (isNaN(w) || w < 30 || w > 300) {
+      await ctx.reply(`⚠️ Введи вес в кг, например <code>82.5</code>`, HTML);
+      return;
+    }
+    finishNutrition(userId, w);
+    const u = getUser(userId);
+    if (u?.nutrition) {
+      await ctx.reply(nutritionText(u.nutrition, w), { reply_markup: MAIN_KEYBOARD, ...HTML });
+    }
+    return;
+  }
+
   // ── Нет активного диалога — пробуем распознать тренировку свободным текстом
   const parsed = parseWorkout(text);
   if (parsed.length > 0) {
     const { html, undoId, maxW } = logParsed(userId, parsed);
     await ctx.reply(html, { reply_markup: undoKeyboard(undoId, maxW), ...HTML });
+    await maybeAutoRest(ctx.chat.id, parsed);
     return;
   }
 
