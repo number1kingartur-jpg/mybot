@@ -78,6 +78,7 @@ export interface UserRecord {
   nutrition?: NutritionProfile;
   mode?: "simple" | "pro";
   simpleIdx?: number;       // номер следующей тренировки в простом режиме (A/B чередование)
+  simplePlace?: "home" | "gym";
 }
 
 interface DB {

@@ -10,7 +10,7 @@ import {
   type NutritionProfile,
 } from "./db";
 import { calcMacros } from "./nutrition";
-import { SIMPLE_WORKOUTS, WEIGHT_RULE } from "./simple";
+import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
 import { transcribeVoice, voiceEnabled } from "./voice";
@@ -459,8 +459,8 @@ const MODE_KEYBOARD = {
 async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, name: string) {
   await ctx.reply(
     `<b>💪 Привет, ${esc(name)}!</b>\n${HR}\n\n` +
-    `Я помогу тебе держать форму без сложных терминов:\n\n` +
-    `🏋️ <b>Тренировка на сегодня</b> — готовый план: что делать, сколько раз, как выбрать вес. Просто приходи и повторяй.\n\n` +
+    `Я помогу тебе держать форму, даже если ты никогда не тренировался:\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. У каждого упражнения кнопка «❓ Как делать»: пошагово, с ошибками и видео.\n\n` +
     `📈 <b>Мой прогресс</b> — сколько тренировок, календарь, серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько есть, чтобы худеть или набирать.\n\n` +
     `⏰ Хочешь, буду напоминать о тренировках? Нажми /remind\n\n` +
@@ -532,32 +532,96 @@ bot.callbackQuery(/^mode_(simple|pro)$/, async (ctx) => {
 });
 
 // ── Простой режим: тренировка на сегодня ────────────────────────────────────
-bot.hears("🏋️ Тренировка на сегодня", async (ctx) => {
-  const userId = ctx.from!.id;
-  resetSession(userId);
-  const idx = getUser(userId)?.simpleIdx ?? 0;
-  const w = SIMPLE_WORKOUTS[idx % SIMPLE_WORKOUTS.length];
+const PLACE_KEYBOARD = {
+  inline_keyboard: [
+    [{ text: "🏠 Дома (без инвентаря)", callback_data: "splace_home" }],
+    [{ text: "🏋️ В зале", callback_data: "splace_gym" }],
+  ],
+};
+
+function currentSimpleWorkout(userId: number) {
+  const u = getUser(userId);
+  const place: Place = u?.simplePlace === "gym" ? "gym" : "home";
+  const idx = u?.simpleIdx ?? 0;
+  const plan = SIMPLE_PLANS[place];
+  return { place, idx, w: plan[idx % plan.length] };
+}
+
+async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, userId: number) {
+  const { place, w } = currentSimpleWorkout(userId);
 
   const items = w.items
     .map((e, i) =>
-      `<b>${i + 1}. ${esc(e.name)}</b>\n` +
-      `${esc(e.scheme)}\n` +
-      `<i>💡 ${esc(e.hint)}</i>`
+      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(e.scheme)}\n` +
+      `<i>${esc(e.short)}</i>`
     )
     .join("\n\n");
 
+  const kb = new InlineKeyboard();
+  w.items.forEach((e, i) => {
+    kb.text(`❓ ${i + 1}. Как делать`, `sdet_${i}`);
+    if (i % 2 === 1) kb.row();
+  });
+  if (w.items.length % 2 !== 0) kb.row();
+  kb.text("✅ Выполнил — записать", "simple_done").row();
+  kb.text(place === "gym" ? "⚖️ Как выбрать вес" : "📈 Стало легко?", "simple_weight")
+    .text("🔄 Дома/зал", "simple_place");
+
   await ctx.reply(
-    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b>\n${HR}\n\n` +
-    `<i>Сначала разминка: 5 минут ходьбы/велосипеда + пара лёгких подходов первого упражнения.</i>\n\n` +
+    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
+    `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом. Тело должно согреться.</i>\n\n` +
     items +
-    `\n\n⏱ <i>Отдых между подходами: 1.5–2 минуты.</i>`,
+    `\n\n⏱ <i>Отдых между подходами: 1.5–2 минуты.\nНе знаешь, как делать упражнение, — жми «❓ Как делать».</i>`,
+    { reply_markup: kb, ...HTML }
+  );
+}
+
+bot.hears("🏋️ Тренировка на сегодня", async (ctx) => {
+  const userId = ctx.from!.id;
+  resetSession(userId);
+  const u = getUser(userId);
+  if (!u?.simplePlace) {
+    await ctx.reply(
+      `🏋️ <b>Где будешь заниматься?</b>\n\n<i>Это можно поменять в любой момент.</i>`,
+      { reply_markup: PLACE_KEYBOARD, ...HTML }
+    );
+    return;
+  }
+  await sendSimpleWorkout(ctx, userId);
+});
+
+bot.callbackQuery(/^splace_(home|gym)$/, async (ctx) => {
+  const place = ctx.match[1] as Place;
+  registerUser(ctx.from.id, ctx.from.first_name ?? "");
+  updateUser(ctx.from.id, { simplePlace: place });
+  await ctx.answerCallbackQuery(place === "home" ? "Тренируемся дома 🏠" : "Тренируемся в зале 🏋️");
+  await sendSimpleWorkout(ctx, ctx.from.id);
+});
+
+bot.callbackQuery("simple_place", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(`🏋️ <b>Где будешь заниматься?</b>`, { reply_markup: PLACE_KEYBOARD, ...HTML });
+});
+
+// Подробная инструкция по упражнению
+bot.callbackQuery(/^sdet_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const { w } = currentSimpleWorkout(ctx.from.id);
+  const e = w.items[parseInt(ctx.match[1])];
+  if (!e) return;
+
+  const steps = e.steps.map((s, i) => `${i + 1}. ${esc(s)}`).join("\n");
+  const mistakes = e.mistakes.map((m) => `${DOT} ${esc(m)}`).join("\n");
+  const videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(e.videoQuery)}`;
+
+  await ctx.reply(
+    `❓ <b>${esc(e.name.toUpperCase())}</b>\n` +
+    `<i>${esc(e.scheme)}</i>\n${HR}\n\n` +
+    `<b>Как делать:</b>\n${steps}\n\n` +
+    `⚠️ <b>Частые ошибки:</b>\n${mistakes}\n\n` +
+    `🟢 <b>Если тяжело:</b> ${esc(e.easier)}`,
     {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "✅ Выполнил — записать", callback_data: "simple_done" }],
-          [{ text: "❓ Как выбрать вес", callback_data: "simple_weight" }],
-        ],
-      },
+      reply_markup: { inline_keyboard: [[{ text: "▶️ Посмотреть видео", url: videoUrl }]] },
       ...HTML,
     }
   );
@@ -565,13 +629,18 @@ bot.hears("🏋️ Тренировка на сегодня", async (ctx) => {
 
 bot.callbackQuery("simple_weight", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await ctx.reply(`❓ <b>КАК ВЫБРАТЬ ВЕС</b>\n${HR}\n\n${esc(WEIGHT_RULE)}`, HTML);
+  const { place } = currentSimpleWorkout(ctx.from.id);
+  const rule = place === "gym" ? WEIGHT_RULE : HOME_RULE;
+  await ctx.reply(
+    `❓ <b>${place === "gym" ? "КАК ВЫБРАТЬ ВЕС" : "СТАЛО ЛЕГКО?"}</b>\n${HR}\n\n${esc(rule)}`,
+    HTML
+  );
 });
 
 bot.callbackQuery("simple_done", async (ctx) => {
   const userId = ctx.from.id;
-  const idx = getUser(userId)?.simpleIdx ?? 0;
-  const w = SIMPLE_WORKOUTS[idx % SIMPLE_WORKOUTS.length];
+  const { idx, w, place } = currentSimpleWorkout(userId);
+  const plan = SIMPLE_PLANS[place];
 
   addWorkout({
     userId,
@@ -592,7 +661,7 @@ bot.callbackQuery("simple_done", async (ctx) => {
   await ctx.reply(
     `✅ <b>ТРЕНИРОВКА ЗАПИСАНА</b>\n${HR}\n\n` +
     `Отличная работа! Это твоя тренировка №${total}.${streakLine}\n\n` +
-    `<i>Следующая — «Тренировка ${SIMPLE_WORKOUTS[(idx + 1) % SIMPLE_WORKOUTS.length].label}», через 1–2 дня отдыха.</i>`,
+    `<i>Следующая — «Тренировка ${plan[(idx + 1) % plan.length].label}», через 1–2 дня отдыха.</i>`,
     HTML
   );
 });
@@ -627,7 +696,7 @@ bot.hears("❓ Помощь", async (ctx) => {
   resetSession(ctx.from!.id);
   await ctx.reply(
     `❓ <b>КАК ПОЛЬЗОВАТЬСЯ</b>\n${HR}\n\n` +
-    `🏋️ <b>Тренировка на сегодня</b> — готовый план. Пришёл в зал, открыл, повторил, нажал «Выполнил».\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Не знаешь упражнение — жми «❓ Как делать»: объясню пошагово, покажу видео. Сделал всё — нажми «✅ Выполнил».\n\n` +
     `📈 <b>Мой прогресс</b> — календарь и серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько калорий и белка тебе нужно под твою цель.\n\n` +
     `⚖️ <b>Вес тела</b> — записывай вес, увидишь график.\n\n` +
