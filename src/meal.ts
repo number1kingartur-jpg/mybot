@@ -95,7 +95,34 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isQuotaError(msg: string): boolean {
-  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+  return isServiceOverloadError(msg);
+}
+
+function isServiceOverloadError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("429") ||
+    m.includes("402") ||
+    m.includes("503") ||
+    m.includes("529") ||
+    m.includes("resource_exhausted") ||
+    m.includes("quota") ||
+    m.includes("rate limit") ||
+    m.includes("rate_limit") ||
+    m.includes("limit exceeded") ||
+    m.includes("limits exhausted") ||
+    m.includes("too many requests") ||
+    m.includes("overloaded") ||
+    m.includes("temporarily unavailable") ||
+    m.includes("no provider") ||
+    m.includes("insufficient credits") ||
+    m.includes("openrouter failed") ||
+    m.includes("gemini quota") ||
+    m.includes("timeout") ||
+    m.includes("service_error:") ||
+    m.includes("all vision providers failed") ||
+    m.includes("service_unavailable")
+  );
 }
 
 function isModelMissing(msg: string): boolean {
@@ -354,7 +381,17 @@ export class MealPhotoUnreadableError extends Error {
 }
 
 function isQuotaErrorMsg(msg: string): boolean {
-  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+  return isServiceOverloadError(msg);
+}
+
+function pushVisionError(errors: string[], e: unknown): void {
+  if (e instanceof MealPhotoUnreadableError) {
+    const reason = e.message.replace("photo_unreadable:", "");
+    // invalid_json / zero_macros от модели — чаще сбой API, не плохое фото
+    errors.push(reason === "zero_macros" ? e.message : `service_error:${reason}`);
+    return;
+  }
+  errors.push(e instanceof Error ? e.message : String(e));
 }
 
 const TEXT_PROMPT =
@@ -420,9 +457,8 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
       const raw = await groqVision(b64, mime);
       return parseJson(raw);
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      errors.push(errMsg);
-      console.error("groq failed:", errMsg.slice(0, 120));
+      pushVisionError(errors, e);
+      console.error("groq failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
     }
   }
 
@@ -432,7 +468,7 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
       return parseJson(raw);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      errors.push(errMsg);
+      pushVisionError(errors, e);
       console.error("gemini key failed:", errMsg.slice(0, 120));
       if (!isQuotaError(errMsg)) await sleep(1000);
     }
@@ -443,9 +479,8 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
       const raw = await openRouterVision(b64, mime);
       return parseJson(raw);
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      errors.push(errMsg);
-      console.error("openrouter failed:", errMsg.slice(0, 120));
+      pushVisionError(errors, e);
+      console.error("openrouter failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
     }
   }
 
@@ -453,10 +488,17 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
   if (errors.some(isHeaderKeyError)) {
     throw new Error(`OPENROUTER_API_KEY invalid: ${last}`);
   }
-  if (errors.every(isQuotaErrorMsg)) {
-    throw new Error(`quota exhausted: ${last}`);
+
+  const photoOnlyErrors = errors.filter((e) => e.includes("photo_unreadable:zero_macros"));
+  const serviceErrors = errors.filter((e) => !e.includes("photo_unreadable:zero_macros"));
+
+  if (serviceErrors.length > 0 || errors.some(isQuotaErrorMsg)) {
+    throw new Error(`service_unavailable: ${last}`);
   }
-  throw new MealPhotoUnreadableError("all_providers_failed");
+  if (photoOnlyErrors.length > 0) {
+    throw new MealPhotoUnreadableError("zero_macros");
+  }
+  throw new Error(`service_unavailable: ${last}`);
 }
 
 export function groqMealFallbackEnabled(): boolean {

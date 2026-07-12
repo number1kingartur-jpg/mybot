@@ -2216,11 +2216,20 @@ async function processMealPhoto(
     } else if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
-    } else if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429") || errMsg.includes("quota exhausted")) {
+    } else if (
+      errMsg.includes("RESOURCE_EXHAUSTED") ||
+      errMsg.includes("429") ||
+      errMsg.includes("quota exhausted") ||
+      errMsg.includes("service_unavailable") ||
+      errMsg.includes("no content") ||
+      errMsg.includes("blocked") ||
+      errMsg.includes("openrouter failed") ||
+      errMsg.includes("timeout")
+    ) {
       userMsg =
         `⚠️ Сервис анализа временно перегружен.\n\n` +
         `Подожди 30–60 минут и отправь <b>фото</b> снова.`;
-    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable") || errMsg.includes("no content") || errMsg.includes("blocked")) {
+    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros")) {
       getSession(userId).state = "awaiting_meal_text";
       userMsg =
         `⚠️ Не разобрал фото — плохо видно, размыто или не попала тарелка.\n\n` +
@@ -2238,11 +2247,9 @@ async function processMealPhoto(
     } else if (errMsg.includes("API_KEY")) {
       userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
     } else {
-      getSession(userId).state = "awaiting_meal_text";
       userMsg =
-        `⚠️ Не разобрал фото.\n\n` +
-        `📸 <b>Пересними</b> сверху при хорошем свете и отправь снова.\n\n` +
-        `Или <b>опиши текстом</b>:\n<code>лосось 150 г, рис 200 г, салат</code>`;
+        `⚠️ Сервис анализа временно перегружен.\n\n` +
+        `Подожди 30–60 минут и отправь <b>фото</b> снова.`;
     }
     try {
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, userMsg, HTML);
