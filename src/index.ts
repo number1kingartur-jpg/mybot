@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import https from "https";
 import cron from "node-cron";
@@ -2106,7 +2106,30 @@ bot.hears("📸 Еда", async (ctx) => {
 });
 
 bot.on("message:photo", async (ctx) => {
-  if (!mealVisionEnabled()) return;
+  await processMealPhoto(ctx);
+});
+
+// Фото, отправленное как «файл» (без сжатия) — тоже обрабатываем
+bot.on("message:document", async (ctx) => {
+  const mime = ctx.message.document.mime_type ?? "";
+  if (!mime.startsWith("image/")) return;
+  await processMealPhoto(ctx, ctx.message.document.file_id);
+});
+
+async function processMealPhoto(
+  ctx: { from?: { id: number; first_name?: string }; chat: { id: number }; reply: (t: string, o?: object) => Promise<{ message_id: number }>; api: typeof bot.api; message: { photo?: { file_id: string }[] } },
+  fileIdOverride?: string
+) {
+  if (!mealVisionEnabled()) {
+    await ctx.reply(
+      `📸 <b>Анализ фото не подключён</b>\n\n` +
+      `На сервере нет <code>GROQ_API_KEY</code> — добавь его в Railway (Variables) и нажми Redeploy.\n\n` +
+      `<i>Тот же ключ, что для голосовых. Бесплатно: console.groq.com</i>`,
+      HTML
+    );
+    return;
+  }
+
   const userId = ctx.from!.id;
   registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
   const wk = weekKey(today());
@@ -2122,12 +2145,20 @@ bot.on("message:photo", async (ctx) => {
 
   const status = await ctx.reply(`🔍 <i>Смотрю на тарелку…</i>`, HTML);
   try {
-    const photos = ctx.message.photo;
-    const best = photos[photos.length - 1];
-    const file = await ctx.api.getFile(best.file_id);
+    let fileId = fileIdOverride;
+    if (!fileId && ctx.message.photo?.length) {
+      fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+    }
+    if (!fileId) {
+      await ctx.api.editMessageText(ctx.chat.id, status.message_id, `⚠️ Не нашёл файл изображения.`, HTML);
+      return;
+    }
+
+    const file = await ctx.api.getFile(fileId);
+    if (!file.file_path) throw new Error("no file_path from Telegram");
     const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
     const buf = await fetchImageBuffer(url);
-    const mime = file.file_path?.endsWith(".png") ? "image/png" : "image/jpeg";
+    const mime = file.file_path.endsWith(".png") ? "image/png" : "image/jpeg";
     const meal = await analyzeMealPhoto(buf, mime);
 
     addMeal({
@@ -2162,18 +2193,20 @@ bot.on("message:photo", async (ctx) => {
       { parse_mode: "HTML" }
     );
   } catch (e) {
-    console.error("meal photo error:", e);
+    const errMsg = e instanceof Error ? e.message : String(e);
+    console.error("meal photo error:", errMsg);
+    const userMsg = errMsg.includes("GROQ_API_KEY")
+      ? `⚠️ Нет ключа Groq на сервере.`
+      : errMsg.includes("groq 4")
+        ? `⚠️ Ошибка Groq API. Попробуй ещё раз или другой ракурс.`
+        : `⚠️ Не смог разобрать фото. Снимок сверху, хороший свет — и отправь снова.`;
     try {
-      await ctx.api.editMessageText(
-        ctx.chat.id, status.message_id,
-        `⚠️ Не смог разобрать фото. Попробуй снимок сверху при хорошем свете.`,
-        HTML
-      );
+      await ctx.api.editMessageText(ctx.chat.id, status.message_id, userMsg, HTML);
     } catch {
-      await ctx.reply(`⚠️ Не смог разобрать фото. Попробуй другой ракурс.`, HTML);
+      await ctx.reply(userMsg, HTML);
     }
   }
-});
+}
 
 // ── Premium (Telegram Stars) ───────────────────────────────────────────────
 const PREMIUM_STARS = 250; // ~30 дней, оплата в Stars (XTR)
@@ -2662,7 +2695,11 @@ async function main() {
     { command: "help", description: "Справка по функциям" },
   ]);
   await bot.start({
-    onStart: () => console.log("✅ Bot running…"),
+    onStart: () => {
+      console.log("✅ Bot running…");
+      console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
+      console.log(`   Meal photo: ${mealVisionEnabled() ? "on (Llama 4 Scout)" : "OFF (no GROQ_API_KEY)"}`);
+    },
   });
 }
 

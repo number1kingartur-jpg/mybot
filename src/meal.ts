@@ -1,6 +1,8 @@
 import https from "https";
 
 const GROQ_KEY = process.env.GROQ_API_KEY;
+// llama-3.2-vision снята с Groq; актуальная multimodal — Llama 4 Scout
+const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 export function mealVisionEnabled(): boolean {
   return Boolean(GROQ_KEY);
@@ -19,7 +21,7 @@ function groqVision(imageBase64: string, mime: string): Promise<string> {
   if (!GROQ_KEY) throw new Error("GROQ_API_KEY not set");
 
   const body = JSON.stringify({
-    model: "llama-3.2-11b-vision-preview",
+    model: VISION_MODEL,
     messages: [{
       role: "user",
       content: [
@@ -57,8 +59,13 @@ function groqVision(imageBase64: string, mime: string): Promise<string> {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf-8");
           try {
-            const json = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(`groq ${res.statusCode}: ${raw.slice(0, 300)}`));
+              return;
+            }
+            const json = JSON.parse(raw);
             const text = json.choices?.[0]?.message?.content;
             if (text) resolve(String(text).trim());
             else reject(new Error(json.error?.message ?? "no content"));
