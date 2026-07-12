@@ -12,12 +12,12 @@ interface FoodItem {
 }
 
 const FOODS: FoodItem[] = [
-  { aliases: ["salmon", "лосось", "лосос", "fish", "рыба", "треска", "cod", "tuna", "тунец"], name: "Лосось", kcal100: 208, p100: 20, f100: 13, c100: 0, defaultG: 150, category: "protein" },
-  { aliases: ["chicken", "курица", "куриц", "turkey", "индейка", "beef", "говядин", "pork", "свинин"], name: "Курица", kcal100: 165, p100: 31, f100: 3.6, c100: 0, defaultG: 150, category: "protein" },
-  { aliases: ["rice", "рис", "risotto"], name: "Рис", kcal100: 130, p100: 2.7, f100: 0.3, c100: 28, defaultG: 180, category: "carb" },
+  { aliases: ["salmon", "лосось", "лосос", "fish", "рыба", "seafood", "треска", "cod", "tuna", "тунец", "sashimi", "steak"], name: "Лосось", kcal100: 208, p100: 20, f100: 13, c100: 0, defaultG: 150, category: "protein" },
+  { aliases: ["chicken", "курица", "куриц", "turkey", "индейка", "beef", "говядин", "pork", "свинин", "meat"], name: "Курица", kcal100: 165, p100: 31, f100: 3.6, c100: 0, defaultG: 150, category: "protein" },
+  { aliases: ["rice", "рис", "risotto", "fried rice", "white rice", "brown rice"], name: "Рис", kcal100: 130, p100: 2.7, f100: 0.3, c100: 28, defaultG: 180, category: "carb" },
   { aliases: ["pasta", "макарон", "spaghetti", "noodle", "лапша", "гречк", "buckwheat", "овсян", "oat"], name: "Гарнир", kcal100: 140, p100: 5, f100: 1.5, c100: 25, defaultG: 180, category: "carb" },
   { aliases: ["potato", "картоф", "fries", "фри"], name: "Картофель", kcal100: 110, p100: 2, f100: 4, c100: 17, defaultG: 180, category: "carb" },
-  { aliases: ["salad", "салат", "vegetable", "овощ", "carrot", "морков", "cucumber", "огурц", "tomato", "помидор", "greens", "зелень"], name: "Салат", kcal100: 35, p100: 1.5, f100: 0.5, c100: 5, defaultG: 100, category: "veg" },
+  { aliases: ["salad", "салат", "vegetable", "vegetables", "veggies", "овощ", "carrot", "морков", "cucumber", "огурц", "tomato", "помидор", "greens", "зелень", "broccoli", "брокколи"], name: "Салат", kcal100: 35, p100: 1.5, f100: 0.5, c100: 5, defaultG: 100, category: "veg" },
   { aliases: ["egg", "яйц", "omelet", "омлет"], name: "Яйца", kcal100: 155, p100: 13, f100: 11, c100: 1, defaultG: 120, category: "protein" },
   { aliases: ["cheese", "сыр"], name: "Сыр", kcal100: 350, p100: 25, f100: 28, c100: 1, defaultG: 40, category: "fat" },
   { aliases: ["bread", "хлеб", "toast"], name: "Хлеб", kcal100: 265, p100: 9, f100: 3, c100: 49, defaultG: 60, category: "carb" },
@@ -29,6 +29,11 @@ const FOODS: FoodItem[] = [
 ];
 
 const HF_CAPTION_MODEL = "Salesforce/blip-image-captioning-base";
+const HF_FOOD_MODEL = "nateraw/food";
+
+function hfApiUrl(model: string): string {
+  return `https://router.huggingface.co/hf-inference/models/${model}`;
+}
 
 function hfToken(): string | undefined {
   const raw = process.env.HF_TOKEN ?? process.env.HUGGINGFACE_API_KEY;
@@ -94,13 +99,13 @@ function estimateFromCaption(caption: string): MealAnalysis | null {
   };
 }
 
-async function hfImageCaption(imageBuffer: Buffer, mime: string): Promise<string> {
+async function hfRequest(model: string, imageBuffer: Buffer, mime: string): Promise<string> {
   const headers: Record<string, string> = { "Content-Type": mime };
   const token = hfToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`https://api-inference.huggingface.co/models/${HF_CAPTION_MODEL}`, {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(hfApiUrl(model), {
       method: "POST",
       headers,
       body: imageBuffer,
@@ -108,32 +113,64 @@ async function hfImageCaption(imageBuffer: Buffer, mime: string): Promise<string
     });
 
     const raw = await res.text();
-    if (res.status === 503) {
-      await sleep(4000 + attempt * 2000);
+    if (res.status === 503 || res.status === 429) {
+      await sleep(3000 + attempt * 2000);
       continue;
     }
-    if (!res.ok) throw new Error(`hf caption ${res.status}: ${raw.slice(0, 160)}`);
-
-    try {
-      const json = JSON.parse(raw) as Array<{ generated_text?: string }>;
-      const caption = json[0]?.generated_text?.trim();
-      if (caption) return caption;
-    } catch {
-      throw new Error(`hf caption parse: ${raw.slice(0, 160)}`);
-    }
-    throw new Error("hf caption: empty");
+    if (!res.ok) throw new Error(`hf ${model} ${res.status}: ${raw.slice(0, 160)}`);
+    return raw;
   }
-  throw new Error("hf caption: model loading timeout");
+  throw new Error(`hf ${model}: model loading timeout`);
+}
+
+async function hfImageCaption(imageBuffer: Buffer, mime: string): Promise<string> {
+  const raw = await hfRequest(HF_CAPTION_MODEL, imageBuffer, mime);
+  try {
+    const json = JSON.parse(raw) as Array<{ generated_text?: string }>;
+    const caption = json[0]?.generated_text?.trim();
+    if (caption) return caption;
+  } catch {
+    throw new Error(`hf caption parse: ${raw.slice(0, 160)}`);
+  }
+  throw new Error("hf caption: empty");
+}
+
+async function hfFoodLabels(imageBuffer: Buffer, mime: string): Promise<string[]> {
+  const raw = await hfRequest(HF_FOOD_MODEL, imageBuffer, mime);
+  try {
+    const json = JSON.parse(raw) as Array<{ label?: string; score?: number }>;
+    return json
+      .filter((x) => (x.score ?? 0) >= 0.08)
+      .map((x) => String(x.label ?? "").replace(/_/g, " "))
+      .filter(Boolean)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
 }
 
 /** Бесплатный fallback без Gemini/OpenRouter/Groq — caption + справочник КБЖУ. */
 export async function analyzeMealPhotoFallback(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
-  const caption = await hfImageCaption(imageBuffer, mime);
-  const meal = estimateFromCaption(caption);
-  if (!meal || meal.kcal <= 0) {
-    throw new Error(`hf_fallback_no_foods: ${caption}`);
+  const hints: string[] = [];
+  try {
+    hints.push(await hfImageCaption(imageBuffer, mime));
+  } catch (e) {
+    console.error("hf caption failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
   }
-  return meal;
+
+  try {
+    const labels = await hfFoodLabels(imageBuffer, mime);
+    if (labels.length) hints.push(labels.join(", "));
+  } catch (e) {
+    console.error("hf food failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
+  }
+
+  for (const hint of hints) {
+    const meal = estimateFromCaption(hint);
+    if (meal && meal.kcal > 0) return meal;
+  }
+
+  throw new Error(`hf_fallback_no_foods: ${hints.join(" | ") || "no hints"}`);
 }
 
 export function mealFallbackEnabled(): boolean {

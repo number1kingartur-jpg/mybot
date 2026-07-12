@@ -2217,7 +2217,11 @@ async function processMealPhoto(
         `<code>sk-or-v1-xxxxxxxx</code>\n` +
         `3. Без кавычек, без пробелов, без слова Bearer\n` +
         `4. Redeploy`;
-    } else if (errMsg.includes("openrouter 401") || errMsg.includes("openrouter 403")) {
+    } else if (
+      (errMsg.includes("openrouter 401") || errMsg.includes("openrouter 403")) &&
+      !errMsg.includes("service_unavailable") &&
+      !errMsg.includes("hf_fallback")
+    ) {
       userMsg = `⚠️ <b>Ключ OpenRouter неверный.</b>\n\n` +
         `Создай новый на <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> → Railway → <code>OPENROUTER_API_KEY</code> → Redeploy.`;
     } else if (errMsg.includes("groq 401") || errMsg.includes("groq 403")) {

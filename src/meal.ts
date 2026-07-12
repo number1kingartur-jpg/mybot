@@ -70,12 +70,11 @@ export function mealVisionEnabled(): boolean {
 }
 
 export function mealVisionProvider(): string {
-  const parts: string[] = [];
+  const parts: string[] = ["HF fallback"];
   if (groqKey()) parts.push("Groq");
   const gk = geminiKeys();
   if (gk.length) parts.push(`Gemini×${gk.length}`);
   if (openRouterKey()) parts.push("OpenRouter free");
-  parts.push("HF fallback");
   return parts.join(" → ");
 }
 
@@ -449,10 +448,18 @@ export async function analyzeMealText(description: string): Promise<MealAnalysis
   throw new Error(errors.at(-1) ?? "text meal analysis failed");
 }
 
-/** Анализ фото: Groq → Gemini → OpenRouter (больше моделей + retry). */
+/** Анализ фото: HF fallback (без ключей) → Groq → Gemini → OpenRouter. */
 export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
   const b64 = imageBuffer.toString("base64");
   const errors: string[] = [];
+
+  try {
+    return await analyzeMealPhotoFallback(imageBuffer, mime);
+  } catch (e) {
+    const fb = e instanceof Error ? e.message : String(e);
+    console.error("hf fallback failed:", fb.slice(0, 120));
+    errors.push(fb);
+  }
 
   if (groqKey()) {
     try {
@@ -493,14 +500,6 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
 
   const photoOnlyErrors = errors.filter((e) => e.includes("photo_unreadable:zero_macros"));
   const serviceErrors = errors.filter((e) => !e.includes("photo_unreadable:zero_macros"));
-
-  try {
-    return await analyzeMealPhotoFallback(imageBuffer, mime);
-  } catch (e) {
-    const fb = e instanceof Error ? e.message : String(e);
-    console.error("hf fallback failed:", fb.slice(0, 120));
-    errors.push(fb);
-  }
 
   if (serviceErrors.length > 0 || errors.some(isQuotaErrorMsg)) {
     throw new Error(`service_unavailable: ${last}`);
