@@ -9,10 +9,10 @@ const PROMPT =
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const GEMINI_MODELS = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest",
+  "gemini-3.1-flash-lite",
+  "gemini-3-flash-preview",
 ];
 
 const OPENROUTER_VISION_MODELS = [
@@ -128,7 +128,8 @@ function isServiceOverloadError(msg: string): boolean {
 }
 
 function isModelMissing(msg: string): boolean {
-  return msg.includes("404") || msg.includes("not found") || msg.includes("NOT_FOUND");
+  const m = msg.toLowerCase();
+  return m.includes("404") || m.includes("not found") || m.includes("not_found") || m.includes("no longer available");
 }
 
 function isHeaderKeyError(msg: string): boolean {
@@ -429,7 +430,7 @@ export async function analyzeMealText(description: string): Promise<MealAnalysis
       const { status, raw } = await httpsJson(
         {
           hostname: "generativelanguage.googleapis.com",
-          path: "/v1beta/models/gemini-2.0-flash:generateContent",
+          path: `/v1beta/models/${GEMINI_MODELS[0]}:generateContent`,
           method: "POST",
           headers: {
             "Content-Type": "application/json",
