@@ -2197,11 +2197,21 @@ async function processMealPhoto(
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error("meal photo error:", errMsg);
-    const userMsg = errMsg.includes("API_KEY")
-      ? `⚠️ Нет ключа на сервере — добавь GEMINI_API_KEY в Railway.`
-      : errMsg.includes("gemini") || errMsg.includes("groq")
-        ? `⚠️ Ошибка API. Попробуй ещё раз или другой ракурс.`
-        : `⚠️ Не смог разобрать фото. Снимок сверху, хороший свет — и отправь снова.`;
+    let userMsg: string;
+    if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid") || errMsg.includes("401")) {
+      userMsg = `⚠️ <b>Ключ Gemini неверный.</b>\n\n` +
+        `Зайди в <a href="https://aistudio.google.com/apikey">AI Studio</a> → скопируй ключ заново → Railway → GEMINI_API_KEY → Redeploy.\n\n` +
+        `<i>Ключ должен копироваться целиком, без пробелов.</i>`;
+    } else if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
+      userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
+        `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
+    } else if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429")) {
+      userMsg = `⚠️ Лимит Gemini на сегодня исчерпан. Попробуй через час.`;
+    } else if (errMsg.includes("API_KEY")) {
+      userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
+    } else {
+      userMsg = `⚠️ Не смог разобрать фото.\n\n<i>${esc(errMsg.slice(0, 120))}</i>\n\nПопробуй снимок сверху при хорошем свете.`;
+    }
     try {
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, userMsg, HTML);
     } catch {

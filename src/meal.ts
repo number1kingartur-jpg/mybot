@@ -1,9 +1,15 @@
 import https from "https";
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_KEY = process.env.GEMINI_API_KEY?.trim();
 const GROQ_KEY = process.env.GROQ_API_KEY;
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
-const GEMINI_MODEL = "gemini-2.0-flash";
+
+// Пробуем по порядку — если одна модель недоступна, следующая
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+];
 
 const PROMPT =
   "Ты нутрициолог. По фото еды оцени порцию для одного приёма пищи. " +
@@ -15,7 +21,7 @@ export function mealVisionEnabled(): boolean {
 }
 
 export function mealVisionProvider(): string {
-  if (GEMINI_KEY) return "Gemini 2.0 Flash";
+  if (GEMINI_KEY) return `Gemini (${GEMINI_MODELS[0]})`;
   if (GROQ_KEY) return "Groq Llama 4 Scout";
   return "none";
 }
@@ -29,39 +35,32 @@ export interface MealAnalysis {
   note?: string;
 }
 
-function httpsJson(
-  opts: https.RequestOptions,
-  body: string,
-  label: string
-): Promise<string> {
+function httpsJson(opts: https.RequestOptions, body: string): Promise<{ status: number; raw: string }> {
   return new Promise((resolve, reject) => {
-    const req = https.request(
-      { ...opts, timeout: 45_000 },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf-8");
-          try {
-            if (res.statusCode && res.statusCode >= 400) {
-              reject(new Error(`${label} ${res.statusCode}: ${raw.slice(0, 300)}`));
-              return;
-            }
-            resolve(raw);
-          } catch (e) {
-            reject(e);
-          }
-        });
-      }
-    );
-    req.on("timeout", () => req.destroy(new Error(`${label} timeout`)));
+    const req = https.request({ ...opts, timeout: 45_000 }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => {
+        resolve({ status: res.statusCode ?? 0, raw: Buffer.concat(chunks).toString("utf-8") });
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("timeout")));
     req.on("error", reject);
     req.write(body);
     req.end();
   });
 }
 
-async function geminiVision(imageBase64: string, mime: string): Promise<string> {
+function extractGeminiError(raw: string): string {
+  try {
+    const j = JSON.parse(raw);
+    return j.error?.message ?? raw.slice(0, 200);
+  } catch {
+    return raw.slice(0, 200);
+  }
+}
+
+async function geminiVisionOne(model: string, imageBase64: string, mime: string): Promise<string> {
   if (!GEMINI_KEY) throw new Error("GEMINI_API_KEY not set");
 
   const body = JSON.stringify({
@@ -71,28 +70,51 @@ async function geminiVision(imageBase64: string, mime: string): Promise<string> 
         { inline_data: { mime_type: mime, data: imageBase64 } },
       ],
     }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 400 },
+    generationConfig: { temperature: 0.2, maxOutputTokens: 512 },
   });
 
-  const path = `/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
-  const raw = await httpsJson(
+  const { status, raw } = await httpsJson(
     {
       hostname: "generativelanguage.googleapis.com",
-      path,
+      path: `/v1beta/models/${model}:generateContent`,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_KEY,
         "Content-Length": Buffer.byteLength(body),
       },
     },
-    body,
-    "gemini"
+    body
   );
+
+  if (status >= 400) {
+    throw new Error(`gemini ${status} [${model}]: ${extractGeminiError(raw)}`);
+  }
 
   const json = JSON.parse(raw);
   const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
   if (text) return String(text).trim();
-  throw new Error(json.error?.message ?? "gemini: no content");
+
+  const block = json.candidates?.[0]?.finishReason;
+  if (block) throw new Error(`gemini blocked [${model}]: ${block}`);
+  throw new Error(extractGeminiError(raw) || `gemini: no content [${model}]`);
+}
+
+async function geminiVision(imageBase64: string, mime: string): Promise<string> {
+  let lastErr = "unknown";
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await geminiVisionOne(model, imageBase64, mime);
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      console.error("gemini try", model, lastErr);
+      // 404/400 model not found — пробуем следующую
+      if (!lastErr.includes("404") && !lastErr.includes("not found") && !lastErr.includes("NOT_FOUND")) {
+        throw e;
+      }
+    }
+  }
+  throw new Error(lastErr);
 }
 
 async function groqVision(imageBase64: string, mime: string): Promise<string> {
@@ -111,7 +133,7 @@ async function groqVision(imageBase64: string, mime: string): Promise<string> {
     max_tokens: 300,
   });
 
-  const raw = await httpsJson(
+  const { status, raw } = await httpsJson(
     {
       hostname: "api.groq.com",
       path: "/openai/v1/chat/completions",
@@ -122,9 +144,10 @@ async function groqVision(imageBase64: string, mime: string): Promise<string> {
         "Content-Length": Buffer.byteLength(body),
       },
     },
-    body,
-    "groq"
+    body
   );
+
+  if (status >= 400) throw new Error(`groq ${status}: ${raw.slice(0, 300)}`);
 
   const json = JSON.parse(raw);
   const text = json.choices?.[0]?.message?.content;
