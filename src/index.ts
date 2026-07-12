@@ -13,7 +13,7 @@ import {
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
-import { analyzeMealPhoto, mealVisionEnabled } from "./meal";
+import { analyzeMealPhoto, mealVisionEnabled, mealVisionProvider } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
@@ -2084,9 +2084,10 @@ bot.hears("📸 Еда", async (ctx) => {
   if (!mealVisionEnabled()) {
     await ctx.reply(
       `📸 <b>АНАЛИЗ ЕДЫ ПО ФОТО</b>\n${HR}\n\n` +
-      `Функция не подключена — нужен <code>GROQ_API_KEY</code> на сервере.\n` +
-      `<i>Пока записывай еду текстом в заметки или считай через «🍗 Питание».</i>`,
-      HTML
+      `Нужен ключ на сервере (Railway → Variables → Redeploy):\n` +
+      `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> (рекомендую)\n` +
+      `• или <code>GROQ_API_KEY</code> — console.groq.com`,
+      { link_preview_options: { is_disabled: true }, ...HTML }
     );
     return;
   }
@@ -2123,9 +2124,10 @@ async function processMealPhoto(
   if (!mealVisionEnabled()) {
     await ctx.reply(
       `📸 <b>Анализ фото не подключён</b>\n\n` +
-      `На сервере нет <code>GROQ_API_KEY</code> — добавь его в Railway (Variables) и нажми Redeploy.\n\n` +
-      `<i>Тот же ключ, что для голосовых. Бесплатно: console.groq.com</i>`,
-      HTML
+      `Добавь в Railway → Variables:\n` +
+      `<code>GEMINI_API_KEY</code> с <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>\n` +
+      `и нажми <b>Redeploy</b>.`,
+      { link_preview_options: { is_disabled: true }, ...HTML }
     );
     return;
   }
@@ -2195,10 +2197,10 @@ async function processMealPhoto(
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error("meal photo error:", errMsg);
-    const userMsg = errMsg.includes("GROQ_API_KEY")
-      ? `⚠️ Нет ключа Groq на сервере.`
-      : errMsg.includes("groq 4")
-        ? `⚠️ Ошибка Groq API. Попробуй ещё раз или другой ракурс.`
+    const userMsg = errMsg.includes("API_KEY")
+      ? `⚠️ Нет ключа на сервере — добавь GEMINI_API_KEY в Railway.`
+      : errMsg.includes("gemini") || errMsg.includes("groq")
+        ? `⚠️ Ошибка API. Попробуй ещё раз или другой ракурс.`
         : `⚠️ Не смог разобрать фото. Снимок сверху, хороший свет — и отправь снова.`;
     try {
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, userMsg, HTML);
@@ -2698,7 +2700,7 @@ async function main() {
     onStart: () => {
       console.log("✅ Bot running…");
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
-      console.log(`   Meal photo: ${mealVisionEnabled() ? "on (Llama 4 Scout)" : "OFF (no GROQ_API_KEY)"}`);
+      console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no GEMINI/GROQ key)"}`);
     },
   });
 }
