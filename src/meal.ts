@@ -1,7 +1,7 @@
 import https from "https";
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY?.trim();
 const GROQ_KEY = process.env.GROQ_API_KEY?.trim();
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY?.trim();
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const GEMINI_MODELS = [
@@ -11,24 +11,43 @@ const GEMINI_MODELS = [
   "gemini-1.5-flash",
 ];
 
+const OPENROUTER_VISION_MODELS = [
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "openrouter/free",
+];
+
 const PROMPT =
   "Ты нутрициолог. По фото еды оцени порцию для одного приёма пищи. " +
   "Ответь ТОЛЬКО валидным JSON без markdown: " +
   '{"name":"краткое название блюда на русском","kcal":число,"proteinG":число,"fatG":число,"carbsG":число,"note":"одна строка оценки точности"}';
 
+function geminiKeys(): string[] {
+  const keys: string[] = [];
+  const main = process.env.GEMINI_API_KEY?.trim();
+  if (main) keys.push(main);
+  for (let i = 2; i <= 5; i++) {
+    const k = process.env[`GEMINI_API_KEY_${i}`]?.trim();
+    if (k && !keys.includes(k)) keys.push(k);
+  }
+  return keys;
+}
+
 export function mealVisionEnabled(): boolean {
-  return Boolean(GEMINI_KEY || GROQ_KEY);
+  return geminiKeys().length > 0 || Boolean(OPENROUTER_KEY || GROQ_KEY);
 }
 
 export function mealVisionProvider(): string {
   const parts: string[] = [];
-  if (GEMINI_KEY) parts.push(`Gemini (${GEMINI_MODELS[0]})`);
-  if (GROQ_KEY) parts.push("Groq fallback");
-  return parts.join(" + ") || "none";
+  const gk = geminiKeys();
+  if (gk.length) parts.push(`Gemini×${gk.length}`);
+  if (OPENROUTER_KEY) parts.push("OpenRouter free");
+  if (GROQ_KEY) parts.push("Groq");
+  return parts.join(" → ") || "none";
 }
 
-export function groqMealFallbackEnabled(): boolean {
-  return Boolean(GROQ_KEY);
+export function freeMealFallbackEnabled(): boolean {
+  return Boolean(OPENROUTER_KEY || geminiKeys().length > 1);
 }
 
 export interface MealAnalysis {
@@ -54,7 +73,7 @@ function isModelMissing(msg: string): boolean {
 
 function httpsJson(opts: https.RequestOptions, body: string): Promise<{ status: number; raw: string }> {
   return new Promise((resolve, reject) => {
-    const req = https.request({ ...opts, timeout: 45_000 }, (res) => {
+    const req = https.request({ ...opts, timeout: 60_000 }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
@@ -68,18 +87,16 @@ function httpsJson(opts: https.RequestOptions, body: string): Promise<{ status: 
   });
 }
 
-function extractGeminiError(raw: string): string {
+function extractApiError(raw: string): string {
   try {
     const j = JSON.parse(raw);
-    return j.error?.message ?? raw.slice(0, 200);
+    return j.error?.message ?? j.message ?? raw.slice(0, 200);
   } catch {
     return raw.slice(0, 200);
   }
 }
 
-async function geminiVisionOne(model: string, imageBase64: string, mime: string): Promise<string> {
-  if (!GEMINI_KEY) throw new Error("GEMINI_API_KEY not set");
-
+async function geminiVisionOne(apiKey: string, model: string, imageBase64: string, mime: string): Promise<string> {
   const body = JSON.stringify({
     contents: [{
       parts: [
@@ -97,7 +114,7 @@ async function geminiVisionOne(model: string, imageBase64: string, mime: string)
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_KEY,
+        "x-goog-api-key": apiKey,
         "Content-Length": Buffer.byteLength(body),
       },
     },
@@ -105,7 +122,7 @@ async function geminiVisionOne(model: string, imageBase64: string, mime: string)
   );
 
   if (status >= 400) {
-    throw new Error(`gemini ${status} [${model}]: ${extractGeminiError(raw)}`);
+    throw new Error(`gemini ${status} [${model}]: ${extractApiError(raw)}`);
   }
 
   const json = JSON.parse(raw);
@@ -114,17 +131,17 @@ async function geminiVisionOne(model: string, imageBase64: string, mime: string)
 
   const block = json.candidates?.[0]?.finishReason;
   if (block) throw new Error(`gemini blocked [${model}]: ${block}`);
-  throw new Error(extractGeminiError(raw) || `gemini: no content [${model}]`);
+  throw new Error(extractApiError(raw) || `gemini: no content [${model}]`);
 }
 
-async function geminiVision(imageBase64: string, mime: string): Promise<string> {
+async function geminiVisionWithKey(apiKey: string, imageBase64: string, mime: string): Promise<string> {
   let lastErr = "unknown";
   let quotaHit = false;
 
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        return await geminiVisionOne(model, imageBase64, mime);
+        return await geminiVisionOne(apiKey, model, imageBase64, mime);
       } catch (e) {
         lastErr = e instanceof Error ? e.message : String(e);
         console.error("gemini try", model, `attempt=${attempt}`, lastErr);
@@ -149,11 +166,17 @@ async function geminiVision(imageBase64: string, mime: string): Promise<string> 
   throw new Error(lastErr);
 }
 
-async function groqVision(imageBase64: string, mime: string): Promise<string> {
-  if (!GROQ_KEY) throw new Error("GROQ_API_KEY not set");
-
+async function chatVision(
+  label: string,
+  hostname: string,
+  path: string,
+  headers: Record<string, string>,
+  model: string,
+  imageBase64: string,
+  mime: string
+): Promise<string> {
   const body = JSON.stringify({
-    model: GROQ_VISION_MODEL,
+    model,
     messages: [{
       role: "user",
       content: [
@@ -162,16 +185,16 @@ async function groqVision(imageBase64: string, mime: string): Promise<string> {
       ],
     }],
     temperature: 0.2,
-    max_tokens: 300,
+    max_tokens: 400,
   });
 
   const { status, raw } = await httpsJson(
     {
-      hostname: "api.groq.com",
-      path: "/openai/v1/chat/completions",
+      hostname,
+      path,
       method: "POST",
       headers: {
-        Authorization: `Bearer ${GROQ_KEY}`,
+        ...headers,
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(body),
       },
@@ -179,12 +202,53 @@ async function groqVision(imageBase64: string, mime: string): Promise<string> {
     body
   );
 
-  if (status >= 400) throw new Error(`groq ${status}: ${raw.slice(0, 300)}`);
+  if (status >= 400) throw new Error(`${label} ${status} [${model}]: ${extractApiError(raw)}`);
 
   const json = JSON.parse(raw);
   const text = json.choices?.[0]?.message?.content;
   if (text) return String(text).trim();
-  throw new Error(json.error?.message ?? "groq: no content");
+  throw new Error(json.error?.message ?? `${label}: no content`);
+}
+
+async function openRouterVision(imageBase64: string, mime: string): Promise<string> {
+  if (!OPENROUTER_KEY) throw new Error("OPENROUTER_API_KEY not set");
+
+  let lastErr = "unknown";
+  for (const model of OPENROUTER_VISION_MODELS) {
+    try {
+      return await chatVision(
+        "openrouter",
+        "openrouter.ai",
+        "/api/v1/chat/completions",
+        {
+          Authorization: `Bearer ${OPENROUTER_KEY}`,
+          "HTTP-Referer": "https://t.me/raschet_bot",
+          "X-OpenRouter-Title": "RASCHET Bot",
+        },
+        model,
+        imageBase64,
+        mime
+      );
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      console.error("openrouter try", model, lastErr);
+      if (!isQuotaError(lastErr) && !isModelMissing(lastErr)) throw e;
+    }
+  }
+  throw new Error(`openrouter quota exhausted: ${lastErr}`);
+}
+
+async function groqVision(imageBase64: string, mime: string): Promise<string> {
+  if (!GROQ_KEY) throw new Error("GROQ_API_KEY not set");
+  return chatVision(
+    "groq",
+    "api.groq.com",
+    "/openai/v1/chat/completions",
+    { Authorization: `Bearer ${GROQ_KEY}` },
+    GROQ_VISION_MODEL,
+    imageBase64,
+    mime
+  );
 }
 
 function parseJson(raw: string): MealAnalysis {
@@ -203,25 +267,48 @@ function parseJson(raw: string): MealAnalysis {
   };
 }
 
-/** Анализ фото еды: Gemini → при лимите Groq (если ключ есть). */
+/** Анализ фото: Gemini (несколько ключей) → OpenRouter free → Groq. */
 export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
   const b64 = imageBuffer.toString("base64");
+  const errors: string[] = [];
 
-  if (GEMINI_KEY) {
+  for (const key of geminiKeys()) {
     try {
-      const raw = await geminiVision(b64, mime);
+      const raw = await geminiVisionWithKey(key, b64, mime);
       return parseJson(raw);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      if (GROQ_KEY && isQuotaError(errMsg)) {
-        console.log("gemini quota hit, falling back to groq");
-        const raw = await groqVision(b64, mime);
-        return parseJson(raw);
-      }
-      throw e;
+      errors.push(errMsg);
+      console.error("gemini key failed:", errMsg.slice(0, 120));
+      if (!isQuotaError(errMsg)) throw e;
     }
   }
 
-  const raw = await groqVision(b64, mime);
-  return parseJson(raw);
+  if (OPENROUTER_KEY) {
+    try {
+      const raw = await openRouterVision(b64, mime);
+      return parseJson(raw);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      errors.push(errMsg);
+      console.error("openrouter failed:", errMsg.slice(0, 120));
+      if (!isQuotaError(errMsg)) throw e;
+    }
+  }
+
+  if (GROQ_KEY) {
+    try {
+      const raw = await groqVision(b64, mime);
+      return parseJson(raw);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  throw new Error(errors.at(-1) ?? "all vision providers failed");
+}
+
+// backward compat for index.ts
+export function groqMealFallbackEnabled(): boolean {
+  return Boolean(GROQ_KEY || OPENROUTER_KEY);
 }

@@ -13,7 +13,7 @@ import {
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
-import { analyzeMealPhoto, mealVisionEnabled, mealVisionProvider, groqMealFallbackEnabled } from "./meal";
+import { analyzeMealPhoto, mealVisionEnabled, mealVisionProvider, freeMealFallbackEnabled } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
@@ -2085,7 +2085,8 @@ bot.hears("📸 Еда", async (ctx) => {
     await ctx.reply(
       `📸 <b>АНАЛИЗ ЕДЫ ПО ФОТО</b>\n${HR}\n\n` +
       `Нужен ключ на сервере (Railway → Variables → Redeploy):\n` +
-      `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> (рекомендую)\n` +
+      `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>\n` +
+      `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно, без карты)\n` +
       `• или <code>GROQ_API_KEY</code> — console.groq.com`,
       { link_preview_options: { is_disabled: true }, ...HTML }
     );
@@ -2125,7 +2126,8 @@ async function processMealPhoto(
     await ctx.reply(
       `📸 <b>Анализ фото не подключён</b>\n\n` +
       `Добавь в Railway → Variables:\n` +
-      `<code>GEMINI_API_KEY</code> с <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>\n` +
+      `<code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>\n` +
+      `или <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно)\n` +
       `и нажми <b>Redeploy</b>.`,
       { link_preview_options: { is_disabled: true }, ...HTML }
     );
@@ -2206,14 +2208,16 @@ async function processMealPhoto(
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
     } else if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429") || errMsg.includes("quota exhausted")) {
-      userMsg = groqMealFallbackEnabled()
-        ? `⚠️ Лимит Gemini исчерпан, Groq тоже не ответил.\n\nПодожди 30–60 мин и попробуй снова.`
-        : `⚠️ <b>Лимит бесплатного Gemini исчерпан.</b>\n\n` +
-          `Варианты:\n` +
-          `1. Подожди 30–60 мин (сброс по минутам/дню)\n` +
-          `2. Добавь <code>GROQ_API_KEY</code> в Railway — бот переключится автоматически\n` +
-          `   Ключ: <a href="https://console.groq.com/keys">console.groq.com/keys</a>\n` +
-          `3. Включи биллинг в <a href="https://aistudio.google.com/apikey">AI Studio</a> — лимит вырастет`;
+      userMsg = freeMealFallbackEnabled()
+        ? `⚠️ Все бесплатные лимиты исчерпаны.\n\nПодожди 30–60 мин и попробуй снова.`
+        : `⚠️ <b>Лимит Gemini исчерпан.</b>\n\n` +
+          `Бесплатные варианты (без оплаты):\n\n` +
+          `1. <b>OpenRouter</b> — 50 фото/день, карта не нужна\n` +
+          `   → <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> → Create key\n` +
+          `   → Railway: <code>OPENROUTER_API_KEY</code> → Redeploy\n\n` +
+          `2. <b>Второй ключ Gemini</b> — другой Google-аккаунт\n` +
+          `   → Railway: <code>GEMINI_API_KEY_2</code> → Redeploy\n\n` +
+          `3. Подожди 30–60 мин (сброс лимита по минутам)`;
     } else if (errMsg.includes("API_KEY")) {
       userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
     } else {
@@ -2717,7 +2721,7 @@ async function main() {
     onStart: () => {
       console.log("✅ Bot running…");
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
-      console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no GEMINI/GROQ key)"}`);
+      console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no vision API key)"}`);
     },
   });
 }
