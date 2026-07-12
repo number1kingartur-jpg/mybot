@@ -2149,7 +2149,7 @@ function looksLikeMealText(text: string): boolean {
   return hasFood && (hasGrams || t.includes(","));
 }
 
-async function processMealText(ctx: { from?: { id: number }; chat: { id: number }; reply: (t: string, o?: object) => Promise<{ message_id: number }>; api: typeof bot.api }, text: string) {
+async function processMealText(ctx: { from?: { id: number; first_name?: string }; chat: { id: number }; reply: (t: string, o?: object) => Promise<{ message_id: number }>; api: typeof bot.api }, text: string) {
   const userId = ctx.from!.id;
   registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
   const status = await ctx.reply(`🔍 <i>Считаю…</i>`, HTML);
