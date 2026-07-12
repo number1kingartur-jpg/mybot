@@ -70,11 +70,12 @@ export function mealVisionEnabled(): boolean {
 }
 
 export function mealVisionProvider(): string {
-  const parts: string[] = ["HF fallback"];
-  if (groqKey()) parts.push("Groq");
+  const parts: string[] = [];
   const gk = geminiKeys();
   if (gk.length) parts.push(`Gemini×${gk.length}`);
+  if (groqKey()) parts.push("Groq");
   if (openRouterKey()) parts.push("OpenRouter free");
+  parts.push("HF fallback");
   return parts.join(" → ");
 }
 
@@ -451,28 +452,10 @@ export async function analyzeMealText(description: string): Promise<MealAnalysis
   throw new Error(errors.at(-1) ?? "text meal analysis failed");
 }
 
-/** Анализ фото: HF fallback (без ключей) → Groq → Gemini → OpenRouter. */
+/** Анализ фото: Gemini → Groq → OpenRouter → HF fallback. */
 export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
   const b64 = imageBuffer.toString("base64");
   const errors: string[] = [];
-
-  try {
-    return await analyzeMealPhotoFallback(imageBuffer, mime);
-  } catch (e) {
-    const fb = e instanceof Error ? e.message : String(e);
-    console.error("hf fallback failed:", fb.slice(0, 120));
-    errors.push(fb);
-  }
-
-  if (groqKey()) {
-    try {
-      const raw = await groqVision(b64, mime);
-      return parseJson(raw);
-    } catch (e) {
-      pushVisionError(errors, e);
-      console.error("groq failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
-    }
-  }
 
   for (const key of geminiKeys()) {
     try {
@@ -486,6 +469,16 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
     }
   }
 
+  if (groqKey()) {
+    try {
+      const raw = await groqVision(b64, mime);
+      return parseJson(raw);
+    } catch (e) {
+      pushVisionError(errors, e);
+      console.error("groq failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
+    }
+  }
+
   if (openRouterKey()) {
     try {
       const raw = await openRouterVision(b64, mime);
@@ -494,6 +487,14 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
       pushVisionError(errors, e);
       console.error("openrouter failed:", (e instanceof Error ? e.message : String(e)).slice(0, 120));
     }
+  }
+
+  try {
+    return await analyzeMealPhotoFallback(imageBuffer, mime);
+  } catch (e) {
+    const fb = e instanceof Error ? e.message : String(e);
+    console.error("hf fallback failed:", fb.slice(0, 120));
+    errors.push(fb);
   }
 
   const last = errors.at(-1) ?? "all vision providers failed";

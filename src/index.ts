@@ -2265,14 +2265,18 @@ async function processMealPhoto(
       userMsg = `⚠️ <b>Ключ Groq неверный.</b>\n\n` +
         `Создай новый на <a href="https://console.groq.com">console.groq.com</a> → Railway → <code>GROQ_API_KEY</code> → Redeploy.`;
     } else if (
+      errMsg.includes("gemini 400") ||
       errMsg.includes("gemini 401") ||
       errMsg.includes("gemini 403") ||
       errMsg.includes("API_KEY_INVALID") ||
       errMsg.includes("API key not valid")
     ) {
-      userMsg = `⚠️ <b>Ключ Gemini неверный.</b>\n\n` +
-        `Зайди в <a href="https://aistudio.google.com/apikey">AI Studio</a> → скопируй ключ заново → Railway → <code>GEMINI_API_KEY</code> → Redeploy.\n\n` +
-        `<i>Или добавь <code>GROQ_API_KEY</code> — <a href="https://console.groq.com">console.groq.com</a>, бесплатно.</i>`;
+      userMsg = `⚠️ <b>Ключ Gemini не работает.</b>\n\n` +
+        `Скорее всего ключ заблокирован или скопирован неполностью.\n\n` +
+        `1. AI Studio → удали старый ключ\n` +
+        `2. <b>Создать ключ API</b> → <b>Ключ копирования</b>\n` +
+        `3. Пришли новый ключ — добавлю в Railway\n\n` +
+        `<i>Не публикуй ключ в каналах — Google блокирует утёкшие ключи.</i>`;
     } else if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
