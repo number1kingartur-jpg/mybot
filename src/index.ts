@@ -7,8 +7,11 @@ import {
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
-  type NutritionProfile,
+  createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
+  setChallengePing, getExpiredChallenges, finishChallenge,
+  type NutritionProfile, type Challenge,
 } from "./db";
+import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
@@ -97,7 +100,7 @@ const MENU_BUTTONS = [
   "📊 Прогресс", "🏆 Рекорды",
   "📋 Программа", "🧮 1RM калькулятор",
   "⚖️ Вес тела", "📈 Отчёт недели",
-  "🍗 Питание",
+  "🍗 Питание", "⚔️ Челлендж",
   "🏋️ Тренировка на сегодня", "📈 Мой прогресс", "❓ Помощь",
 ];
 
@@ -108,7 +111,7 @@ const MAIN_KEYBOARD = {
     [{ text: "📊 Прогресс" }, { text: "🏆 Рекорды" }],
     [{ text: "📋 Программа" }, { text: "🍗 Питание" }],
     [{ text: "⚖️ Вес тела" }, { text: "📈 Отчёт недели" }],
-    [{ text: "🧮 1RM калькулятор" }],
+    [{ text: "🧮 1RM калькулятор" }, { text: "⚔️ Челлендж" }],
   ],
   resize_keyboard: true,
 };
@@ -123,7 +126,7 @@ const SIMPLE_KEYBOARD = {
   keyboard: [
     [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
     [{ text: "🍗 Питание" }, { text: "⚖️ Вес тела" }],
-    [{ text: "❓ Помощь" }],
+    [{ text: "⚔️ Челлендж" }, { text: "❓ Помощь" }],
   ],
   resize_keyboard: true,
 };
@@ -430,6 +433,7 @@ function logParsed(userId: number, parsed: ParsedExercise[]): { html: string; un
   }
 
   const maxW = Math.max(...parsed.flatMap((p) => p.groups.map((g) => g.weightKg)));
+  void notifyChallenge(userId); // счёт сопернику по челленджу, если он есть
   return {
     html: `✅ <b>ЗАПИСАНО</b>\n${HR}\n\n${lines.join("\n\n")}`,
     undoId,
@@ -504,6 +508,96 @@ async function fetchImageBuffer(url: string): Promise<Buffer> {
   });
 }
 
+// ── Челлендж с другом ────────────────────────────────────────────────────────
+// Приватные соревнования с друзьями удерживают лучше глобальных рейтингов
+// (Strava Group Challenges); каждая ссылка-вызов — бесплатный канал роста.
+
+function addDaysStr(dateStr: string, n: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Число тренировочных дней каждого участника в окне челленджа. */
+function challengeCounts(ch: Challenge): { fromCount: number; toCount: number } {
+  const inRange = (uid: number) =>
+    getWorkoutDates(uid).filter((d) => d >= ch.startDate && d <= ch.endDate).length;
+  return { fromCount: inRange(ch.fromId), toCount: ch.toId ? inRange(ch.toId) : 0 };
+}
+
+function nameOf(userId: number): string {
+  return getUser(userId)?.firstName || "Соперник";
+}
+
+function challengeScoreText(ch: Challenge, viewerId: number): string {
+  const { fromCount, toCount } = challengeCounts(ch);
+  const mine = viewerId === ch.fromId ? fromCount : toCount;
+  const theirs = viewerId === ch.fromId ? toCount : fromCount;
+  const oppName = nameOf(viewerId === ch.fromId ? ch.toId! : ch.fromId);
+  const daysLeft = Math.max(0, Math.round(
+    (new Date(ch.endDate + "T00:00:00Z").getTime() - new Date(today() + "T00:00:00Z").getTime()) / 86400_000
+  ));
+  const lead = mine > theirs ? "🏆 Ты ведёшь!" : mine < theirs ? "⚡ Ты отстаёшь — время тренироваться!" : "🤝 Ничья — всё решится в конце.";
+  return (
+    `⚔️ <b>ЧЕЛЛЕНДЖ: кто больше тренировок</b>\n${HR}\n\n` +
+    `<b>Ты ${mine} : ${theirs} ${esc(oppName)}</b>\n\n` +
+    `${lead}\n` +
+    `<i>До конца: ${daysLeft === 0 ? "последний день!" : `${daysLeft} дн.`} (по ${ch.endDate.slice(8)}.${ch.endDate.slice(5, 7)} включительно)</i>\n\n` +
+    `<i>Считаются дни с хотя бы одной записанной тренировкой.</i>`
+  );
+}
+
+bot.hears("⚔️ Челлендж", async (ctx) => {
+  const userId = ctx.from!.id;
+  resetSession(userId);
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+
+  const active = getActiveChallenge(userId, today());
+  if (active) {
+    await ctx.reply(challengeScoreText(active, userId), HTML);
+    return;
+  }
+
+  const ch = createChallenge(userId);
+  const invite = `https://t.me/${ctx.me.username}?start=ch_${ch.id}`;
+  const shareUrl =
+    `https://t.me/share/url?url=${encodeURIComponent(invite)}` +
+    `&text=${encodeURIComponent("⚔️ Вызываю тебя на недельный челлендж: кто больше тренировок! Жми ссылку и принимай вызов.")}`;
+
+  await ctx.reply(
+    `⚔️ <b>ВЫЗОВИ ДРУГА</b>\n${HR}\n\n` +
+    `Правила простые: <b>7 дней, кто больше дней с тренировками — тот победил.</b>\n\n` +
+    `Отправь другу ссылку-вызов:\n${invite}\n\n` +
+    `<i>Как только друг примет вызов — начнётся отсчёт, я буду присылать счёт обоим. Вместе тренироваться проще: соревнование с другом держит серию на треть дольше.</i>`,
+    {
+      reply_markup: { inline_keyboard: [[{ text: "📤 Отправить вызов другу", url: shareUrl }]] },
+      ...HTML,
+    }
+  );
+});
+
+/** Уведомление сопернику при записи тренировки (не чаще раза в день). */
+async function notifyChallenge(userId: number) {
+  const ch = getActiveChallenge(userId, today());
+  if (!ch?.toId) return;
+  if (ch.lastPingFrom === userId && ch.lastPingDate === today()) return;
+  setChallengePing(ch.id, userId, today());
+
+  const oppId = ch.fromId === userId ? ch.toId : ch.fromId;
+  const { fromCount, toCount } = challengeCounts(ch);
+  const oppMine = oppId === ch.fromId ? fromCount : toCount;
+  const oppTheirs = oppId === ch.fromId ? toCount : fromCount;
+  try {
+    await bot.api.sendMessage(
+      oppId,
+      `⚔️ <b>${esc(nameOf(userId))} только что записал тренировку!</b>\n\n` +
+      `Счёт: ты <b>${oppMine} : ${oppTheirs}</b>` +
+      (oppMine < oppTheirs ? `\n<i>Не дай себя обогнать 😤</i>` : ""),
+      { parse_mode: "HTML" }
+    );
+  } catch { /* соперник заблокировал бота */ }
+}
+
 // ── /start ────────────────────────────────────────────────────────────────
 const MODE_KEYBOARD = {
   inline_keyboard: [
@@ -550,6 +644,47 @@ bot.command("start", async (ctx) => {
   resetSession(ctx.from!.id);
   registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
   const mode = userMode(ctx.from!.id);
+
+  // Диплинк-вызов на челлендж: t.me/<bot>?start=ch_<id>
+  const payload = typeof ctx.match === "string" ? ctx.match.trim() : "";
+  if (payload.startsWith("ch_")) {
+    const chId = payload.slice(3);
+    const existing = getChallengeById(chId);
+    const userId = ctx.from!.id;
+
+    if (!existing || existing.finished) {
+      await ctx.reply(`⚔️ Этот вызов уже не действует. Создай свой — кнопка «⚔️ Челлендж».`);
+    } else if (existing.fromId === userId) {
+      await ctx.reply(`⚔️ Это твоя собственная ссылка — отправь её другу 😉`);
+    } else if (existing.toId !== undefined) {
+      await ctx.reply(`⚔️ К этому вызову уже присоединился другой соперник. Создай свой — кнопка «⚔️ Челлендж».`);
+    } else if (getActiveChallenge(userId, today())) {
+      await ctx.reply(`⚔️ У тебя уже идёт челлендж — сначала закончи его.`);
+    } else {
+      const start = today();
+      const end = addDaysStr(start, 6); // 7 дней включительно
+      const ch = joinChallenge(chId, userId, start, end);
+      if (ch) {
+        await ctx.reply(
+          `⚔️ <b>ВЫЗОВ ПРИНЯТ!</b>\n${HR}\n\n` +
+          `Ты против <b>${esc(nameOf(ch.fromId))}</b>: кто больше дней с тренировками за неделю.\n` +
+          `Финиш: <b>${end.slice(8)}.${end.slice(5, 7)} включительно</b>. Счёт 0:0 — вперёд! 💪\n\n` +
+          `<i>Проверить счёт: кнопка «⚔️ Челлендж».</i>`,
+          HTML
+        );
+        try {
+          await bot.api.sendMessage(
+            ch.fromId,
+            `⚔️ <b>${esc(ctx.from?.first_name ?? "Соперник")} принял твой вызов!</b>\n\n` +
+            `Неделя пошла — кто больше дней с тренировками. Счёт 0:0. Не подведи 😤`,
+            { parse_mode: "HTML" }
+          );
+        } catch { /* создатель заблокировал бота */ }
+      }
+    }
+    // новому пользователю всё равно нужен выбор режима
+    if (userMode(ctx.from!.id) !== null) return;
+  }
 
   if (mode === "simple") {
     await sendSimpleWelcome(ctx, ctx.from?.first_name ?? "друг");
@@ -782,6 +917,7 @@ bot.callbackQuery("simple_done", async (ctx) => {
     notes: "simple",
   });
   updateUser(userId, { simpleIdx: idx + 1 });
+  void notifyChallenge(userId);
 
   const streak = weekStreak(userId);
   const total = getAllWorkouts(userId).length;
@@ -857,6 +993,7 @@ bot.hears("❓ Помощь", async (ctx) => {
     `📈 <b>Мой прогресс</b> — календарь и серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько калорий и белка тебе нужно под твою цель.\n\n` +
     `⚖️ <b>Вес тела</b> — записывай вес, увидишь график.\n\n` +
+    `⚔️ <b>Челлендж</b> — вызови друга: кто больше тренировок за неделю.\n\n` +
     `⏰ <b>Напоминания</b> — /remind, выбери дни и время.\n\n` +
     `💪 Ходишь в зал со своей программой? Просто напиши что сделал: <code>присед 50 3х10</code> — я запишу.\n\n` +
     `<i>Опытный атлет? Переключись в про-режим: /mode — там программы с периодизацией, 1RM и аналитика.</i>`,
@@ -898,7 +1035,8 @@ bot.command("help", async (ctx) => {
     `❓ <b>СПРАВКА</b>\n${HR}\n\n` +
     `📝 <b>Записать тренировку</b>\nПросто напиши в чат: <code>присед 100 5х5</code>. Разные веса: <code>жим 60х8, 80х5, 100х3</code>. Несколько упражнений — с новой строки. Можно голосовым 🎙. Бот сам заметит рекорды. Кнопка «📝» — если удобнее пошагово.\n\n` +
     `📔 <b>Сегодня</b>\nВсё, что записано за день: тоннаж, стрик, удаление лишнего, экспорт CSV.\n\n` +
-    `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению. Внутри — календарь месяца: видно, в какие дни тренировался.\n\n` +
+    `📊 <b>Прогресс</b>\nИстория, рекорд и график по каждому упражнению. Внутри — календарь месяца, карта восстановления мышц (какие группы готовы к нагрузке) и силовой балл 0–100.\n\n` +
+    `⚔️ <b>Челлендж</b>\nВызови друга на неделю: кто больше дней с тренировками. Ссылка-вызов, живой счёт, итоги в конце.\n\n` +
     `🏆 <b>Рекорды</b>\nЛучший вес и расчётный максимум по всем упражнениям на одном экране.\n\n` +
     `⏱ <b>Таймер отдыха и 🧊 разминка</b>\nПод каждой записью — таймер 2/3/4 мин и разминочные подходы с раскладкой блинов.\n\n` +
     `⏰ <b>Напоминания</b> — /remind\nВыбери дни и час — бот напомнит о тренировке, если её ещё нет в дневнике.\n\n` +
@@ -1062,9 +1200,86 @@ bot.hears("📊 Прогресс", async (ctx) => {
     if ((i + 1) % 2 === 0) kb.row();
   });
   kb.row().text("🗓 Календарь месяца", "cal_month");
+  kb.row().text("🦵 Восстановление мышц", "rec_map").text("💪 Силовой балл", "str_score");
   await ctx.reply(
     `📊 <b>ПРОГРЕСС</b>\n${HR}\n\n<i>Выбери упражнение:</i>`,
     { reply_markup: kb, ...HTML }
+  );
+});
+
+// ── Карта восстановления мышц (rule-based аналог Fitbod recovery map) ────────
+bot.callbackQuery("rec_map", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const map = recoveryMap(ctx.from.id, today());
+
+  const icon = { loaded: "🔴", recovering: "🟡", fresh: "🟢" } as const;
+  const label = { loaded: "нагружена", recovering: "восстанавливается", fresh: "готова" } as const;
+
+  const lines = map.map((g) => {
+    const when =
+      g.daysAgo === null ? "давно не тренировалась" :
+      g.daysAgo === 0 ? "сегодня" :
+      g.daysAgo === 1 ? "вчера" : `${g.daysAgo} дн. назад`;
+    return `${icon[g.status]} <b>${esc(g.name)}</b> — ${label[g.status]} <i>(${when})</i>`;
+  });
+
+  const ready = map.filter((g) => g.status === "fresh").map((g) => g.name);
+  const advice = ready.length
+    ? `\n💡 <b>Сегодня оптимально:</b> ${ready.join(", ").toLowerCase()}`
+    : `\n💡 <i>Все группы под нагрузкой — хороший день для отдыха или лёгкого кардио.</i>`;
+
+  await ctx.reply(
+    `🦵 <b>ВОССТАНОВЛЕНИЕ МЫШЦ</b>\n${HR}\n\n` +
+    lines.join("\n") +
+    `\n${advice}\n\n` +
+    `<i>Ориентир: крупной группе нужно ~48–72 часа на восстановление.</i>`,
+    HTML
+  );
+});
+
+// ── Силовой балл (rule-based аналог Fitbod Strength Score) ───────────────────
+bot.callbackQuery("str_score", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const userId = ctx.from.id;
+  const res = strengthScore(userId, today());
+  const trends = groupTrends(userId, today());
+
+  if (res.lifts.length === 0 && trends.length === 0) {
+    await ctx.reply(
+      `💪 <b>СИЛОВОЙ БАЛЛ</b>\n${HR}\n\nПока мало данных. Записывай базовые движения (присед, жим лёжа, становая, жим стоя) — и я посчитаю твой уровень силы.`,
+      HTML
+    );
+    return;
+  }
+
+  let liftBlock = "";
+  if (res.lifts.length > 0) {
+    const rows = res.lifts.map((l) => {
+      const ratio = l.ratio !== null ? `${l.ratio}×BW` : "—";
+      const score = l.score !== null ? `${l.score}/100` : "";
+      return `<code>${esc(l.name).padEnd(10)} e1RM ${String(l.e1rm).padStart(3)}  ${ratio.padStart(7)}  ${score}</code>`;
+    });
+    liftBlock =
+      `<i>Лучшие расчётные максимумы за 90 дней${res.bodyweight ? ` · твой вес ${res.bodyweight} кг` : ""}:</i>\n` +
+      rows.join("\n") +
+      (res.overall !== null
+        ? `\n\n🎯 <b>Общий балл: ${res.overall}/100</b>\n<i>100 — уровень сильного атлета-любителя (присед 2.5×BW, жим 1.8×BW, тяга 3×BW).</i>`
+        : `\n\n<i>Запиши вес тела («⚖️ Вес тела») — посчитаю балл относительно твоего веса.</i>`);
+  }
+
+  let trendBlock = "";
+  if (trends.length > 0) {
+    const rows = trends.map((t) => {
+      const arrow = t.pct > 2 ? "📈" : t.pct < -2 ? "📉" : "➡️";
+      const sign = t.pct > 0 ? "+" : "";
+      return `${t.emoji} ${esc(t.name)}: ${arrow} ${sign}${t.pct}% <i>(${t.prev}→${t.cur} кг)</i>`;
+    });
+    trendBlock = `\n\n<b>Динамика за 30 дней (лучший e1RM):</b>\n` + rows.join("\n");
+  }
+
+  await ctx.reply(
+    `💪 <b>СИЛОВОЙ БАЛЛ</b>\n${HR}\n\n` + liftBlock + trendBlock,
+    HTML
   );
 });
 
@@ -1200,6 +1415,7 @@ bot.callbackQuery("prog_done", async (ctx) => {
       weightKg: session.weightKg,
       notes: `${prog.model} W${prog.currentWeek}D${prog.currentDay}`,
     });
+    void notifyChallenge(userId);
     if (pr.isWeightPr) {
       prBanner = `\n🏆 <b>Новый рекорд веса в «${esc(liftName)}»: ${session.weightKg} кг!</b>\n`;
     } else if (pr.isE1rmPr) {
@@ -2205,6 +2421,33 @@ cron.schedule("0 * * * *", async () => {
       );
       updateUser(u.chatId, { lastReminderDate: today(), remindersMissed: missed });
     } catch { /* пользователь заблокировал бота */ }
+  }
+}, { timezone: "Asia/Bangkok" });
+
+// ── Итоги челленджей (ежедневно 21:00 Бангкок) ─────────────────────────────
+cron.schedule("0 21 * * *", async () => {
+  for (const ch of getExpiredChallenges(today())) {
+    finishChallenge(ch.id);
+    const { fromCount, toCount } = challengeCounts(ch);
+
+    const send = async (uid: number, mine: number, theirs: number, oppId: number) => {
+      const opp = esc(nameOf(oppId));
+      const verdict =
+        mine > theirs ? `🏆 <b>ТЫ ПОБЕДИЛ!</b> Красавчик — так держать.` :
+        mine < theirs ? `😤 <b>${opp} победил ${theirs}:${mine}.</b> Реванш? Жми «⚔️ Челлендж» и вызывай снова.` :
+        `🤝 <b>Ничья ${mine}:${theirs}.</b> Достойно — оба молодцы.`;
+      try {
+        await bot.api.sendMessage(
+          uid,
+          `⚔️ <b>ЧЕЛЛЕНДЖ ЗАВЕРШЁН</b>\n${HR}\n\n` +
+          `Итог: ты <b>${mine} : ${theirs}</b> ${opp}\n\n${verdict}`,
+          { parse_mode: "HTML" }
+        );
+      } catch { /* пользователь заблокировал бота */ }
+    };
+
+    await send(ch.fromId, fromCount, toCount, ch.toId!);
+    await send(ch.toId!, toCount, fromCount, ch.fromId);
   }
 }, { timezone: "Asia/Bangkok" });
 

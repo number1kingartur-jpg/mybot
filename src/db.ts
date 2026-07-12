@@ -85,15 +85,27 @@ export interface UserRecord {
   remindersPaused?: boolean;   // авто-пауза после 3 игноров
 }
 
+export interface Challenge {
+  id: string;
+  fromId: number;
+  toId?: number;         // присоединившийся соперник
+  startDate: string;     // YYYY-MM-DD, ставится при принятии вызова
+  endDate: string;       // последний день (включительно)
+  finished?: boolean;
+  lastPingFrom?: number; // анти-спам уведомлений о тренировке соперника
+  lastPingDate?: string;
+}
+
 interface DB {
   workouts: WorkoutEntry[];
   programs: Program[];
   bodyweight: BodyweightEntry[];
   users: UserRecord[];
+  challenges: Challenge[];
 }
 
 function load(): DB {
-  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [] };
+  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [] };
   if (!fs.existsSync(DB_PATH)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
@@ -102,6 +114,7 @@ function load(): DB {
       programs: parsed.programs ?? [],
       bodyweight: parsed.bodyweight ?? [],
       users: parsed.users ?? [],
+      challenges: parsed.challenges ?? [],
     };
     migrate(db);
     return db;
@@ -294,6 +307,65 @@ export function updateUser(chatId: number, patch: Partial<UserRecord>) {
   const u = db.users.find((x) => x.chatId === chatId);
   if (!u) return;
   Object.assign(u, patch);
+  save(db);
+}
+
+// ── Challenges (недельный челлендж с другом) ─────────────────────────────────
+/** Возвращает ожидающий (без соперника) челлендж пользователя или создаёт новый. */
+export function createChallenge(fromId: number): Challenge {
+  const db = load();
+  const pending = db.challenges.find((c) => c.fromId === fromId && !c.toId && !c.finished);
+  if (pending) return pending;
+  const row: Challenge = { id: uid(), fromId, startDate: "", endDate: "" };
+  db.challenges.push(row);
+  save(db);
+  return row;
+}
+
+export function getChallengeById(id: string): Challenge | undefined {
+  return load().challenges.find((c) => c.id === id);
+}
+
+/** Активный (принятый и не истёкший) челлендж пользователя. */
+export function getActiveChallenge(userId: number, todayStr: string): Challenge | undefined {
+  return load().challenges.find(
+    (c) => !c.finished && c.toId !== undefined &&
+      (c.fromId === userId || c.toId === userId) && c.endDate >= todayStr
+  );
+}
+
+export function joinChallenge(id: string, toId: number, startDate: string, endDate: string): Challenge | null {
+  const db = load();
+  const c = db.challenges.find((x) => x.id === id);
+  if (!c || c.finished || c.toId !== undefined || c.fromId === toId) return null;
+  c.toId = toId;
+  c.startDate = startDate;
+  c.endDate = endDate;
+  save(db);
+  return c;
+}
+
+export function setChallengePing(id: string, fromUserId: number, date: string) {
+  const db = load();
+  const c = db.challenges.find((x) => x.id === id);
+  if (!c) return;
+  c.lastPingFrom = fromUserId;
+  c.lastPingDate = date;
+  save(db);
+}
+
+/** Принятые челленджи, срок которых истёк. */
+export function getExpiredChallenges(todayStr: string): Challenge[] {
+  return load().challenges.filter(
+    (c) => !c.finished && c.toId !== undefined && c.endDate < todayStr
+  );
+}
+
+export function finishChallenge(id: string) {
+  const db = load();
+  const c = db.challenges.find((x) => x.id === id);
+  if (!c) return;
+  c.finished = true;
   save(db);
 }
 
