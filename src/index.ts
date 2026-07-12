@@ -9,7 +9,7 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
-  addMeal, getMeals, mealTotals, isPremium, isOwner, mealPhotoUnlimited, canAnalyzePhoto, bumpPhotoCount, grantPremium,
+  addMeal, getMeals, getMealsForDays, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, canAnalyzePhoto, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
@@ -2106,7 +2106,8 @@ bot.hears("📸 Еда", async (ctx) => {
     `📸 <b>ЗАПИСЬ ЕДЫ</b>\n${HR}\n\n` +
     `• <b>Фото</b> — сфотографируй тарелку и отправь сюда\n` +
     `• <b>Текст</b> — напиши что съел:\n` +
-    `<code>лосось 150 г, рис 200 г, салат</code>\n\n` +
+    `<code>лосось 150 г, рис 200 г, салат</code>\n` +
+    `• <b>Дневник</b> — /meals или кнопка после записи\n\n` +
     `<i>Осталось фото: ${left}. Точность ±15–25%.</i>\n\n` +
     `Безлимит фото: /premium`,
     { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
@@ -2143,10 +2144,38 @@ function formatMealReply(meal: { name: string; kcal: number; proteinG: number; f
     goalLine;
 }
 
+function mealReplyMarkup(mealId: string) {
+  return {
+    inline_keyboard: [
+      [{ text: "🗑 Удалить", callback_data: `meal_del_${mealId}` }],
+      [{ text: "📋 Дневник за 7 дней", callback_data: "meal_diary" }],
+    ],
+  };
+}
+
+function mealDiaryText(userId: number): string {
+  const meals = getMealsForDays(userId, 7);
+  if (!meals.length) {
+    return `📋 <b>ДНЕВНИК ЕДЫ</b>\n${HR}\n\nПока пусто. Сфотографируй или напиши:\n<code>лосось 150 г, рис 200 г</code>`;
+  }
+  const dates = [...new Set(meals.map((m) => m.date))].sort((a, b) => b.localeCompare(a));
+  let text = `📋 <b>ДНЕВНИК ЕДЫ</b> (7 дней)\n${HR}\n\n`;
+  for (const date of dates) {
+    const t = mealTotals(userId, date);
+    const dayMeals = meals.filter((m) => m.date === date);
+    text += `<b>${date.slice(8)}.${date.slice(5, 7)}</b> — ${t.kcal} ккал\n`;
+    for (const m of dayMeals) {
+      text += `▪️ ${esc(m.name)}: ${m.kcal} ккал (Б${m.proteinG} Ж${m.fatG} У${m.carbsG})\n`;
+    }
+    text += "\n";
+  }
+  return text.trim();
+}
+
 function looksLikeMealText(text: string): boolean {
   const t = text.toLowerCase();
   if (t.length < 4 || t.length > 200) return false;
-  const foodWords = ["лосось", "рис", "салат", "куриц", "яйц", "овсян", "творог", "говядин", "рыба", "макарон", "греч", "авокадо", "salmon", "rice", "salad", "chicken", "egg", "beef", "fish", "pasta"];
+  const foodWords = ["лосось", "рис", "салат", "куриц", "яйц", "овсян", "творог", "говядин", "рыба", "макарон", "греч", "авокадо", "кревет", "тунец", "пад тай", "том ям", "карри", "боул", "суши", "бургер", "salmon", "rice", "salad", "chicken", "egg", "beef", "fish", "pasta", "shrimp", "tofu"];
   const hasFood = foodWords.some((w) => t.includes(w));
   const hasGrams = /\d+\s*(?:г|g|грам|gram)/i.test(t) || /\d{2,4}/.test(t);
   return hasFood && (hasGrams || t.includes(","));
@@ -2158,12 +2187,12 @@ async function processMealText(ctx: { from?: { id: number; first_name?: string }
   const status = await ctx.reply(`🔍 <i>Считаю…</i>`, HTML);
   try {
     const meal = await analyzeMealText(text);
-    await saveMealFromAnalysis(userId, meal, false);
+    const row = await saveMealFromAnalysis(userId, meal, false);
     await ctx.api.editMessageText(
       ctx.chat.id,
       status.message_id,
       formatMealReply(meal, mealGoalLine(userId)),
-      { parse_mode: "HTML" }
+      { parse_mode: "HTML", reply_markup: mealReplyMarkup(row.id) }
     );
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -2178,7 +2207,7 @@ async function processMealText(ctx: { from?: { id: number; first_name?: string }
 }
 
 async function saveMealFromAnalysis(userId: number, meal: { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; note?: string }, countPhoto = true) {
-  addMeal({
+  const row = addMeal({
     userId,
     date: today(),
     name: meal.name,
@@ -2188,6 +2217,7 @@ async function saveMealFromAnalysis(userId: number, meal: { name: string; kcal: 
     carbsG: meal.carbsG,
   });
   if (countPhoto) bumpPhotoCount(userId, weekKey(today()));
+  return row;
 }
 
 async function processMealPhoto(
@@ -2237,13 +2267,13 @@ async function processMealPhoto(
     const buf = await fetchImageBuffer(url);
     const mime = file.file_path.endsWith(".png") ? "image/png" : "image/jpeg";
     const meal = await analyzeMealPhoto(buf, mime);
-    await saveMealFromAnalysis(userId, meal, true);
+    const row = await saveMealFromAnalysis(userId, meal, true);
 
     await ctx.api.editMessageText(
       ctx.chat.id,
       status.message_id,
       formatMealReply(meal, mealGoalLine(userId)),
-      { parse_mode: "HTML" }
+      { parse_mode: "HTML", reply_markup: mealReplyMarkup(row.id) }
     );
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -2302,12 +2332,11 @@ async function processMealPhoto(
         `<b>Напиши текстом</b> (работает сразу):\n` +
         `<code>лосось 150 г, рис 200 г, салат</code>\n\n` +
         `<i>Для фото: новый <code>GEMINI_API_KEY</code> в AI Studio или <code>OPENROUTER_API_KEY</code> на <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно)</i>`;
-    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros") || errMsg.includes("hf_fallback_no_foods")) {
+    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros") || errMsg.includes("photo_unreadable:no_foods") || errMsg.includes("photo_unreadable:no_match")) {
       getSession(userId).state = "awaiting_meal_text";
       userMsg =
-        `⚠️ Не разобрал фото — плохо видно, размыто или не попала тарелка.\n\n` +
-        `📸 <b>Пересними</b> сверху при хорошем свете и отправь снова.\n\n` +
-        `Или, если удобнее, <b>опиши текстом</b>:\n` +
+        `⚠️ Не разобрал блюдо — не нашёл в справочнике или плохо видно.\n\n` +
+        `<b>Напиши текстом</b> (точнее):\n` +
         `<code>лосось 150 г, рис 200 г, салат</code>`;
     } else if (errMsg.includes("GROQ_API_KEY not set") || errMsg.includes("OPENROUTER_API_KEY not set") || errMsg.includes("API_KEY")) {
       userMsg =
@@ -2329,6 +2358,32 @@ async function processMealPhoto(
     }
   }
 }
+
+// ── Дневник еды ───────────────────────────────────────────────────────────
+bot.callbackQuery(/^meal_del_(.+)$/, async (ctx) => {
+  const mealId = ctx.match![1];
+  const userId = ctx.from!.id;
+  if (removeMeal(userId, mealId)) {
+    await ctx.answerCallbackQuery({ text: "Удалено ✓" });
+    try {
+      await ctx.editMessageText("🗑 Запись удалена из дневника.", HTML);
+    } catch {
+      await ctx.reply("🗑 Запись удалена из дневника.", HTML);
+    }
+  } else {
+    await ctx.answerCallbackQuery({ text: "Запись не найдена" });
+  }
+});
+
+bot.callbackQuery("meal_diary", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(mealDiaryText(ctx.from!.id), HTML);
+});
+
+bot.command("meals", async (ctx) => {
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+  await ctx.reply(mealDiaryText(ctx.from!.id), HTML);
+});
 
 // ── Premium (Telegram Stars) ───────────────────────────────────────────────
 const PREMIUM_STARS = 250; // ~30 дней, оплата в Stars (XTR)

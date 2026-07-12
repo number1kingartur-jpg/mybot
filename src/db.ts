@@ -394,11 +394,29 @@ export function addMeal(entry: Omit<MealEntry, "id">): MealEntry {
   return row;
 }
 
+export function removeMeal(userId: number, mealId: string): boolean {
+  const db = load();
+  const idx = db.meals.findIndex((m) => m.id === mealId && m.userId === userId);
+  if (idx < 0) return false;
+  db.meals.splice(idx, 1);
+  save(db);
+  return true;
+}
+
 export function getMeals(userId: number, date?: string): MealEntry[] {
   const db = load();
   let rows = db.meals.filter((m) => m.userId === userId);
   if (date) rows = rows.filter((m) => m.date === date);
   return rows;
+}
+
+export function getMealsForDays(userId: number, days = 7): MealEntry[] {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - (days - 1));
+  const from = cutoff.toISOString().slice(0, 10);
+  return load()
+    .meals.filter((m) => m.userId === userId && m.date >= from)
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
 }
 
 export function mealTotals(userId: number, date: string) {
