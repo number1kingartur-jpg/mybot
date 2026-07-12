@@ -1,4 +1,5 @@
 import https from "https";
+import { analyzeMealPhotoFallback } from "./meal-fallback";
 
 const PROMPT =
   "Ты нутрициолог. По фото еды оцени порцию для одного приёма пищи. " +
@@ -65,16 +66,17 @@ function geminiKeys(): string[] {
 }
 
 export function mealVisionEnabled(): boolean {
-  return geminiKeys().length > 0 || Boolean(openRouterKey() || groqKey());
+  return true;
 }
 
 export function mealVisionProvider(): string {
   const parts: string[] = [];
-  if (openRouterKey()) parts.push("OpenRouter free");
+  if (groqKey()) parts.push("Groq");
   const gk = geminiKeys();
   if (gk.length) parts.push(`Gemini×${gk.length}`);
-  if (groqKey()) parts.push("Groq");
-  return parts.join(" → ") || "none";
+  if (openRouterKey()) parts.push("OpenRouter free");
+  parts.push("HF fallback");
+  return parts.join(" → ");
 }
 
 export function freeMealFallbackEnabled(): boolean {
@@ -491,6 +493,14 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
 
   const photoOnlyErrors = errors.filter((e) => e.includes("photo_unreadable:zero_macros"));
   const serviceErrors = errors.filter((e) => !e.includes("photo_unreadable:zero_macros"));
+
+  try {
+    return await analyzeMealPhotoFallback(imageBuffer, mime);
+  } catch (e) {
+    const fb = e instanceof Error ? e.message : String(e);
+    console.error("hf fallback failed:", fb.slice(0, 120));
+    errors.push(fb);
+  }
 
   if (serviceErrors.length > 0 || errors.some(isQuotaErrorMsg)) {
     throw new Error(`service_unavailable: ${last}`);

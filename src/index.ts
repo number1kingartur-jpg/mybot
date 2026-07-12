@@ -2248,7 +2248,7 @@ async function processMealPhoto(
       userMsg =
         `⚠️ Сервис анализа временно перегружен.\n\n` +
         `Подожди 30–60 минут и отправь <b>фото</b> снова.`;
-    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros")) {
+    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros") || errMsg.includes("hf_fallback_no_foods")) {
       getSession(userId).state = "awaiting_meal_text";
       userMsg =
         `⚠️ Не разобрал фото — плохо видно, размыто или не попала тарелка.\n\n` +
