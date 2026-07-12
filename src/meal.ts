@@ -17,6 +17,17 @@ const GEMINI_MODELS = [
 const OPENROUTER_VISION_MODELS = [
   "google/gemma-4-31b-it:free",
   "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-3-27b-it:free",
+  "meta-llama/llama-3.2-11b-vision-instruct:free",
+  "qwen/qwen2.5-vl-32b-instruct:free",
+  "mistralai/mistral-small-3.1-24b-instruct:free",
+  "openrouter/free",
+];
+
+const OPENROUTER_TEXT_MODELS = [
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "google/gemma-3-27b-it:free",
+  "qwen/qwen3-32b:free",
   "openrouter/free",
 ];
 
@@ -236,33 +247,63 @@ async function chatVisionFetch(
   throw new Error(json.error?.message ?? `${label}: no content`);
 }
 
-async function openRouterVision(imageBase64: string, mime: string): Promise<string> {
+async function openRouterChat(
+  models: string[],
+  buildMessages: (model: string) => object[]
+): Promise<string> {
   const key = openRouterKey();
   if (!key) throw new Error("OPENROUTER_API_KEY not set");
-  console.log(`openrouter key ok: ${key.slice(0, 10)}... len=${key.length}`);
 
   let lastErr = "unknown";
-  for (const model of OPENROUTER_VISION_MODELS) {
-    try {
-      return await chatVisionFetch(
-        "openrouter",
-        "https://openrouter.ai/api/v1/chat/completions",
-        key,
-        {
-          Referer: "https://t.me/raschet_bot",
-          "X-OpenRouter-Title": "RASCHET Bot",
-        },
-        model,
-        imageBase64,
-        mime
-      );
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e);
-      console.error("openrouter try", model, lastErr);
-      if (!isQuotaError(lastErr) && !isModelMissing(lastErr) && !isHeaderKeyError(lastErr)) throw e;
+  for (const model of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const body = JSON.stringify({
+          model,
+          messages: buildMessages(model),
+          temperature: 0.2,
+          max_tokens: 400,
+        });
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            Referer: "https://t.me/artur_king_fitness",
+            "X-OpenRouter-Title": "Artur King Bot",
+          },
+          body,
+          signal: AbortSignal.timeout(60_000),
+        });
+        const raw = await res.text();
+        if (!res.ok) throw new Error(`openrouter ${res.status} [${model}]: ${extractApiError(raw)}`);
+        const json = JSON.parse(raw);
+        const text = json.choices?.[0]?.message?.content;
+        if (text) return String(text).trim();
+        throw new Error(json.error?.message ?? "openrouter: no content");
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+        console.error("openrouter try", model, `attempt=${attempt}`, lastErr.slice(0, 120));
+        if (isQuotaError(lastErr) && attempt === 0) {
+          await sleep(2000);
+          continue;
+        }
+        if (!isQuotaError(lastErr) && !isModelMissing(lastErr) && !isHeaderKeyError(lastErr)) break;
+      }
     }
+    await sleep(500);
   }
   throw new Error(`openrouter failed: ${lastErr}`);
+}
+
+async function openRouterVision(imageBase64: string, mime: string): Promise<string> {
+  return openRouterChat(OPENROUTER_VISION_MODELS, () => [{
+    role: "user",
+    content: [
+      { type: "text", text: PROMPT },
+      { type: "image_url", image_url: { url: `data:${mime};base64,${imageBase64}` } },
+    ],
+  }]);
 }
 
 async function groqVision(imageBase64: string, mime: string): Promise<string> {
@@ -284,8 +325,13 @@ function parseJson(raw: string): MealAnalysis {
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   const slice = start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned;
-  const j = JSON.parse(slice) as Partial<MealAnalysis>;
-  return {
+  let j: Partial<MealAnalysis>;
+  try {
+    j = JSON.parse(slice) as Partial<MealAnalysis>;
+  } catch {
+    throw new MealPhotoUnreadableError("invalid_json");
+  }
+  const meal: MealAnalysis = {
     name: String(j.name ?? "Блюдо").slice(0, 80),
     kcal: Math.max(0, Math.round(Number(j.kcal) || 0)),
     proteinG: Math.max(0, Math.round(Number(j.proteinG) || 0)),
@@ -293,12 +339,104 @@ function parseJson(raw: string): MealAnalysis {
     carbsG: Math.max(0, Math.round(Number(j.carbsG) || 0)),
     note: j.note ? String(j.note).slice(0, 120) : undefined,
   };
+  if (meal.kcal === 0 && meal.proteinG === 0 && meal.fatG === 0 && meal.carbsG === 0) {
+    throw new MealPhotoUnreadableError("zero_macros");
+  }
+  return meal;
 }
 
-/** Анализ фото: OpenRouter free → Gemini → Groq. */
+/** Фото не удалось прочитать (размыто, тёмно, не еда) — не ошибка API. */
+export class MealPhotoUnreadableError extends Error {
+  constructor(reason: string) {
+    super(`photo_unreadable:${reason}`);
+    this.name = "MealPhotoUnreadableError";
+  }
+}
+
+function isQuotaErrorMsg(msg: string): boolean {
+  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+}
+
+const TEXT_PROMPT =
+  "Ты нутрициолог. По описанию еды оцени порцию для одного приёма пищи. " +
+  "Ответь ТОЛЬКО валидным JSON без markdown: " +
+  '{"name":"краткое название","kcal":число,"proteinG":число,"fatG":число,"carbsG":число,"note":"оценка точности"}';
+
+/** Текстовый анализ — отдельный пул лимитов, работает когда vision исчерпан. */
+export async function analyzeMealText(description: string): Promise<MealAnalysis> {
+  const errors: string[] = [];
+
+  if (openRouterKey()) {
+    try {
+      const raw = await openRouterChat(OPENROUTER_TEXT_MODELS, () => [{
+        role: "user",
+        content: `${TEXT_PROMPT}\n\nОписание: ${description}`,
+      }]);
+      return parseJson(raw);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  for (const key of geminiKeys()) {
+    try {
+      const body = JSON.stringify({
+        contents: [{ parts: [{ text: `${TEXT_PROMPT}\n\nОписание: ${description}` }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 512 },
+      });
+      const { status, raw } = await httpsJson(
+        {
+          hostname: "generativelanguage.googleapis.com",
+          path: "/v1beta/models/gemini-2.0-flash:generateContent",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+            "Content-Length": Buffer.byteLength(body),
+          },
+        },
+        body
+      );
+      if (status >= 400) throw new Error(`gemini text ${status}: ${extractApiError(raw)}`);
+      const json = JSON.parse(raw);
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return parseJson(String(text));
+      throw new Error("gemini text: no content");
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  throw new Error(errors.at(-1) ?? "text meal analysis failed");
+}
+
+/** Анализ фото: Groq → Gemini → OpenRouter (больше моделей + retry). */
 export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
   const b64 = imageBuffer.toString("base64");
   const errors: string[] = [];
+
+  if (groqKey()) {
+    try {
+      const raw = await groqVision(b64, mime);
+      return parseJson(raw);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      errors.push(errMsg);
+      console.error("groq failed:", errMsg.slice(0, 120));
+    }
+  }
+
+  for (const key of geminiKeys()) {
+    try {
+      const raw = await geminiVisionWithKey(key, b64, mime);
+      return parseJson(raw);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      errors.push(errMsg);
+      console.error("gemini key failed:", errMsg.slice(0, 120));
+      if (!isQuotaError(errMsg)) await sleep(1000);
+    }
+  }
 
   if (openRouterKey()) {
     try {
@@ -311,31 +449,14 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
     }
   }
 
-  for (const key of geminiKeys()) {
-    try {
-      const raw = await geminiVisionWithKey(key, b64, mime);
-      return parseJson(raw);
-    } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      errors.push(errMsg);
-      console.error("gemini key failed:", errMsg.slice(0, 120));
-    }
-  }
-
-  if (groqKey()) {
-    try {
-      const raw = await groqVision(b64, mime);
-      return parseJson(raw);
-    } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
-    }
-  }
-
   const last = errors.at(-1) ?? "all vision providers failed";
   if (errors.some(isHeaderKeyError)) {
     throw new Error(`OPENROUTER_API_KEY invalid: ${last}`);
   }
-  throw new Error(last);
+  if (errors.every(isQuotaErrorMsg)) {
+    throw new Error(`quota exhausted: ${last}`);
+  }
+  throw new MealPhotoUnreadableError("all_providers_failed");
 }
 
 export function groqMealFallbackEnabled(): boolean {

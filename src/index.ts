@@ -13,7 +13,7 @@ import {
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
-import { analyzeMealPhoto, mealVisionEnabled, mealVisionProvider, freeMealFallbackEnabled } from "./meal";
+import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
@@ -46,7 +46,8 @@ type State =
   | "progress_exercise"
   | "nut_age"
   | "nut_height"
-  | "nut_weight";
+  | "nut_weight"
+  | "awaiting_meal_text";
 
 interface UserState {
   state: State;
@@ -2118,6 +2119,37 @@ bot.on("message:document", async (ctx) => {
   await processMealPhoto(ctx, ctx.message.document.file_id);
 });
 
+function mealGoalLine(userId: number): string {
+  const day = mealTotals(userId, today());
+  const u = getUser(userId);
+  if (!u?.nutrition) return "";
+  const bw = getBodyweight(userId, 1);
+  const macros = calcMacros(u.nutrition, bw.at(-1)?.weightKg);
+  const left = macros.kcal - day.kcal;
+  return `\n<i>За день: ${day.kcal}/${macros.kcal} ккал` +
+    (left > 0 ? ` · осталось ~${left}` : ` · +${-left} сверх цели`) + `</i>`;
+}
+
+function formatMealReply(meal: { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; note?: string }, goalLine: string) {
+  return `✅ <b>${esc(meal.name)}</b>\n${HR}\n\n` +
+    `<code>Ккал ${meal.kcal}  Б ${meal.proteinG}  Ж ${meal.fatG}  У ${meal.carbsG}</code>\n` +
+    (meal.note ? `\n<i>${esc(meal.note)}</i>` : "") +
+    goalLine;
+}
+
+async function saveMealFromAnalysis(userId: number, meal: { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; note?: string }, countPhoto = true) {
+  addMeal({
+    userId,
+    date: today(),
+    name: meal.name,
+    kcal: meal.kcal,
+    proteinG: meal.proteinG,
+    fatG: meal.fatG,
+    carbsG: meal.carbsG,
+  });
+  if (countPhoto) bumpPhotoCount(userId, weekKey(today()));
+}
+
 async function processMealPhoto(
   ctx: { from?: { id: number; first_name?: string }; chat: { id: number }; reply: (t: string, o?: object) => Promise<{ message_id: number }>; api: typeof bot.api; message: { photo?: { file_id: string }[] } },
   fileIdOverride?: string
@@ -2136,6 +2168,7 @@ async function processMealPhoto(
 
   const userId = ctx.from!.id;
   registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+  resetSession(userId);
   const wk = weekKey(today());
 
   if (!canAnalyzePhoto(userId, wk)) {
@@ -2164,36 +2197,12 @@ async function processMealPhoto(
     const buf = await fetchImageBuffer(url);
     const mime = file.file_path.endsWith(".png") ? "image/png" : "image/jpeg";
     const meal = await analyzeMealPhoto(buf, mime);
-
-    addMeal({
-      userId,
-      date: today(),
-      name: meal.name,
-      kcal: meal.kcal,
-      proteinG: meal.proteinG,
-      fatG: meal.fatG,
-      carbsG: meal.carbsG,
-    });
-    bumpPhotoCount(userId, wk);
-
-    const day = mealTotals(userId, today());
-    let goalLine = "";
-    const u = getUser(userId);
-    if (u?.nutrition) {
-      const bw = getBodyweight(userId, 1);
-      const macros = calcMacros(u.nutrition, bw.at(-1)?.weightKg);
-      const left = macros.kcal - day.kcal;
-      goalLine = `\n<i>За день: ${day.kcal}/${macros.kcal} ккал` +
-        (left > 0 ? ` · осталось ~${left}` : ` · +${-left} сверх цели`) + `</i>`;
-    }
+    await saveMealFromAnalysis(userId, meal, true);
 
     await ctx.api.editMessageText(
       ctx.chat.id,
       status.message_id,
-      `✅ <b>${esc(meal.name)}</b>\n${HR}\n\n` +
-      `<code>Ккал ${meal.kcal}  Б ${meal.proteinG}  Ж ${meal.fatG}  У ${meal.carbsG}</code>\n` +
-      (meal.note ? `\n<i>${esc(meal.note)}</i>` : "") +
-      goalLine,
+      formatMealReply(meal, mealGoalLine(userId)),
       { parse_mode: "HTML" }
     );
   } catch (e) {
@@ -2208,16 +2217,16 @@ async function processMealPhoto(
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
     } else if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429") || errMsg.includes("quota exhausted")) {
-      userMsg = freeMealFallbackEnabled()
-        ? `⚠️ Все бесплатные лимиты исчерпаны.\n\nПодожди 30–60 мин и попробуй снова.`
-        : `⚠️ <b>Лимит Gemini исчерпан.</b>\n\n` +
-          `Бесплатные варианты (без оплаты):\n\n` +
-          `1. <b>OpenRouter</b> — 50 фото/день, карта не нужна\n` +
-          `   → <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> → Create key\n` +
-          `   → Railway: <code>OPENROUTER_API_KEY</code> → Redeploy\n\n` +
-          `2. <b>Второй ключ Gemini</b> — другой Google-аккаунт\n` +
-          `   → Railway: <code>GEMINI_API_KEY_2</code> → Redeploy\n\n` +
-          `3. Подожди 30–60 мин (сброс лимита по минутам)`;
+      userMsg =
+        `⚠️ Сервис анализа временно перегружен.\n\n` +
+        `Подожди 30–60 минут и отправь <b>фото</b> снова.`;
+    } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable") || errMsg.includes("no content") || errMsg.includes("blocked")) {
+      getSession(userId).state = "awaiting_meal_text";
+      userMsg =
+        `⚠️ Не разобрал фото — плохо видно, размыто или не попала тарелка.\n\n` +
+        `📸 <b>Пересними</b> сверху при хорошем свете и отправь снова.\n\n` +
+        `Или, если удобнее, <b>опиши текстом</b>:\n` +
+        `<code>лосось 150 г, рис 200 г, салат</code>`;
     } else if (errMsg.includes("Invalid character in header") || errMsg.includes("OPENROUTER_API_KEY invalid")) {
       userMsg = `⚠️ <b>Ключ OpenRouter вставлен неправильно.</b>\n\n` +
         `Railway → <code>OPENROUTER_API_KEY</code>:\n` +
@@ -2229,7 +2238,11 @@ async function processMealPhoto(
     } else if (errMsg.includes("API_KEY")) {
       userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
     } else {
-      userMsg = `⚠️ Не смог разобрать фото.\n\n<i>${esc(errMsg.slice(0, 120))}</i>\n\nПопробуй снимок сверху при хорошем свете.`;
+      getSession(userId).state = "awaiting_meal_text";
+      userMsg =
+        `⚠️ Не разобрал фото.\n\n` +
+        `📸 <b>Пересними</b> сверху при хорошем свете и отправь снова.\n\n` +
+        `Или <b>опиши текстом</b>:\n<code>лосось 150 г, рис 200 г, салат</code>`;
     }
     try {
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, userMsg, HTML);
@@ -2327,6 +2340,32 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
 
   if (text.startsWith("/") || MENU_BUTTONS.includes(text)) return;
+
+  // ── Еда текстом (только если фото не удалось прочитать — пользователь выбрал описать)
+  if (s.state === "awaiting_meal_text") {
+    resetSession(userId);
+    const status = await ctx.reply(`🔍 <i>Считаю по описанию…</i>`, HTML);
+    try {
+      const meal = await analyzeMealText(text);
+      await saveMealFromAnalysis(userId, meal, false);
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        status.message_id,
+        formatMealReply(meal, mealGoalLine(userId)),
+        { parse_mode: "HTML" }
+      );
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        status.message_id,
+        `⚠️ Не смог посчитать.\n\nПопробуй формат:\n<code>лосось 150 г, рис 200 г, салат</code>\n\n<i>${esc(errMsg.slice(0, 100))}</i>`,
+        HTML
+      );
+      getSession(userId).state = "awaiting_meal_text";
+    }
+    return;
+  }
 
   // ── Custom exercise name
   if (s.state === "log_exercise_custom") {
