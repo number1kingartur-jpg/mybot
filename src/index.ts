@@ -2086,9 +2086,8 @@ bot.hears("📸 Еда", async (ctx) => {
     await ctx.reply(
       `📸 <b>АНАЛИЗ ЕДЫ ПО ФОТО</b>\n${HR}\n\n` +
       `Нужен ключ на сервере (Railway → Variables → Redeploy):\n` +
-      `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>\n` +
-      `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно, без карты)\n` +
-      `• или <code>GROQ_API_KEY</code> — console.groq.com`,
+      `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> (бесплатно)\n` +
+      `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно, без карты)`,
       { link_preview_options: { is_disabled: true }, ...HTML }
     );
     return;
@@ -2272,11 +2271,12 @@ async function processMealPhoto(
       errMsg.includes("API key not valid")
     ) {
       userMsg = `⚠️ <b>Ключ Gemini не работает.</b>\n\n` +
-        `Скорее всего ключ заблокирован или скопирован неполностью.\n\n` +
-        `1. AI Studio → удали старый ключ\n` +
-        `2. <b>Создать ключ API</b> → <b>Ключ копирования</b>\n` +
-        `3. Пришли новый ключ — добавлю в Railway\n\n` +
-        `<i>Не публикуй ключ в каналах — Google блокирует утёкшие ключи.</i>`;
+        `Google отклоняет текущий ключ (скорее всего заблокирован после утечки).\n\n` +
+        `1. <a href="https://aistudio.google.com/apikey">AI Studio</a> → удали старый ключ\n` +
+        `2. <b>Создать ключ API</b> → кнопка <b>Ключ копирования</b>\n` +
+        `3. Railway → Variables → <code>GEMINI_API_KEY</code> → вставь новый → Redeploy\n\n` +
+        `<i>Не отправляй ключ в чат — Google блокирует утёкшие ключи.</i>\n\n` +
+        `Альтернатива: <code>OPENROUTER_API_KEY</code> на <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно).`;
     } else if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
@@ -2297,7 +2297,7 @@ async function processMealPhoto(
         `⚠️ Фото сейчас не разобрать — нет рабочего AI-ключа на сервере.\n\n` +
         `<b>Напиши текстом</b> (работает сразу):\n` +
         `<code>лосось 150 г, рис 200 г, салат</code>\n\n` +
-        `<i>Для фото: добавь <code>GROQ_API_KEY</code> в Railway → console.groq.com (бесплатно, 2 мин)</i>`;
+        `<i>Для фото: новый <code>GEMINI_API_KEY</code> в AI Studio или <code>OPENROUTER_API_KEY</code> на <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно)</i>`;
     } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros") || errMsg.includes("hf_fallback_no_foods")) {
       getSession(userId).state = "awaiting_meal_text";
       userMsg =
@@ -2309,9 +2309,8 @@ async function processMealPhoto(
       userMsg =
         `⚠️ <b>Нет рабочего ключа анализа еды.</b>\n\n` +
         `Добавь в Railway один из:\n` +
-        `• <code>GROQ_API_KEY</code> — <a href="https://console.groq.com">console.groq.com</a> (рекомендую)\n` +
-        `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com</a>\n` +
-        `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a>`;
+        `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com</a> (бесплатно)\n` +
+        `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно)`;
     } else {
       getSession(userId).state = "awaiting_meal_text";
       userMsg =
