@@ -2209,10 +2209,29 @@ async function processMealPhoto(
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error("meal photo error:", errMsg);
     let userMsg: string;
-    if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid") || errMsg.includes("401")) {
+    if (errMsg.includes("OPENROUTER_API_KEY invalid") || errMsg.includes("Invalid character in header")) {
+      userMsg = `⚠️ <b>Ключ OpenRouter вставлен неправильно.</b>\n\n` +
+        `Railway → <code>OPENROUTER_API_KEY</code>:\n` +
+        `1. Удали переменную полностью\n` +
+        `2. Создай заново, вставь только:\n` +
+        `<code>sk-or-v1-xxxxxxxx</code>\n` +
+        `3. Без кавычек, без пробелов, без слова Bearer\n` +
+        `4. Redeploy`;
+    } else if (errMsg.includes("openrouter 401") || errMsg.includes("openrouter 403")) {
+      userMsg = `⚠️ <b>Ключ OpenRouter неверный.</b>\n\n` +
+        `Создай новый на <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> → Railway → <code>OPENROUTER_API_KEY</code> → Redeploy.`;
+    } else if (errMsg.includes("groq 401") || errMsg.includes("groq 403")) {
+      userMsg = `⚠️ <b>Ключ Groq неверный.</b>\n\n` +
+        `Создай новый на <a href="https://console.groq.com">console.groq.com</a> → Railway → <code>GROQ_API_KEY</code> → Redeploy.`;
+    } else if (
+      errMsg.includes("gemini 401") ||
+      errMsg.includes("gemini 403") ||
+      errMsg.includes("API_KEY_INVALID") ||
+      errMsg.includes("API key not valid")
+    ) {
       userMsg = `⚠️ <b>Ключ Gemini неверный.</b>\n\n` +
-        `Зайди в <a href="https://aistudio.google.com/apikey">AI Studio</a> → скопируй ключ заново → Railway → GEMINI_API_KEY → Redeploy.\n\n` +
-        `<i>Ключ должен копироваться целиком, без пробелов.</i>`;
+        `Зайди в <a href="https://aistudio.google.com/apikey">AI Studio</a> → скопируй ключ заново → Railway → <code>GEMINI_API_KEY</code> → Redeploy.\n\n` +
+        `<i>Или добавь <code>GROQ_API_KEY</code> — <a href="https://console.groq.com">console.groq.com</a>, бесплатно.</i>`;
     } else if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
@@ -2236,16 +2255,13 @@ async function processMealPhoto(
         `📸 <b>Пересними</b> сверху при хорошем свете и отправь снова.\n\n` +
         `Или, если удобнее, <b>опиши текстом</b>:\n` +
         `<code>лосось 150 г, рис 200 г, салат</code>`;
-    } else if (errMsg.includes("Invalid character in header") || errMsg.includes("OPENROUTER_API_KEY invalid")) {
-      userMsg = `⚠️ <b>Ключ OpenRouter вставлен неправильно.</b>\n\n` +
-        `Railway → <code>OPENROUTER_API_KEY</code>:\n` +
-        `1. Удали переменную полностью\n` +
-        `2. Создай заново, вставь только:\n` +
-        `<code>sk-or-v1-xxxxxxxx</code>\n` +
-        `3. Без кавычек, без пробелов, без слова Bearer\n` +
-        `4. Redeploy`;
-    } else if (errMsg.includes("API_KEY")) {
-      userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
+    } else if (errMsg.includes("GROQ_API_KEY not set") || errMsg.includes("OPENROUTER_API_KEY not set") || errMsg.includes("API_KEY")) {
+      userMsg =
+        `⚠️ <b>Нет рабочего ключа анализа еды.</b>\n\n` +
+        `Добавь в Railway один из:\n` +
+        `• <code>GROQ_API_KEY</code> — <a href="https://console.groq.com">console.groq.com</a> (рекомендую)\n` +
+        `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com</a>\n` +
+        `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a>`;
     } else {
       userMsg =
         `⚠️ Сервис анализа временно перегружен.\n\n` +
