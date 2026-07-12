@@ -83,6 +83,20 @@ export interface UserRecord {
   lastReminderDate?: string;   // когда отправлено последнее напоминание (YYYY-MM-DD)
   remindersMissed?: number;    // сколько напоминаний подряд проигнорировано
   remindersPaused?: boolean;   // авто-пауза после 3 игноров
+  premiumUntil?: string;       // ISO-дата окончания подписки
+  photoWeekKey?: string;       // неделя для лимита бесплатных фото-анализов
+  photoCount?: number;         // сколько фото-анализов за текущую неделю
+}
+
+export interface MealEntry {
+  id: string;
+  userId: number;
+  date: string;        // YYYY-MM-DD
+  name: string;
+  kcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
 }
 
 export interface Challenge {
@@ -102,10 +116,11 @@ interface DB {
   bodyweight: BodyweightEntry[];
   users: UserRecord[];
   challenges: Challenge[];
+  meals: MealEntry[];
 }
 
 function load(): DB {
-  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [] };
+  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [] };
   if (!fs.existsSync(DB_PATH)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
@@ -115,6 +130,7 @@ function load(): DB {
       bodyweight: parsed.bodyweight ?? [],
       users: parsed.users ?? [],
       challenges: parsed.challenges ?? [],
+      meals: parsed.meals ?? [],
     };
     migrate(db);
     return db;
@@ -366,6 +382,79 @@ export function finishChallenge(id: string) {
   const c = db.challenges.find((x) => x.id === id);
   if (!c) return;
   c.finished = true;
+  save(db);
+}
+
+// ── Meals (дневник питания) ───────────────────────────────────────────────────
+export function addMeal(entry: Omit<MealEntry, "id">): MealEntry {
+  const db = load();
+  const row: MealEntry = { id: uid(), ...entry };
+  db.meals.push(row);
+  save(db);
+  return row;
+}
+
+export function getMeals(userId: number, date?: string): MealEntry[] {
+  const db = load();
+  let rows = db.meals.filter((m) => m.userId === userId);
+  if (date) rows = rows.filter((m) => m.date === date);
+  return rows;
+}
+
+export function mealTotals(userId: number, date: string) {
+  const rows = getMeals(userId, date);
+  return rows.reduce(
+    (t, m) => ({
+      kcal: t.kcal + m.kcal,
+      proteinG: t.proteinG + m.proteinG,
+      fatG: t.fatG + m.fatG,
+      carbsG: t.carbsG + m.carbsG,
+      count: t.count + 1,
+    }),
+    { kcal: 0, proteinG: 0, fatG: 0, carbsG: 0, count: 0 }
+  );
+}
+
+// ── Premium / лимиты ────────────────────────────────────────────────────────
+const FREE_PHOTO_WEEK = 5;
+
+export function isPremium(chatId: number): boolean {
+  const u = getUser(chatId);
+  if (!u?.premiumUntil) return false;
+  return u.premiumUntil >= new Date().toISOString().slice(0, 10);
+}
+
+/** Можно ли сделать фото-анализ еды (5/нед бесплатно, безлимит с Premium). */
+export function canAnalyzePhoto(chatId: number, weekKey: string): boolean {
+  if (isPremium(chatId)) return true;
+  const u = getUser(chatId);
+  if (!u) return true;
+  if (u.photoWeekKey !== weekKey) return true;
+  return (u.photoCount ?? 0) < FREE_PHOTO_WEEK;
+}
+
+export function bumpPhotoCount(chatId: number, weekKey: string) {
+  const db = load();
+  const u = db.users.find((x) => x.chatId === chatId);
+  if (!u) return;
+  if (u.photoWeekKey !== weekKey) {
+    u.photoWeekKey = weekKey;
+    u.photoCount = 1;
+  } else {
+    u.photoCount = (u.photoCount ?? 0) + 1;
+  }
+  save(db);
+}
+
+export function grantPremium(chatId: number, days: number) {
+  const db = load();
+  const u = db.users.find((x) => x.chatId === chatId);
+  if (!u) return;
+  const base = u.premiumUntil && u.premiumUntil >= new Date().toISOString().slice(0, 10)
+    ? new Date(u.premiumUntil + "T00:00:00Z")
+    : new Date();
+  base.setUTCDate(base.getUTCDate() + days);
+  u.premiumUntil = base.toISOString().slice(0, 10);
   save(db);
 }
 

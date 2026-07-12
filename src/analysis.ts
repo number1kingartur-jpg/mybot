@@ -1,4 +1,5 @@
 import { getAllWorkouts, getBodyweight, type WorkoutEntry } from "./db";
+import { recoveryMap, strengthScore } from "./recovery";
 
 function est1rm(w: number, reps: number): number {
   return reps <= 1 ? w : w * (1 + reps / 30);
@@ -121,6 +122,24 @@ export function buildWeeklyReport(userId: number): string {
   // частотная рекомендация
   if (sessions1 < 2) out.push("\n💡 Меньше 2 тренировок за неделю — для прогресса силы обычно нужно 2–4 сессии на движение/неделю.");
   else if (sessions1 >= 5) out.push("\n💡 5+ тренировок — следи за восстановлением: сон, питание, разгрузка при накоплении усталости.");
+
+  // восстановление мышц (снимок на конец недели)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const rec = recoveryMap(userId, todayStr);
+  const fresh = rec.filter((g) => g.status === "fresh").map((g) => g.name.toLowerCase());
+  const loaded = rec.filter((g) => g.status === "loaded").map((g) => g.name.toLowerCase());
+  if (loaded.length > 0 || fresh.length > 0) {
+    out.push("", "<b>🦵 Восстановление на сейчас:</b>");
+    if (loaded.length) out.push(`🔴 Нагружены: ${loaded.join(", ")}`);
+    if (fresh.length) out.push(`🟢 Готовы к нагрузке: ${fresh.join(", ")}`);
+  }
+
+  // силовой балл
+  const str = strengthScore(userId, todayStr);
+  if (str.overall !== null) {
+    out.push(`\n💪 <b>Силовой балл:</b> ${str.overall}/100` +
+      (str.lifts.length ? ` <i>(${str.lifts.map((l) => `${l.name} ${l.score}`).join(" · ")})</i>` : ""));
+  }
 
   return out.filter((l) => l !== undefined).join("\n");
 }

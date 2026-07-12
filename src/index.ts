@@ -9,9 +9,11 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
+  addMeal, getMeals, mealTotals, isPremium, canAnalyzePhoto, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
+import { analyzeMealPhoto, mealVisionEnabled } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
@@ -100,7 +102,7 @@ const MENU_BUTTONS = [
   "📊 Прогресс", "🏆 Рекорды",
   "📋 Программа", "🧮 1RM калькулятор",
   "⚖️ Вес тела", "📈 Отчёт недели",
-  "🍗 Питание", "⚔️ Челлендж",
+  "🍗 Питание", "⚔️ Челлендж", "📸 Еда",
   "🏋️ Тренировка на сегодня", "📈 Мой прогресс", "❓ Помощь",
 ];
 
@@ -112,6 +114,7 @@ const MAIN_KEYBOARD = {
     [{ text: "📋 Программа" }, { text: "🍗 Питание" }],
     [{ text: "⚖️ Вес тела" }, { text: "📈 Отчёт недели" }],
     [{ text: "🧮 1RM калькулятор" }, { text: "⚔️ Челлендж" }],
+    [{ text: "📸 Еда" }],
   ],
   resize_keyboard: true,
 };
@@ -126,7 +129,8 @@ const SIMPLE_KEYBOARD = {
   keyboard: [
     [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
     [{ text: "🍗 Питание" }, { text: "⚖️ Вес тела" }],
-    [{ text: "⚔️ Челлендж" }, { text: "❓ Помощь" }],
+    [{ text: "⚔️ Челлендж" }, { text: "📸 Еда" }],
+    [{ text: "❓ Помощь" }],
   ],
   resize_keyboard: true,
 };
@@ -593,10 +597,31 @@ async function notifyChallenge(userId: number) {
       `⚔️ <b>${esc(nameOf(userId))} только что записал тренировку!</b>\n\n` +
       `Счёт: ты <b>${oppMine} : ${oppTheirs}</b>` +
       (oppMine < oppTheirs ? `\n<i>Не дай себя обогнать 😤</i>` : ""),
-      { parse_mode: "HTML" }
+      {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "👍 Красава!", callback_data: `kudos_${userId}` }]],
+        },
+      }
     );
   } catch { /* соперник заблокировал бота */ }
 }
+
+// Kudos (Strava): социальное подкрепление — стрик длиннее на ~34% с соц. слоем
+bot.callbackQuery(/^kudos_(\d+)$/, async (ctx) => {
+  const targetId = parseInt(ctx.match[1]);
+  await ctx.answerCallbackQuery("👍");
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+  } catch { /* skip */ }
+  try {
+    await bot.api.sendMessage(
+      targetId,
+      `👍 <b>${esc(ctx.from.first_name ?? "Друг")}</b> поддержал твою тренировку!`,
+      { parse_mode: "HTML" }
+    );
+  } catch { /* получатель заблокировал бота */ }
+});
 
 // ── /start ────────────────────────────────────────────────────────────────
 const MODE_KEYBOARD = {
@@ -782,10 +807,9 @@ async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promis
 
   const kb = new InlineKeyboard();
   w.items.forEach((e, i) => {
-    kb.text(`❓ ${i + 1}. Как делать`, `sdet_${i}`);
-    if (i % 2 === 1) kb.row();
+    kb.text(`❓ ${i + 1}`, `sdet_${i}`).text(`🟢 ${i + 1}`, `seas_${i}`);
+    kb.row();
   });
-  if (w.items.length % 2 !== 0) kb.row();
   kb.text("✅ Выполнил — записать", "simple_done").row();
   kb.text("⚡ Нет времени — 15 минут", "simple_short").row();
   kb.text(place === "gym" ? "⚖️ Как выбрать вес" : "📈 Стало легко?", "simple_weight")
@@ -826,6 +850,19 @@ bot.callbackQuery(/^splace_(home|gym)$/, async (ctx) => {
 bot.callbackQuery("simple_place", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply(`🏋️ <b>Где будешь заниматься?</b>`, { reply_markup: PLACE_KEYBOARD, ...HTML });
+});
+
+// Облегчённый вариант упражнения (Muscle Booster: swap если тяжело)
+bot.callbackQuery(/^seas_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const { w } = currentSimpleWorkout(ctx.from.id);
+  const e = w.items[parseInt(ctx.match[1])];
+  if (!e) return;
+  await ctx.reply(
+    `🟢 <b>ЛЕГЧЕ: ${esc(e.name)}</b>\n${HR}\n\n${esc(e.easier)}\n\n` +
+    `<i>Сделай этот вариант вместо основного — засчитывается так же.</i>`,
+    HTML
+  );
 });
 
 // Подробная инструкция по упражнению
@@ -1042,7 +1079,7 @@ bot.command("help", async (ctx) => {
     `⏰ <b>Напоминания</b> — /remind\nВыбери дни и час — бот напомнит о тренировке, если её ещё нет в дневнике.\n\n` +
     `📋 <b>Программа</b>\nГотовый план на недели: DUP, 5/3/1, GZCLP и другие. Вводишь 1RM по каждому движению — получаешь расписание с весами. Отмечай «Выполнено» — бот ведёт по циклу и логирует за тебя.\n\n` +
     `🧮 <b>1RM калькулятор</b>\n<code>100×5</code> — расчёт максимума, или одно число <code>140</code> — таблица % от известной одиночки.\n\n` +
-    `🍗 <b>Питание</b>\nКалории и БЖУ под цель (масса/сушка/поддержание) — по формуле Миффлина – Сан-Жеора, с учётом твоего веса из дневника.\n\n` +
+    `🍗 <b>Питание</b>\nКалории и БЖУ под цель (масса/сушка/поддержание) — по формуле Миффлина – Сан-Жеора, с учётом твоего веса из дневника. Сфотографируй еду — посчитаю автоматически («📸 Еда»).\n\n` +
     `⚖️ <b>Вес тела</b>\nВводи вес — получишь график динамики.\n\n` +
     `📈 <b>Отчёт недели</b>\nТоннаж, тренды, застой, дисбаланс жим/тяга. Приходит сам по воскресеньям в 18:00.\n\n` +
     `<i>Сбились кнопки? Нажми /start</i>`,
@@ -1827,6 +1864,24 @@ const GOAL_NUT_LABELS: Record<string, string> = {
   bulk: "Набор массы", cut: "Сушка / снижение жира", maint: "Поддержание",
 };
 
+function mealTodayBlock(userId: number, goal?: { kcal: number; proteinG: number }): string {
+  const t = mealTotals(userId, today());
+  if (t.count === 0) return "";
+  const meals = getMeals(userId, today());
+  const lines = meals.map((m) => `▪️ ${esc(m.name)}: ${m.kcal} ккал`).join("\n");
+  let tail = "";
+  if (goal) {
+    const left = goal.kcal - t.kcal;
+    tail = `\n<i>До цели: ${left > 0 ? `~${left} ккал осталось` : `+${-left} ккал сверх`}</i>`;
+    const pLeft = goal.proteinG - t.proteinG;
+    if (pLeft > 10) tail += ` · белка ещё ~${pLeft} г`;
+  }
+  return (
+    `\n\n📸 <b>Съедено сегодня</b> (${t.count}):\n${lines}\n` +
+    `<code>Итого  ${t.kcal} ккал  Б${t.proteinG} Ж${t.fatG} У${t.carbsG}</code>${tail}`
+  );
+}
+
 function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: number): string {
   const m = calcMacros(p, actualWeight);
   const w = actualWeight ?? p.weightKg;
@@ -1841,6 +1896,8 @@ function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: numb
     }
   }
 
+  const mealBlock = userId !== undefined ? mealTodayBlock(userId, { kcal: m.kcal, proteinG: m.proteinG }) : "";
+
   return (
     `🍗 <b>ПИТАНИЕ ${DOT} ${GOAL_NUT_LABELS[p.goal]}</b>\n${HR}\n\n` +
     `<i>Расчёт под вес ${w} кг (Миффлин – Сан-Жеор)</i>\n\n` +
@@ -1850,9 +1907,9 @@ function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: numb
     `<code>Углеводы  ${String(m.carbsG).padStart(4)} г   ${m.carbsG * 4} ккал</code>\n\n` +
     `<code>Базовый обмен   ${m.bmr} ккал</code>\n` +
     `<code>Расход с учётом активности  ${m.tdee} ккал</code>` +
+    mealBlock +
     trendBlock +
-    `\n\n💡 <i>Белок раскидай на 3–5 приёмов по 25–50 г. Вода: ~${Math.round(w * 35 / 100) * 100} мл/день. ` +
-    `Взвешивайся 2–3 раза в неделю утром — чем больше точек, тем точнее я скорректирую калории по реальному тренду.</i>`
+    `\n\n💡 <i>Белок раскидай на 3–5 приёмов. Сфотографируй еду — посчитаю КБЖУ автоматически (кнопка «📸 Еда»).</i>`
   );
 }
 
@@ -2019,6 +2076,142 @@ bot.callbackQuery(/^undo_(\d+)$/, async (ctx) => {
   undoStore.delete(undoId);
   await ctx.answerCallbackQuery("Запись удалена");
   await ctx.editMessageText(`↩️ <b>Запись отменена</b>`, HTML);
+});
+
+// ── Анализ еды по фото (Forkly / Zenetic) ───────────────────────────────────
+bot.hears("📸 Еда", async (ctx) => {
+  resetSession(ctx.from!.id);
+  if (!mealVisionEnabled()) {
+    await ctx.reply(
+      `📸 <b>АНАЛИЗ ЕДЫ ПО ФОТО</b>\n${HR}\n\n` +
+      `Функция не подключена — нужен <code>GROQ_API_KEY</code> на сервере.\n` +
+      `<i>Пока записывай еду текстом в заметки или считай через «🍗 Питание».</i>`,
+      HTML
+    );
+    return;
+  }
+  const wk = weekKey(today());
+  const u = getUser(ctx.from!.id);
+  const used = u?.photoWeekKey === wk ? (u?.photoCount ?? 0) : 0;
+  const left = isPremium(ctx.from!.id)
+    ? "безлимит (Premium ✨)"
+    : `${Math.max(0, 5 - used)} из 5 бесплатных на эту неделю`;
+  await ctx.reply(
+    `📸 <b>ЗАПИСЬ ЕДЫ ПО ФОТО</b>\n${HR}\n\n` +
+    `Сфотографируй тарелку и отправь сюда — я оценю калории и БЖУ.\n\n` +
+    `<i>Осталось: ${left}. Точность ±15–25% — для ориентира, не для медицины.</i>\n\n` +
+    `Безлимит: /premium`,
+    { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
+  );
+});
+
+bot.on("message:photo", async (ctx) => {
+  if (!mealVisionEnabled()) return;
+  const userId = ctx.from!.id;
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+  const wk = weekKey(today());
+
+  if (!canAnalyzePhoto(userId, wk)) {
+    await ctx.reply(
+      `📸 Лимит 5 фото-анализов в неделю исчерпан.\n\n` +
+      `<i>Безлимит с Premium: /premium</i>`,
+      HTML
+    );
+    return;
+  }
+
+  const status = await ctx.reply(`🔍 <i>Смотрю на тарелку…</i>`, HTML);
+  try {
+    const photos = ctx.message.photo;
+    const best = photos[photos.length - 1];
+    const file = await ctx.api.getFile(best.file_id);
+    const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
+    const buf = await fetchImageBuffer(url);
+    const mime = file.file_path?.endsWith(".png") ? "image/png" : "image/jpeg";
+    const meal = await analyzeMealPhoto(buf, mime);
+
+    addMeal({
+      userId,
+      date: today(),
+      name: meal.name,
+      kcal: meal.kcal,
+      proteinG: meal.proteinG,
+      fatG: meal.fatG,
+      carbsG: meal.carbsG,
+    });
+    bumpPhotoCount(userId, wk);
+
+    const day = mealTotals(userId, today());
+    let goalLine = "";
+    const u = getUser(userId);
+    if (u?.nutrition) {
+      const bw = getBodyweight(userId, 1);
+      const macros = calcMacros(u.nutrition, bw.at(-1)?.weightKg);
+      const left = macros.kcal - day.kcal;
+      goalLine = `\n<i>За день: ${day.kcal}/${macros.kcal} ккал` +
+        (left > 0 ? ` · осталось ~${left}` : ` · +${-left} сверх цели`) + `</i>`;
+    }
+
+    await ctx.api.editMessageText(
+      ctx.chat.id,
+      status.message_id,
+      `✅ <b>${esc(meal.name)}</b>\n${HR}\n\n` +
+      `<code>Ккал ${meal.kcal}  Б ${meal.proteinG}  Ж ${meal.fatG}  У ${meal.carbsG}</code>\n` +
+      (meal.note ? `\n<i>${esc(meal.note)}</i>` : "") +
+      goalLine,
+      { parse_mode: "HTML" }
+    );
+  } catch (e) {
+    console.error("meal photo error:", e);
+    try {
+      await ctx.api.editMessageText(
+        ctx.chat.id, status.message_id,
+        `⚠️ Не смог разобрать фото. Попробуй снимок сверху при хорошем свете.`,
+        HTML
+      );
+    } catch {
+      await ctx.reply(`⚠️ Не смог разобрать фото. Попробуй другой ракурс.`, HTML);
+    }
+  }
+});
+
+// ── Premium (Telegram Stars) ───────────────────────────────────────────────
+const PREMIUM_STARS = 250; // ~30 дней, оплата в Stars (XTR)
+
+bot.command("premium", async (ctx) => {
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+  const u = getUser(ctx.from!.id);
+  if (isPremium(ctx.from!.id)) {
+    await ctx.reply(
+      `✨ <b>Premium активен</b> до <b>${u?.premiumUntil}</b>\n\n` +
+      `Безлимитный анализ еды по фото включён.`,
+      HTML
+    );
+    return;
+  }
+  await ctx.replyWithInvoice(
+    "Strength Lab Premium",
+    "30 дней: безлимитный анализ еды по фото + ранний доступ к новым фичам",
+    `prem_${ctx.from!.id}_${Date.now()}`,
+    "XTR",
+    [{ label: "Premium 30 дней", amount: PREMIUM_STARS }],
+    { provider_token: "" }
+  );
+});
+
+bot.on("pre_checkout_query", async (ctx) => {
+  await ctx.answerPreCheckoutQuery(true);
+});
+
+bot.on("message:successful_payment", async (ctx) => {
+  const pay = ctx.message.successful_payment;
+  if (!pay || pay.currency !== "XTR") return;
+  grantPremium(ctx.from!.id, 30);
+  await ctx.reply(
+    `✨ <b>Premium активирован на 30 дней!</b>\n\n` +
+    `Теперь безлимитный анализ еды по фото. Спасибо за поддержку 💪`,
+    { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
+  );
 });
 
 // ── Голосовые сообщения → распознавание → лог ────────────────────────────
@@ -2465,6 +2658,7 @@ async function main() {
     { command: "start", description: "Главное меню" },
     { command: "mode", description: "Режим: простой / про" },
     { command: "remind", description: "Напоминания о тренировках" },
+    { command: "premium", description: "Premium подписка (Stars)" },
     { command: "help", description: "Справка по функциям" },
   ]);
   await bot.start({
