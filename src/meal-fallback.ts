@@ -31,8 +31,11 @@ const FOODS: FoodItem[] = [
 const HF_CAPTION_MODEL = "Salesforce/blip-image-captioning-base";
 const HF_FOOD_MODEL = "nateraw/food";
 
-function hfApiUrl(model: string): string {
-  return `https://router.huggingface.co/hf-inference/models/${model}`;
+function hfApiUrls(model: string): string[] {
+  return [
+    `https://router.huggingface.co/hf-inference/models/${model}`,
+    `https://api-inference.huggingface.co/models/${model}`,
+  ];
 }
 
 function hfToken(): string | undefined {
@@ -104,23 +107,30 @@ async function hfRequest(model: string, imageBuffer: Buffer, mime: string): Prom
   const token = hfToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(hfApiUrl(model), {
-      method: "POST",
-      headers,
-      body: imageBuffer,
-      signal: AbortSignal.timeout(45_000),
-    });
-
-    const raw = await res.text();
-    if (res.status === 503 || res.status === 429) {
-      await sleep(3000 + attempt * 2000);
-      continue;
+  let lastErr = "unknown";
+  for (const url of hfApiUrls(model)) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: imageBuffer,
+          signal: AbortSignal.timeout(45_000),
+        });
+        const raw = await res.text();
+        if (res.status === 503 || res.status === 429) {
+          await sleep(3000 + attempt * 2000);
+          continue;
+        }
+        if (!res.ok) throw new Error(`hf ${model} ${res.status}: ${raw.slice(0, 120)}`);
+        return raw;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+        await sleep(1000);
+      }
     }
-    if (!res.ok) throw new Error(`hf ${model} ${res.status}: ${raw.slice(0, 160)}`);
-    return raw;
   }
-  throw new Error(`hf ${model}: model loading timeout`);
+  throw new Error(lastErr);
 }
 
 async function hfImageCaption(imageBuffer: Buffer, mime: string): Promise<string> {

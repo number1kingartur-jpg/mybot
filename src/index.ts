@@ -2140,6 +2140,40 @@ function formatMealReply(meal: { name: string; kcal: number; proteinG: number; f
     goalLine;
 }
 
+function looksLikeMealText(text: string): boolean {
+  const t = text.toLowerCase();
+  if (t.length < 4 || t.length > 200) return false;
+  const foodWords = ["лосось", "рис", "салат", "куриц", "яйц", "овсян", "творог", "говядин", "рыба", "макарон", "греч", "авокадо", "salmon", "rice", "salad", "chicken", "egg", "beef", "fish", "pasta"];
+  const hasFood = foodWords.some((w) => t.includes(w));
+  const hasGrams = /\d+\s*(?:г|g|грам|gram)/i.test(t) || /\d{2,4}/.test(t);
+  return hasFood && (hasGrams || t.includes(","));
+}
+
+async function processMealText(ctx: { from?: { id: number }; chat: { id: number }; reply: (t: string, o?: object) => Promise<{ message_id: number }>; api: typeof bot.api }, text: string) {
+  const userId = ctx.from!.id;
+  registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
+  const status = await ctx.reply(`🔍 <i>Считаю…</i>`, HTML);
+  try {
+    const meal = await analyzeMealText(text);
+    await saveMealFromAnalysis(userId, meal, false);
+    await ctx.api.editMessageText(
+      ctx.chat.id,
+      status.message_id,
+      formatMealReply(meal, mealGoalLine(userId)),
+      { parse_mode: "HTML" }
+    );
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    await ctx.api.editMessageText(
+      ctx.chat.id,
+      status.message_id,
+      `⚠️ Не смог посчитать.\n\nПопробуй:\n<code>лосось 150 г, рис 200 г, салат</code>\n\n<i>${esc(errMsg.slice(0, 100))}</i>`,
+      HTML
+    );
+    getSession(userId).state = "awaiting_meal_text";
+  }
+}
+
 async function saveMealFromAnalysis(userId: number, meal: { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; note?: string }, countPhoto = true) {
   addMeal({
     userId,
@@ -2378,29 +2412,10 @@ bot.on("message:text", async (ctx) => {
 
   if (text.startsWith("/") || MENU_BUTTONS.includes(text)) return;
 
-  // ── Еда текстом
-  if (s.state === "awaiting_meal_text") {
+  // ── Еда текстом (авто или после фото)
+  if (s.state === "awaiting_meal_text" || looksLikeMealText(text)) {
     resetSession(userId);
-    const status = await ctx.reply(`🔍 <i>Считаю…</i>`, HTML);
-    try {
-      const meal = await analyzeMealText(text);
-      await saveMealFromAnalysis(userId, meal, false);
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        status.message_id,
-        formatMealReply(meal, mealGoalLine(userId)),
-        { parse_mode: "HTML" }
-      );
-    } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        status.message_id,
-        `⚠️ Не смог посчитать.\n\nПопробуй формат:\n<code>лосось 150 г, рис 200 г, салат</code>\n\n<i>${esc(errMsg.slice(0, 100))}</i>`,
-        HTML
-      );
-      getSession(userId).state = "awaiting_meal_text";
-    }
+    await processMealText(ctx, text);
     return;
   }
 
