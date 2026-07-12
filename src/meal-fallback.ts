@@ -149,6 +149,10 @@ async function hfFoodLabels(imageBuffer: Buffer, mime: string): Promise<string[]
   }
 }
 
+export function analyzeMealFromTextLocal(description: string): MealAnalysis | null {
+  return estimateFromCaption(description);
+}
+
 /** Бесплатный fallback без Gemini/OpenRouter/Groq — caption + справочник КБЖУ. */
 export async function analyzeMealPhotoFallback(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
   const hints: string[] = [];

@@ -2100,12 +2100,15 @@ bot.hears("📸 Еда", async (ctx) => {
     ? "безлимит (Premium ✨)"
     : `${Math.max(0, 5 - used)} из 5 бесплатных на эту неделю`;
   await ctx.reply(
-    `📸 <b>ЗАПИСЬ ЕДЫ ПО ФОТО</b>\n${HR}\n\n` +
-    `Сфотографируй тарелку и отправь сюда — я оценю калории и БЖУ.\n\n` +
-    `<i>Осталось: ${left}. Точность ±15–25% — для ориентира, не для медицины.</i>\n\n` +
-    `Безлимит: /premium`,
+    `📸 <b>ЗАПИСЬ ЕДЫ</b>\n${HR}\n\n` +
+    `• <b>Фото</b> — сфотографируй тарелку и отправь сюда\n` +
+    `• <b>Текст</b> — напиши что съел:\n` +
+    `<code>лосось 150 г, рис 200 г, салат</code>\n\n` +
+    `<i>Осталось фото: ${left}. Точность ±15–25%.</i>\n\n` +
+    `Безлимит фото: /premium`,
     { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
   );
+  getSession(ctx.from!.id).state = "awaiting_meal_text";
 });
 
 bot.on("message:photo", async (ctx) => {
@@ -2244,14 +2247,19 @@ async function processMealPhoto(
       errMsg.includes("429") ||
       errMsg.includes("quota exhausted") ||
       errMsg.includes("service_unavailable") ||
+      errMsg.includes("hf_fallback") ||
+      errMsg.includes("hf caption") ||
       errMsg.includes("no content") ||
       errMsg.includes("blocked") ||
       errMsg.includes("openrouter failed") ||
       errMsg.includes("timeout")
     ) {
+      getSession(userId).state = "awaiting_meal_text";
       userMsg =
-        `⚠️ Сервис анализа временно перегружен.\n\n` +
-        `Подожди 30–60 минут и отправь <b>фото</b> снова.`;
+        `⚠️ Фото сейчас не разобрать — нет рабочего AI-ключа на сервере.\n\n` +
+        `<b>Напиши текстом</b> (работает сразу):\n` +
+        `<code>лосось 150 г, рис 200 г, салат</code>\n\n` +
+        `<i>Для фото: добавь <code>GROQ_API_KEY</code> в Railway → console.groq.com (бесплатно, 2 мин)</i>`;
     } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros") || errMsg.includes("hf_fallback_no_foods")) {
       getSession(userId).state = "awaiting_meal_text";
       userMsg =
@@ -2267,9 +2275,11 @@ async function processMealPhoto(
         `• <code>GEMINI_API_KEY</code> — <a href="https://aistudio.google.com/apikey">aistudio.google.com</a>\n` +
         `• <code>OPENROUTER_API_KEY</code> — <a href="https://openrouter.ai/keys">openrouter.ai/keys</a>`;
     } else {
+      getSession(userId).state = "awaiting_meal_text";
       userMsg =
-        `⚠️ Сервис анализа временно перегружен.\n\n` +
-        `Подожди 30–60 минут и отправь <b>фото</b> снова.`;
+        `⚠️ Фото не разобрал.\n\n` +
+        `<b>Напиши текстом:</b>\n` +
+        `<code>лосось 150 г, рис 200 г, салат</code>`;
     }
     try {
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, userMsg, HTML);
@@ -2368,10 +2378,10 @@ bot.on("message:text", async (ctx) => {
 
   if (text.startsWith("/") || MENU_BUTTONS.includes(text)) return;
 
-  // ── Еда текстом (только если фото не удалось прочитать — пользователь выбрал описать)
+  // ── Еда текстом
   if (s.state === "awaiting_meal_text") {
     resetSession(userId);
-    const status = await ctx.reply(`🔍 <i>Считаю по описанию…</i>`, HTML);
+    const status = await ctx.reply(`🔍 <i>Считаю…</i>`, HTML);
     try {
       const meal = await analyzeMealText(text);
       await saveMealFromAnalysis(userId, meal, false);

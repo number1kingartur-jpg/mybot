@@ -1,5 +1,5 @@
 import https from "https";
-import { analyzeMealPhotoFallback } from "./meal-fallback";
+import { analyzeMealPhotoFallback, analyzeMealFromTextLocal } from "./meal-fallback";
 
 const PROMPT =
   "Ты нутрициолог. По фото еды оцени порцию для одного приёма пищи. " +
@@ -400,8 +400,11 @@ const TEXT_PROMPT =
   "Ответь ТОЛЬКО валидным JSON без markdown: " +
   '{"name":"краткое название","kcal":число,"proteinG":число,"fatG":число,"carbsG":число,"note":"оценка точности"}';
 
-/** Текстовый анализ — отдельный пул лимитов, работает когда vision исчерпан. */
+/** Текстовый анализ — сначала локальный справочник, потом AI. */
 export async function analyzeMealText(description: string): Promise<MealAnalysis> {
+  const local = analyzeMealFromTextLocal(description);
+  if (local && local.kcal > 0) return local;
+
   const errors: string[] = [];
 
   if (openRouterKey()) {
