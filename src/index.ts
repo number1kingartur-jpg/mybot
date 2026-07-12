@@ -9,7 +9,7 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
-  addMeal, getMeals, mealTotals, isPremium, canAnalyzePhoto, bumpPhotoCount, grantPremium,
+  addMeal, getMeals, mealTotals, isPremium, isOwner, canAnalyzePhoto, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
@@ -2095,7 +2095,9 @@ bot.hears("📸 Еда", async (ctx) => {
   const wk = weekKey(today());
   const u = getUser(ctx.from!.id);
   const used = u?.photoWeekKey === wk ? (u?.photoCount ?? 0) : 0;
-  const left = isPremium(ctx.from!.id)
+  const left = isOwner(ctx.from!.id)
+    ? "безлимит (владелец)"
+    : isPremium(ctx.from!.id)
     ? "безлимит (Premium ✨)"
     : `${Math.max(0, 5 - used)} из 5 бесплатных на эту неделю`;
   await ctx.reply(
@@ -2329,12 +2331,17 @@ async function processMealPhoto(
 // ── Premium (Telegram Stars) ───────────────────────────────────────────────
 const PREMIUM_STARS = 250; // ~30 дней, оплата в Stars (XTR)
 
+bot.command("myid", async (ctx) => {
+  await ctx.reply(`Твой Telegram ID: <code>${ctx.from!.id}</code>`, HTML);
+});
+
 bot.command("premium", async (ctx) => {
   registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
   const u = getUser(ctx.from!.id);
   if (isPremium(ctx.from!.id)) {
+    const label = isOwner(ctx.from!.id) ? "Владелец — безлимит" : `Premium активен до <b>${u?.premiumUntil}</b>`;
     await ctx.reply(
-      `✨ <b>Premium активен</b> до <b>${u?.premiumUntil}</b>\n\n` +
+      `✨ <b>${label}</b>\n\n` +
       `Безлимитный анализ еды по фото включён.`,
       HTML
     );

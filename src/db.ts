@@ -418,15 +418,31 @@ export function mealTotals(userId: number, date: string) {
 // ── Premium / лимиты ────────────────────────────────────────────────────────
 const FREE_PHOTO_WEEK = 5;
 
+function ownerIds(): number[] {
+  const raw = process.env.ADMIN_ID ?? process.env.OWNER_ID ?? "";
+  return raw
+    .split(/[,\s;]+/)
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/** Владелец бота — безлимит фото без Premium. */
+export function isOwner(chatId: number): boolean {
+  if (ownerIds().includes(chatId)) return true;
+  const users = load().users;
+  return users.length > 0 && users[0].chatId === chatId;
+}
+
 export function isPremium(chatId: number): boolean {
+  if (isOwner(chatId)) return true;
   const u = getUser(chatId);
   if (!u?.premiumUntil) return false;
   return u.premiumUntil >= new Date().toISOString().slice(0, 10);
 }
 
-/** Можно ли сделать фото-анализ еды (5/нед бесплатно, безлимит с Premium). */
+/** Можно ли сделать фото-анализ еды (5/нед бесплатно, безлимит владельцу и Premium). */
 export function canAnalyzePhoto(chatId: number, weekKey: string): boolean {
-  if (isPremium(chatId)) return true;
+  if (isOwner(chatId) || isPremium(chatId)) return true;
   const u = getUser(chatId);
   if (!u) return true;
   if (u.photoWeekKey !== weekKey) return true;
@@ -434,6 +450,7 @@ export function canAnalyzePhoto(chatId: number, weekKey: string): boolean {
 }
 
 export function bumpPhotoCount(chatId: number, weekKey: string) {
+  if (isOwner(chatId)) return;
   const db = load();
   const u = db.users.find((x) => x.chatId === chatId);
   if (!u) return;
