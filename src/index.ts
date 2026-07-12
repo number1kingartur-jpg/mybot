@@ -13,7 +13,7 @@ import {
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
-import { analyzeMealPhoto, mealVisionEnabled, mealVisionProvider } from "./meal";
+import { analyzeMealPhoto, mealVisionEnabled, mealVisionProvider, groqMealFallbackEnabled } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
@@ -2205,8 +2205,15 @@ async function processMealPhoto(
     } else if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("403")) {
       userMsg = `⚠️ <b>Нет доступа к Gemini API.</b>\n\n` +
         `В AI Studio создай новый ключ (Create API key) и обнови в Railway.`;
-    } else if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429")) {
-      userMsg = `⚠️ Лимит Gemini на сегодня исчерпан. Попробуй через час.`;
+    } else if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("429") || errMsg.includes("quota exhausted")) {
+      userMsg = groqMealFallbackEnabled()
+        ? `⚠️ Лимит Gemini исчерпан, Groq тоже не ответил.\n\nПодожди 30–60 мин и попробуй снова.`
+        : `⚠️ <b>Лимит бесплатного Gemini исчерпан.</b>\n\n` +
+          `Варианты:\n` +
+          `1. Подожди 30–60 мин (сброс по минутам/дню)\n` +
+          `2. Добавь <code>GROQ_API_KEY</code> в Railway — бот переключится автоматически\n` +
+          `   Ключ: <a href="https://console.groq.com/keys">console.groq.com/keys</a>\n` +
+          `3. Включи биллинг в <a href="https://aistudio.google.com/apikey">AI Studio</a> — лимит вырастет`;
     } else if (errMsg.includes("API_KEY")) {
       userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
     } else {

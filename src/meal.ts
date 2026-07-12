@@ -1,11 +1,11 @@
 import https from "https";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY?.trim();
-const GROQ_KEY = process.env.GROQ_API_KEY;
+const GROQ_KEY = process.env.GROQ_API_KEY?.trim();
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
-// Пробуем по порядку — если одна модель недоступна, следующая
 const GEMINI_MODELS = [
+  "gemini-2.5-flash-lite",
   "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
@@ -21,9 +21,14 @@ export function mealVisionEnabled(): boolean {
 }
 
 export function mealVisionProvider(): string {
-  if (GEMINI_KEY) return `Gemini (${GEMINI_MODELS[0]})`;
-  if (GROQ_KEY) return "Groq Llama 4 Scout";
-  return "none";
+  const parts: string[] = [];
+  if (GEMINI_KEY) parts.push(`Gemini (${GEMINI_MODELS[0]})`);
+  if (GROQ_KEY) parts.push("Groq fallback");
+  return parts.join(" + ") || "none";
+}
+
+export function groqMealFallbackEnabled(): boolean {
+  return Boolean(GROQ_KEY);
 }
 
 export interface MealAnalysis {
@@ -33,6 +38,18 @@ export interface MealAnalysis {
   fatG: number;
   carbsG: number;
   note?: string;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isQuotaError(msg: string): boolean {
+  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+}
+
+function isModelMissing(msg: string): boolean {
+  return msg.includes("404") || msg.includes("not found") || msg.includes("NOT_FOUND");
 }
 
 function httpsJson(opts: https.RequestOptions, body: string): Promise<{ status: number; raw: string }> {
@@ -102,18 +119,33 @@ async function geminiVisionOne(model: string, imageBase64: string, mime: string)
 
 async function geminiVision(imageBase64: string, mime: string): Promise<string> {
   let lastErr = "unknown";
+  let quotaHit = false;
+
   for (const model of GEMINI_MODELS) {
-    try {
-      return await geminiVisionOne(model, imageBase64, mime);
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e);
-      console.error("gemini try", model, lastErr);
-      // 404/400 model not found — пробуем следующую
-      if (!lastErr.includes("404") && !lastErr.includes("not found") && !lastErr.includes("NOT_FOUND")) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await geminiVisionOne(model, imageBase64, mime);
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+        console.error("gemini try", model, `attempt=${attempt}`, lastErr);
+
+        if (isModelMissing(lastErr)) break;
+
+        if (isQuotaError(lastErr)) {
+          quotaHit = true;
+          if (attempt === 0) {
+            await sleep(3000);
+            continue;
+          }
+          break;
+        }
+
         throw e;
       }
     }
   }
+
+  if (quotaHit) throw new Error(`gemini quota exhausted: ${lastErr}`);
   throw new Error(lastErr);
 }
 
@@ -171,11 +203,25 @@ function parseJson(raw: string): MealAnalysis {
   };
 }
 
-/** Анализ фото еды: Gemini (приоритет) или Groq Vision. */
+/** Анализ фото еды: Gemini → при лимите Groq (если ключ есть). */
 export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg"): Promise<MealAnalysis> {
   const b64 = imageBuffer.toString("base64");
-  const raw = GEMINI_KEY
-    ? await geminiVision(b64, mime)
-    : await groqVision(b64, mime);
+
+  if (GEMINI_KEY) {
+    try {
+      const raw = await geminiVision(b64, mime);
+      return parseJson(raw);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      if (GROQ_KEY && isQuotaError(errMsg)) {
+        console.log("gemini quota hit, falling back to groq");
+        const raw = await groqVision(b64, mime);
+        return parseJson(raw);
+      }
+      throw e;
+    }
+  }
+
+  const raw = await groqVision(b64, mime);
   return parseJson(raw);
 }
