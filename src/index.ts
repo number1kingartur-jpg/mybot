@@ -2218,6 +2218,13 @@ async function processMealPhoto(
           `2. <b>Второй ключ Gemini</b> — другой Google-аккаунт\n` +
           `   → Railway: <code>GEMINI_API_KEY_2</code> → Redeploy\n\n` +
           `3. Подожди 30–60 мин (сброс лимита по минутам)`;
+    } else if (errMsg.includes("Invalid character in header")) {
+      userMsg = `⚠️ <b>Ключ API вставлен с лишними символами.</b>\n\n` +
+        `Railway → Variables → удали значение и вставь ключ заново:\n` +
+        `• без кавычек\n` +
+        `• без пробелов в начале/конце\n` +
+        `• только сам ключ <code>sk-or-v1-...</code>\n\n` +
+        `Проверь <code>OPENROUTER_API_KEY</code> и <code>GROQ_API_KEY</code> → Redeploy.`;
     } else if (errMsg.includes("API_KEY")) {
       userMsg = `⚠️ Нет ключа на сервере — проверь GEMINI_API_KEY в Railway.`;
     } else {

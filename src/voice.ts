@@ -1,6 +1,14 @@
 import https from "https";
 
-const GROQ_KEY = process.env.GROQ_API_KEY;
+function sanitizeApiKey(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  return raw
+    .replace(/^['"`\s]+|['"`\s]+$/g, "")
+    .replace(/[\r\n\t\u200b\u200c\u200d\ufeff]/g, "")
+    .trim() || undefined;
+}
+
+const GROQ_KEY = sanitizeApiKey(process.env.GROQ_API_KEY);
 
 export function voiceEnabled(): boolean {
   return Boolean(GROQ_KEY);

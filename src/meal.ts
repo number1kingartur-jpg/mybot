@@ -1,7 +1,22 @@
 import https from "https";
 
-const GROQ_KEY = process.env.GROQ_API_KEY?.trim();
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY?.trim();
+const PROMPT =
+  "Ты нутрициолог. По фото еды оцени порцию для одного приёма пищи. " +
+  "Ответь ТОЛЬКО валидным JSON без markdown: " +
+  '{"name":"краткое название блюда на русском","kcal":число,"proteinG":число,"fatG":число,"carbsG":число,"note":"одна строка оценки точности"}';
+
+/** Убирает кавычки, переносы строк и невидимые символы из ключей Railway. */
+function sanitizeApiKey(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw
+    .replace(/^['"`\s]+|['"`\s]+$/g, "")
+    .replace(/[\r\n\t\u200b\u200c\u200d\ufeff]/g, "")
+    .trim();
+  return cleaned || undefined;
+}
+
+const GROQ_KEY = sanitizeApiKey(process.env.GROQ_API_KEY);
+const OPENROUTER_KEY = sanitizeApiKey(process.env.OPENROUTER_API_KEY);
 const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 const GEMINI_MODELS = [
@@ -17,17 +32,12 @@ const OPENROUTER_VISION_MODELS = [
   "openrouter/free",
 ];
 
-const PROMPT =
-  "Ты нутрициолог. По фото еды оцени порцию для одного приёма пищи. " +
-  "Ответь ТОЛЬКО валидным JSON без markdown: " +
-  '{"name":"краткое название блюда на русском","kcal":число,"proteinG":число,"fatG":число,"carbsG":число,"note":"одна строка оценки точности"}';
-
 function geminiKeys(): string[] {
   const keys: string[] = [];
-  const main = process.env.GEMINI_API_KEY?.trim();
+  const main = sanitizeApiKey(process.env.GEMINI_API_KEY);
   if (main) keys.push(main);
   for (let i = 2; i <= 5; i++) {
-    const k = process.env[`GEMINI_API_KEY_${i}`]?.trim();
+    const k = sanitizeApiKey(process.env[`GEMINI_API_KEY_${i}`]);
     if (k && !keys.includes(k)) keys.push(k);
   }
   return keys;
@@ -222,7 +232,7 @@ async function openRouterVision(imageBase64: string, mime: string): Promise<stri
         "/api/v1/chat/completions",
         {
           Authorization: `Bearer ${OPENROUTER_KEY}`,
-          "HTTP-Referer": "https://t.me/raschet_bot",
+          Referer: "https://t.me/raschet_bot",
           "X-OpenRouter-Title": "RASCHET Bot",
         },
         model,
