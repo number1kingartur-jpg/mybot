@@ -416,7 +416,15 @@ export function mealTotals(userId: number, date: string) {
 }
 
 // ── Premium / лимиты ────────────────────────────────────────────────────────
-const FREE_PHOTO_WEEK = 5;
+const FREE_PHOTO_WEEK = Number(process.env.MEAL_PHOTO_WEEK_LIMIT ?? 5);
+const MEAL_PHOTO_UNLIMITED =
+  process.env.MEAL_PHOTO_UNLIMITED === "1" ||
+  process.env.MEAL_PHOTO_UNLIMITED === "true" ||
+  FREE_PHOTO_WEEK <= 0;
+
+export function mealPhotoUnlimited(): boolean {
+  return MEAL_PHOTO_UNLIMITED;
+}
 
 function ownerIds(): number[] {
   const raw = process.env.ADMIN_ID ?? process.env.OWNER_ID ?? "";
@@ -442,7 +450,7 @@ export function isPremium(chatId: number): boolean {
 
 /** Можно ли сделать фото-анализ еды (5/нед бесплатно, безлимит владельцу и Premium). */
 export function canAnalyzePhoto(chatId: number, weekKey: string): boolean {
-  if (isOwner(chatId) || isPremium(chatId)) return true;
+  if (MEAL_PHOTO_UNLIMITED || isOwner(chatId) || isPremium(chatId)) return true;
   const u = getUser(chatId);
   if (!u) return true;
   if (u.photoWeekKey !== weekKey) return true;

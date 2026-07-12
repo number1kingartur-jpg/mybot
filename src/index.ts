@@ -9,7 +9,7 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
-  addMeal, getMeals, mealTotals, isPremium, isOwner, canAnalyzePhoto, bumpPhotoCount, grantPremium,
+  addMeal, getMeals, mealTotals, isPremium, isOwner, mealPhotoUnlimited, canAnalyzePhoto, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
@@ -2095,7 +2095,9 @@ bot.hears("📸 Еда", async (ctx) => {
   const wk = weekKey(today());
   const u = getUser(ctx.from!.id);
   const used = u?.photoWeekKey === wk ? (u?.photoCount ?? 0) : 0;
-  const left = isOwner(ctx.from!.id)
+  const left = mealPhotoUnlimited()
+    ? "безлимит (тест)"
+    : isOwner(ctx.from!.id)
     ? "безлимит (владелец)"
     : isPremium(ctx.from!.id)
     ? "безлимит (Premium ✨)"
