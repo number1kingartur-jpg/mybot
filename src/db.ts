@@ -117,10 +117,11 @@ interface DB {
   users: UserRecord[];
   challenges: Challenge[];
   meals: MealEntry[];
+  channelPosted?: { postId: string; date: string }[];
 }
 
 function load(): DB {
-  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [] };
+  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], channelPosted: [] };
   if (!fs.existsSync(DB_PATH)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
@@ -131,6 +132,7 @@ function load(): DB {
       users: parsed.users ?? [],
       challenges: parsed.challenges ?? [],
       meals: parsed.meals ?? [],
+      channelPosted: parsed.channelPosted ?? [],
     };
     migrate(db);
     return db;
@@ -512,9 +514,22 @@ export function setReminder(chatId: number, days: number[] | null, hour: number 
     u.reminderDays = days;
     if (hour !== null) u.reminderHour = hour;
   }
-  // любое изменение настроек сбрасывает авто-паузу
   u.remindersMissed = 0;
   u.remindersPaused = false;
   delete u.lastReminderDate;
+  save(db);
+}
+
+// ── Канал: автовыкладка постов ─────────────────────────────────────────────
+
+export function getChannelState(): { posted: { postId: string; date: string }[] } {
+  const db = load();
+  return { posted: db.channelPosted ?? [] };
+}
+
+export function markChannelPosted(postId: string, date: string) {
+  const db = load();
+  if (!db.channelPosted) db.channelPosted = [];
+  db.channelPosted.push({ postId, date });
   save(db);
 }

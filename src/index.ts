@@ -25,6 +25,13 @@ import { calc531, calcGzclp } from "./calc/templates";
 import type { Lift } from "./db";
 import { progressChartUrl, bodyweightChartUrl } from "./chart";
 import { buildWeeklyReport } from "./analysis";
+import {
+  channelPostingEnabled,
+  channelStatusText,
+  CHANNEL_CRON,
+  previewNextPost,
+  publishNextChannelPost,
+} from "./channel/publisher";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -1086,6 +1093,42 @@ bot.command("help", async (ctx) => {
     `<i>Сбились кнопки? Нажми /start</i>`,
     { reply_markup: MAIN_KEYBOARD, ...HTML }
   );
+});
+
+// ── Канал: автовыкладка (только владелец) ───────────────────────────────────
+bot.command("channel", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  await ctx.reply(channelStatusText(), HTML);
+});
+
+bot.command("channel_post", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  if (!channelPostingEnabled()) {
+    await ctx.reply(
+      `📢 Автовыкладка выключена.\n\n` +
+      `Railway → Variables:\n` +
+      `<code>TELEGRAM_CHANNEL_ID</code> = @канал или -100...\n` +
+      `<code>CHANNEL_POST_ENABLED</code> = 1\n` +
+      `<code>BOT_USERNAME</code> = имя_бота без @\n` +
+      `Бот должен быть <b>админом</b> канала с правом публикации.`,
+      HTML
+    );
+    return;
+  }
+  const { post, html } = previewNextPost();
+  await ctx.reply(`👀 <b>Превью</b> (следующий пост: <code>${esc(post.id)}</code>)\n\n${html}`, HTML);
+  const result = await publishNextChannelPost(bot.api, { force: true });
+  if (result.ok) {
+    await ctx.reply(`✅ Опубликовано в канал: <b>${esc(post.title)}</b>`, HTML);
+  } else {
+    await ctx.reply(`⚠️ Не вышло: <i>${esc(result.error ?? "unknown")}</i>`, HTML);
+  }
 });
 
 // ── Запись тренировки ─────────────────────────────────────────────────────
@@ -2866,6 +2909,16 @@ cron.schedule("0 21 * * *", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
+// ── Автовыкладка в Telegram-канал ─────────────────────────────────────────
+if (channelPostingEnabled()) {
+  cron.schedule(CHANNEL_CRON, async () => {
+    const result = await publishNextChannelPost(bot.api);
+    if (!result.ok && result.error !== "already posted today") {
+      console.error("channel cron:", result.error);
+    }
+  }, { timezone: "Asia/Bangkok" });
+}
+
 // ── Отказоустойчивость ─────────────────────────────────────────────────────
 bot.catch((err) => {
   console.error("Handler error:", err.error);
@@ -2888,6 +2941,7 @@ async function main() {
       console.log("✅ Bot running…");
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
       console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no vision API key)"}`);
+      console.log(`   Channel posts: ${channelPostingEnabled() ? `on (${CHANNEL_CRON})` : "OFF"}`);
     },
   });
 }
