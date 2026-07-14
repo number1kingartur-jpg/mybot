@@ -28,10 +28,18 @@ import { buildWeeklyReport } from "./analysis";
 import {
   channelPostingEnabled,
   channelStatusText,
+  channelId,
   CHANNEL_CRON,
   previewNextPost,
   publishNextChannelPost,
 } from "./channel/publisher";
+import {
+  applyBrandingFromEnv,
+  brandingHelpText,
+  setChannelAbout,
+  setChannelPhoto,
+  setChannelTitle,
+} from "./channel/branding";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -1102,6 +1110,113 @@ bot.command("channel", async (ctx) => {
     return;
   }
   await ctx.reply(channelStatusText(), HTML);
+});
+
+bot.command("channel_brand", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  await ctx.reply(brandingHelpText(), HTML);
+});
+
+bot.command("channel_name", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  if (!channelId()) {
+    await ctx.reply("Задай <code>TELEGRAM_CHANNEL_ID</code> в Railway.", HTML);
+    return;
+  }
+  const name = (typeof ctx.match === "string" ? ctx.match : "").trim();
+  if (!name) {
+    await ctx.reply("Напиши: <code>/channel_name RASCHET · Сила и питание</code>", HTML);
+    return;
+  }
+  try {
+    await setChannelTitle(bot.api, name);
+    await ctx.reply(`✅ Название канала: <b>${esc(name)}</b>`, HTML);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await ctx.reply(`⚠️ ${esc(msg)}\n\n<i>Нужны права админа «Изменение профиля».</i>`, HTML);
+  }
+});
+
+bot.command("channel_about", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  if (!channelId()) {
+    await ctx.reply("Задай <code>TELEGRAM_CHANNEL_ID</code> в Railway.", HTML);
+    return;
+  }
+  const about = (typeof ctx.match === "string" ? ctx.match : "").trim();
+  if (!about) {
+    await ctx.reply(
+      "Напиши описание одной строкой:\n<code>/channel_about Сила, питание, прогресс. Бот → @RASCHET</code>",
+      HTML
+    );
+    return;
+  }
+  try {
+    await setChannelAbout(bot.api, about);
+    await ctx.reply(`✅ Описание канала обновлено.`, HTML);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await ctx.reply(`⚠️ ${esc(msg)}`, HTML);
+  }
+});
+
+async function applyChannelPhotoFromMessage(ctx: {
+  from?: { id: number };
+  message?: { photo?: { file_id: string }[]; reply_to_message?: { photo?: { file_id: string }[] } };
+  reply: (t: string, o?: object) => Promise<unknown>;
+  api: typeof bot.api;
+}) {
+  if (!ctx.from || !isOwner(ctx.from.id)) return;
+  if (!channelId()) {
+    await ctx.reply("Задай <code>TELEGRAM_CHANNEL_ID</code> в Railway.", HTML);
+    return;
+  }
+  const photos = ctx.message?.reply_to_message?.photo ?? ctx.message?.photo;
+  if (!photos?.length) {
+    await ctx.reply(
+      "Отправь <b>фото</b> с подписью <code>/channel_photo</code>\nили ответь <code>/channel_photo</code> на картинку.",
+      HTML
+    );
+    return;
+  }
+  const fileId = photos[photos.length - 1].file_id;
+  try {
+    const file = await ctx.api.getFile(fileId);
+    if (!file.file_path) throw new Error("no file_path");
+    const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
+    const buf = await fetchImageBuffer(url);
+    await setChannelPhoto(bot.api, buf);
+    await ctx.reply("✅ Шапка (аватар канала) обновлена.", HTML);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await ctx.reply(`⚠️ ${esc(msg)}\n\n<i>Права: админ + изменение профиля.</i>`, HTML);
+  }
+}
+
+bot.command("channel_photo", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  await applyChannelPhotoFromMessage(ctx);
+});
+
+bot.on("message:photo", async (ctx, next) => {
+  const cap = ctx.message.caption?.trim() ?? "";
+  if (cap.startsWith("/channel_photo") && isOwner(ctx.from!.id)) {
+    await applyChannelPhotoFromMessage(ctx);
+    return;
+  }
+  await next();
 });
 
 bot.command("channel_post", async (ctx) => {
@@ -2929,6 +3044,9 @@ process.once("SIGTERM", () => bot.stop());
 
 // ── Start polling ─────────────────────────────────────────────────────────
 async function main() {
+  const branding = await applyBrandingFromEnv(bot.api);
+  if (branding.length) console.log(`   Channel branding applied: ${branding.join(", ")}`);
+
   await bot.api.setMyCommands([
     { command: "start", description: "Главное меню" },
     { command: "mode", description: "Режим: простой / про" },

@@ -101,7 +101,8 @@ export function channelStatusText(): string {
     `Расписание: <code>${CHANNEL_CRON}</code> (Asia/Bangkok)\n` +
     `Постов в базе: ${total}, опубликовано уникальных: ${unique}\n` +
     (last ? `Последний: <code>${last.postId}</code> (${last.date})\n` : "") +
-    `\nСледующий: <b>${esc(pickNextPost().title)}</b>`
+    `\nСледующий: <b>${esc(pickNextPost().title)}</b>\n\n` +
+    `<code>/channel_name</code> · <code>/channel_about</code> · <code>/channel_photo</code>`
   );
 }
 
