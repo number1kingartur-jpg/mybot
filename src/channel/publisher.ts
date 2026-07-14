@@ -1,4 +1,5 @@
 import type { Api } from "grammy";
+import { brandKeyboard } from "./brand";
 import { CHANNEL_POSTS, type ChannelPost } from "./posts";
 import { getChannelState, markChannelPosted } from "../db";
 
@@ -80,6 +81,7 @@ export async function publishNextChannelPost(
     await api.sendMessage(CHANNEL_ID, html, {
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
+      reply_markup: brandKeyboard(),
     });
     markChannelPosted(post.id, today);
     console.log(`channel post ok: ${post.id} → ${CHANNEL_ID}`);

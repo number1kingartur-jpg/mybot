@@ -86,6 +86,7 @@ export interface UserRecord {
   premiumUntil?: string;       // ISO-дата окончания подписки
   photoWeekKey?: string;       // неделя для лимита бесплатных фото-анализов
   photoCount?: number;         // сколько фото-анализов за текущую неделю
+  ref?: string;                // источник: kingmode, channel, …
 }
 
 export interface MealEntry {

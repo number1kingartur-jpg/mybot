@@ -40,6 +40,7 @@ import {
   setChannelPhoto,
   setChannelTitle,
 } from "./channel/branding";
+import { brandKeyboard, brandLinksHtml } from "./channel/brand";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -655,15 +656,17 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
     `📈 <b>Мой прогресс</b> — сколько тренировок, календарь, серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько есть, чтобы худеть или набирать.\n\n` +
     `⏰ Хочешь, буду напоминать о тренировках? Нажми /remind\n\n` +
+    `${brandLinksHtml()}\n\n` +
     `<i>Начни с кнопки «🏋️ Тренировка на сегодня» 👇</i>`,
-    { reply_markup: SIMPLE_KEYBOARD, ...HTML }
+    { reply_markup: brandKeyboard(), ...HTML }
   );
+  await ctx.reply(`Меню внизу 👇`, { reply_markup: SIMPLE_KEYBOARD });
 }
 
 async function sendProWelcome(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, name: string) {
   await ctx.reply(
-    `<b>💎 STRENGTH LAB</b>\n` +
-    `<i>Твой личный тренировочный штаб</i>\n` +
+    `<b>💎 KINGMODE</b>\n` +
+    `<i>План → данные → результат</i>\n` +
     `${HR}\n\n` +
     `Привет, <b>${esc(name)}</b>. Всё для системной работы:\n\n` +
     `📝 <b>Запись тренировок</b> ${DOT} текстом или голосом 🎙\n` +
@@ -672,9 +675,14 @@ async function sendProWelcome(ctx: { reply: (t: string, o?: object) => Promise<u
     `🍗 <b>Питание</b> ${DOT} КБЖУ под цель\n` +
     `🧮 <b>1RM</b> ${DOT} максимум и таблица %\n` +
     `📈 <b>Отчёт недели</b> ${DOT} умный анализ прогресса\n\n` +
+    `${brandLinksHtml()}\n\n` +
     `<i>Каждое воскресенье пришлю сводку автоматически.</i>`,
     {
-      reply_markup: { inline_keyboard: [[{ text: "🎓 Я новичок — с чего начать?", callback_data: "guide_start" }]] },
+      reply_markup: (() => {
+        const kb = brandKeyboard();
+        kb.row().text("🎓 Я новичок — с чего начать?", "guide_start");
+        return kb;
+      })(),
       ...HTML,
     }
   );
@@ -688,6 +696,11 @@ bot.command("start", async (ctx) => {
 
   // Диплинк-вызов на челлендж: t.me/<bot>?start=ch_<id>
   const payload = typeof ctx.match === "string" ? ctx.match.trim() : "";
+  // Диплинк из канала: t.me/<bot>?start=kingmode
+  if (payload === "kingmode") {
+    updateUser(ctx.from!.id, { ref: "kingmode" });
+  }
+
   if (payload.startsWith("ch_")) {
     const chId = payload.slice(3);
     const existing = getChallengeById(chId);
@@ -736,11 +749,15 @@ bot.command("start", async (ctx) => {
     return;
   }
 
+  const kb = brandKeyboard();
+  kb.row().text("🙂 Хочу просто быть в форме", "mode_simple");
+  kb.row().text("🏋️ Тренируюсь серьёзно (1RM, программы)", "mode_pro");
   await ctx.reply(
     `<b>💪 Привет, ${esc(ctx.from?.first_name ?? "друг")}!</b>\n${HR}\n\n` +
-    `Я тренировочный бот. Чтобы говорить с тобой на одном языке — один вопрос:\n\n` +
-    `<b>Как ты тренируешься?</b>`,
-    { reply_markup: MODE_KEYBOARD, ...HTML }
+    `Я тренировочный бот <b>KINGMODE</b>. Чтобы говорить с тобой на одном языке — один вопрос:\n\n` +
+    `<b>Как ты тренируешься?</b>\n\n` +
+    brandLinksHtml(),
+    { reply_markup: kb, ...HTML }
   );
 });
 
