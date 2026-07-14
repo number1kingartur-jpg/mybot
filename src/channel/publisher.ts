@@ -27,7 +27,7 @@ export function channelId(): string | undefined {
 }
 
 function formatPost(post: ChannelPost): string {
-  const text = `<b>${post.title}</b>\n\n${post.body}`;
+  const text = `${post.title}\n\n${post.body}`;
   if (text.length <= 4096) return text;
   const cut = text.slice(0, 4080) + "…";
   return cut;

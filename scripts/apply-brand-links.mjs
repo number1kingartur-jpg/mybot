@@ -29,13 +29,13 @@ function normalizeSite(raw) {
 
 const botUser = cleanUser(process.env.BOT_USERNAME, "Raschettbot");
 const dmUser = cleanUser(process.env.KINGMODE_DM_USERNAME, "arturking10");
-const siteUrl = normalizeSite(process.env.KINGMODE_SITE_URL);
+const siteUrl = normalizeSite(process.env.KINGMODE_SITE_URL || "https://arturkingfitness.com");
 const sitePart = siteUrl ? `Сайт → ${new URL(siteUrl).hostname.replace(/^www\./, "")} · ` : "";
 
 const channel = process.env.TELEGRAM_CHANNEL_ID?.trim() || "@kingmode_fit";
-const channelAbout =
-  process.env.CHANNEL_DESCRIPTION?.trim() ||
-  `${sitePart}Метод: план → цифры → результат. Написать → @${dmUser} · Бот → @${botUser}`.slice(0, 255);
+const channelAbout = (
+  `${sitePart}Персональная система, не тренировка. @${dmUser} · @${botUser}`
+).slice(0, 255);
 
 const botDesc =
   `KINGMODE · план → цифры → результат. ` +

@@ -665,10 +665,10 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
 
 async function sendProWelcome(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, name: string) {
   await ctx.reply(
-    `<b>💎 KINGMODE</b>\n` +
-    `<i>План → данные → результат</i>\n` +
+    `<b>💎 KINGMODE</b> · <i>Artur King</i>\n` +
+    `<i>Вы строите систему — не покупаете тренировку</i>\n` +
     `${HR}\n\n` +
-    `Привет, <b>${esc(name)}</b>. Всё для системной работы:\n\n` +
+    `Привет, <b>${esc(name)}</b>. Бот для ежедневных данных. Сайт — форматы и инструменты:\n\n` +
     `📝 <b>Запись тренировок</b> ${DOT} текстом или голосом 🎙\n` +
     `📊 <b>Прогресс</b> ${DOT} графики и PR\n` +
     `📋 <b>Программа</b> ${DOT} DUP, 5/3/1, GZCLP по неделям\n` +

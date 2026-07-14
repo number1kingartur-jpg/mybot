@@ -56,8 +56,7 @@ export async function applyBrandingFromEnv(api: Api): Promise<string[]> {
 
   try {
     const title = process.env.CHANNEL_TITLE?.trim() || BRAND.channelTitle;
-    const about =
-      process.env.CHANNEL_DESCRIPTION?.trim() || BRAND.channelAbout;
+    const about = BRAND.channelAbout;
     await setChannelTitle(api, title);
     applied.push("title");
     await setChannelAbout(api, about);

@@ -1,23 +1,22 @@
-/** Бренд KINGMODE — единый источник ссылок для канала, бота и постов. */
+/** Бренд: сайт Artur King + канал KINGMODE + бот. */
 
 import { InlineKeyboard } from "grammy";
+import { SITE, siteLink } from "./site";
 
 function cleanUser(raw: string | undefined, fallback: string): string {
   return (raw ?? "").trim().replace(/^@/, "") || fallback;
 }
 
-function normalizeSite(raw: string | undefined): string {
-  const s = (raw ?? "").trim();
-  if (!s) return "";
-  return s.startsWith("http") ? s.replace(/\/$/, "") : `https://${s.replace(/\/$/, "")}`;
-}
-
 export function getBrandLinks() {
   const botUser = cleanUser(process.env.BOT_USERNAME, "Raschettbot");
-  const dmUser = cleanUser(process.env.KINGMODE_DM_USERNAME, "arturking10");
-  const siteUrl = normalizeSite(process.env.KINGMODE_SITE_URL);
+  const dmUser = cleanUser(process.env.KINGMODE_DM_USERNAME, SITE.telegram);
+  const siteUrl = SITE.url.replace(/\/$/, "");
   return {
     siteUrl,
+    programsUrl: siteLink(SITE.paths.programs),
+    contactsUrl: siteLink(SITE.paths.contacts),
+    bookUrl: siteLink(SITE.paths.book),
+    nutritionUrl: siteLink(SITE.paths.nutrition),
     botUrl: `https://t.me/${botUser}?start=kingmode`,
     dmUrl: `https://t.me/${dmUser}`,
     botUser,
@@ -26,58 +25,38 @@ export function getBrandLinks() {
 }
 
 export const BRAND = {
-  name: "KINGMODE",
-  tagline: "План → данные → результат",
-  channelTitle: "KINGMODE",
-  methodLine: "Тренируешься по цифрам, а не по настроению.",
+  name: SITE.community,
+  siteName: SITE.brand,
+  tagline: SITE.footer,
+  methodLine: "Данные вместо ощущений. Система вместо мотивации.",
+  channelTitle: SITE.community,
   get channelAbout() {
-    const { siteUrl, botUser } = getBrandLinks();
-    const sitePart = siteUrl ? `Сайт → ${shortSite(siteUrl)} · ` : "";
+    const { dmUser, botUser } = getBrandLinks();
+    const host = new URL(getBrandLinks().siteUrl).hostname.replace(/^www\./, "");
     return (
-      `${sitePart}Метод: план → цифры → результат. Написать → @${getBrandLinks().dmUser} · Бот → @${botUser}`
+      `${SITE.tagline.slice(0, 55)}… ` +
+      `Сайт → ${host} · @${dmUser} · бот @${botUser}`
     ).slice(0, 255);
   },
 } as const;
 
-function shortSite(url: string): string {
-  try {
-    const host = new URL(url).hostname.replace(/^www\./, "");
-    return host;
-  } catch {
-    return url;
-  }
-}
-
-/** HTML-футер для постов и сообщений бота. */
-export function brandCta(): string {
-  const { siteUrl, botUrl, dmUrl } = getBrandLinks();
-  const lines = [
-    "",
-    "—".repeat(12),
-    `🎯 <b>KINGMODE</b> · ${BRAND.methodLine}`,
-  ];
-  if (siteUrl) lines.push(`🌐 <a href="${siteUrl}">Сайт</a>`);
-  lines.push(`💬 <a href="${dmUrl}">Написать в личку</a>`);
-  lines.push(`🤖 <a href="${botUrl}">Открыть бота</a>`);
-  return lines.join("\n");
-}
-
-/** Кнопки под постом / в /start. */
-export function brandKeyboard(): InlineKeyboard {
-  const { siteUrl, botUrl, dmUrl } = getBrandLinks();
-  const kb = new InlineKeyboard();
-  if (siteUrl) kb.url("🌐 Сайт", siteUrl);
-  kb.url("💬 В личку", dmUrl);
-  kb.row().url("🤖 Бот", botUrl);
-  return kb;
-}
-
-/** Короткий блок ссылок для приветствия в боте. */
+/** HTML-футер для сообщений бота. */
 export function brandLinksHtml(): string {
+  const { siteUrl, programsUrl, dmUrl, botUrl } = getBrandLinks();
+  return (
+    `🌐 <a href="${siteUrl}">${SITE.brand}</a> · ` +
+    `<a href="${programsUrl}">Форматы</a> · ` +
+    `💬 <a href="${dmUrl}">Личка</a> · ` +
+    `🤖 <a href="${botUrl}">Бот</a>`
+  );
+}
+
+/** Кнопки под постом канала — 3 ссылки, без дубля в тексте. */
+export function brandKeyboard(): InlineKeyboard {
   const { siteUrl, dmUrl, botUrl } = getBrandLinks();
-  const parts: string[] = [];
-  if (siteUrl) parts.push(`🌐 <a href="${siteUrl}">Сайт</a>`);
-  parts.push(`💬 <a href="${dmUrl}">Личка</a>`);
-  parts.push(`🤖 <a href="${botUrl}">Бот</a>`);
-  return parts.join(" · ");
+  return new InlineKeyboard()
+    .url("🌐 Сайт", siteUrl)
+    .row()
+    .url("💬 Личка", dmUrl)
+    .url("🤖 Бот", botUrl);
 }
