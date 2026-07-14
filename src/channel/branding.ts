@@ -1,10 +1,8 @@
 import type { Api } from "grammy";
 import { InputFile } from "grammy";
 import https from "https";
+import { BRAND } from "./brand";
 import { channelId } from "./publisher";
-
-const DEFAULT_TITLE = "KINGMODE · Сила и дисциплина";
-const DEFAULT_ABOUT = "Тренировки, питание, прогресс без воды. Бот → @Raschettbot";
 
 function chatId(): string {
   const id = channelId();
@@ -29,12 +27,11 @@ function fetchBuffer(url: string): Promise<Buffer> {
 
 export function brandingHelpText(): string {
   return (
-    `🎨 <b>Оформление канала/группы</b>\n\n` +
-    `<code>/channel_name</code> Новое название\n` +
-    `<code>/channel_about</code> Текст описания (шапка в профиле)\n` +
-    `<code>/channel_photo</code> — ответь этой командой на фото\n` +
-    `или отправь фото с подписью <code>/channel_photo</code>\n\n` +
-    `<i>Бот должен быть админом с правом «Изменение профиля группы».</i>`
+    `🎨 <b>Оформление @kingmode_fit</b>\n\n` +
+    `<code>/channel_name</code> — название\n` +
+    `<code>/channel_about</code> — описание профиля\n` +
+    `<code>/channel_photo</code> — аватар (ответ на фото)\n\n` +
+    `Бренд: <b>${BRAND.name}</b> · ${BRAND.tagline}`
   );
 }
 
@@ -53,14 +50,13 @@ export async function setChannelPhoto(api: Api, image: Buffer): Promise<void> {
   await api.setChatPhoto(chatId(), new InputFile(image, "channel.jpg"));
 }
 
-/** При старте: CHANNEL_TITLE, CHANNEL_DESCRIPTION, CHANNEL_PHOTO_URL из Railway. */
 export async function applyBrandingFromEnv(api: Api): Promise<string[]> {
   const applied: string[] = [];
   if (!channelId()) return applied;
 
   try {
-    const title = process.env.CHANNEL_TITLE?.trim() || DEFAULT_TITLE;
-    const about = process.env.CHANNEL_DESCRIPTION?.trim() || DEFAULT_ABOUT;
+    const title = process.env.CHANNEL_TITLE?.trim() || BRAND.channelTitle;
+    const about = process.env.CHANNEL_DESCRIPTION?.trim() || BRAND.channelAbout;
     await setChannelTitle(api, title);
     applied.push("title");
     await setChannelAbout(api, about);
@@ -75,16 +71,4 @@ export async function applyBrandingFromEnv(api: Api): Promise<string[]> {
     console.error("channel branding env:", e instanceof Error ? e.message : e);
   }
   return applied;
-}
-
-export async function getChannelInfo(api: Api): Promise<{ title?: string; about?: string }> {
-  try {
-    const chat = await api.getChat(chatId());
-    return {
-      title: chat.title,
-      about: "description" in chat ? chat.description : undefined,
-    };
-  } catch {
-    return {};
-  }
 }

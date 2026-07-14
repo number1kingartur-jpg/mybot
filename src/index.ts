@@ -1131,7 +1131,7 @@ bot.command("channel_name", async (ctx) => {
   }
   const name = (typeof ctx.match === "string" ? ctx.match : "").trim();
   if (!name) {
-    await ctx.reply("Напиши: <code>/channel_name KINGMODE · Сила и дисциплина</code>", HTML);
+    await ctx.reply("Напиши: <code>/channel_name KINGMODE</code>", HTML);
     return;
   }
   try {
@@ -1155,7 +1155,7 @@ bot.command("channel_about", async (ctx) => {
   const about = (typeof ctx.match === "string" ? ctx.match : "").trim();
   if (!about) {
     await ctx.reply(
-      "Напиши описание одной строкой:\n<code>/channel_about Сила, питание, прогресс. Бот → @RASCHET</code>",
+      "Напиши описание одной строкой:\n<code>/channel_about Метод: план → цифры → результат. @Raschettbot</code>",
       HTML
     );
     return;

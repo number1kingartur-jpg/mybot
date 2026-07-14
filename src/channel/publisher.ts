@@ -9,7 +9,6 @@ function cleanChannelId(raw: string | undefined): string {
 }
 
 const CHANNEL_ID = cleanChannelId(process.env.TELEGRAM_CHANNEL_ID);
-const BOT_USERNAME = process.env.BOT_USERNAME?.trim().replace(/^@/, "");
 /** Вкл по умолчанию; выключить: CHANNEL_POST_ENABLED=0 */
 const ENABLED =
   process.env.CHANNEL_POST_ENABLED !== "0" &&
@@ -26,15 +25,11 @@ export function channelId(): string | undefined {
   return CHANNEL_ID || undefined;
 }
 
-function ctaLine(): string {
-  const bot = BOT_USERNAME ? `@${BOT_USERNAME}` : "бот RASCHET";
-  return `\n\n${"—".repeat(12)}\n📲 Тренировки, питание, прогресс → ${bot}`;
-}
-
 function formatPost(post: ChannelPost): string {
-  const text = `<b>${post.title}</b>\n\n${post.body}${ctaLine()}`;
+  const text = `<b>${post.title}</b>\n\n${post.body}`;
   if (text.length <= 4096) return text;
-  return text.slice(0, 4080) + "…" + ctaLine();
+  const cut = text.slice(0, 4080) + "…";
+  return cut;
 }
 
 /** Следующий пост: тот, что давно не публиковали; цикл по кругу. */
