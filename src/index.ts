@@ -1131,7 +1131,7 @@ bot.command("channel_name", async (ctx) => {
   }
   const name = (typeof ctx.match === "string" ? ctx.match : "").trim();
   if (!name) {
-    await ctx.reply("Напиши: <code>/channel_name RASCHET · Сила и питание</code>", HTML);
+    await ctx.reply("Напиши: <code>/channel_name KINGMODE · Сила и дисциплина</code>", HTML);
     return;
   }
   try {
