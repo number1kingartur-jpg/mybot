@@ -3042,10 +3042,27 @@ bot.catch((err) => {
 process.once("SIGINT", () => bot.stop());
 process.once("SIGTERM", () => bot.stop());
 
+async function verifyChannelAccess() {
+  const id = channelId();
+  if (!channelPostingEnabled() || !id) return;
+  try {
+    const me = await bot.api.getMe();
+    const member = await bot.api.getChatMember(id, me.id);
+    const ok = ["administrator", "creator", "member"].includes(member.status);
+    if (!ok) console.warn(`Channel ${id}: bot status=${member.status}`);
+    else console.log(`   Channel member: ok (${id})`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`   Channel ${id}: bot NOT in group — add @Raschettbot as admin`);
+    console.warn(`   ${msg}`);
+  }
+}
+
 // ── Start polling ─────────────────────────────────────────────────────────
 async function main() {
   const branding = await applyBrandingFromEnv(bot.api);
   if (branding.length) console.log(`   Channel branding applied: ${branding.join(", ")}`);
+  await verifyChannelAccess();
 
   await bot.api.setMyCommands([
     { command: "start", description: "Главное меню" },

@@ -2,11 +2,18 @@ import type { Api } from "grammy";
 import { CHANNEL_POSTS, type ChannelPost } from "./posts";
 import { getChannelState, markChannelPosted } from "../db";
 
-const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID?.trim().replace(/^['"]|['"]$/g, "");
+const DEFAULT_CHANNEL = "@kingmode_fit";
+
+function cleanChannelId(raw: string | undefined): string {
+  return (raw ?? "").trim().replace(/^['"]|['"]$/g, "") || DEFAULT_CHANNEL;
+}
+
+const CHANNEL_ID = cleanChannelId(process.env.TELEGRAM_CHANNEL_ID);
 const BOT_USERNAME = process.env.BOT_USERNAME?.trim().replace(/^@/, "");
+/** Вкл по умолчанию; выключить: CHANNEL_POST_ENABLED=0 */
 const ENABLED =
-  process.env.CHANNEL_POST_ENABLED === "1" ||
-  process.env.CHANNEL_POST_ENABLED === "true";
+  process.env.CHANNEL_POST_ENABLED !== "0" &&
+  process.env.CHANNEL_POST_ENABLED !== "false";
 
 /** Cron: по умолчанию пн/ср/пт 10:00 Бангкок */
 export const CHANNEL_CRON = process.env.CHANNEL_POST_CRON?.trim() || "0 10 * * 1,3,5";

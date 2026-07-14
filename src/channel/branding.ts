@@ -3,6 +3,9 @@ import { InputFile } from "grammy";
 import https from "https";
 import { channelId } from "./publisher";
 
+const DEFAULT_TITLE = "KINGMODE · Сила и дисциплина";
+const DEFAULT_ABOUT = "Тренировки, питание, прогресс без воды. Бот → @Raschettbot";
+
 function chatId(): string {
   const id = channelId();
   if (!id) throw new Error("TELEGRAM_CHANNEL_ID not set");
@@ -56,14 +59,12 @@ export async function applyBrandingFromEnv(api: Api): Promise<string[]> {
   if (!channelId()) return applied;
 
   try {
-    if (process.env.CHANNEL_TITLE?.trim()) {
-      await setChannelTitle(api, process.env.CHANNEL_TITLE);
-      applied.push("title");
-    }
-    if (process.env.CHANNEL_DESCRIPTION?.trim()) {
-      await setChannelAbout(api, process.env.CHANNEL_DESCRIPTION);
-      applied.push("about");
-    }
+    const title = process.env.CHANNEL_TITLE?.trim() || DEFAULT_TITLE;
+    const about = process.env.CHANNEL_DESCRIPTION?.trim() || DEFAULT_ABOUT;
+    await setChannelTitle(api, title);
+    applied.push("title");
+    await setChannelAbout(api, about);
+    applied.push("about");
     const photoUrl = process.env.CHANNEL_PHOTO_URL?.trim();
     if (photoUrl) {
       const buf = await fetchBuffer(photoUrl);
