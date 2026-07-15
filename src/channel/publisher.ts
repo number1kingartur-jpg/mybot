@@ -1,8 +1,6 @@
-import { existsSync } from "fs";
-import { join } from "path";
 import type { Api } from "grammy";
-import { InputFile } from "grammy";
 import { brandKeyboard } from "./brand";
+import { postImageFile } from "./images";
 import { CHANNEL_POSTS, type ChannelPost } from "./posts";
 import { getChannelState, markChannelPosted } from "../db";
 
@@ -35,19 +33,9 @@ function formatPost(post: ChannelPost): string {
   return text.slice(0, 4080) + "…";
 }
 
-function postImageFile(image?: string): InputFile | undefined {
-  if (!image) return undefined;
-  const path = join(__dirname, "..", "..", "assets", "channel", image);
-  if (!existsSync(path)) {
-    console.warn(`channel image missing: ${path}`);
-    return undefined;
-  }
-  return new InputFile(path, image);
-}
-
 async function sendChannelPost(api: Api, post: ChannelPost, text: string): Promise<void> {
   const kb = brandKeyboard();
-  const photo = postImageFile(post.image);
+  const photo = postImageFile(post);
   if (photo) {
     await api.sendPhoto(CHANNEL_ID!, photo, {
       caption: text,

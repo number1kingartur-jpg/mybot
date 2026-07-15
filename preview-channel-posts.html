@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>@kingmode_fit — превью 12 постов</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0e1621;
+      color: #fff;
+      padding: 24px 16px 48px;
+    }
+    .header {
+      max-width: 420px;
+      margin: 0 auto 24px;
+      text-align: center;
+    }
+    .header h1 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+    .header p { font-size: 13px; color: #8b9bab; line-height: 1.5; }
+    .legend {
+      max-width: 420px;
+      margin: 0 auto 20px;
+      padding: 10px 12px;
+      background: #17212b;
+      border-radius: 10px;
+      font-size: 12px;
+      color: #8b9bab;
+      line-height: 1.5;
+    }
+    .legend strong { color: #ffb020; }
+    .feed { max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+    .post {
+      background: #17212b;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #232e3c;
+    }
+    .post { border-color: #232e3c; }
+    .post-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid #232e3c;
+    }
+    .post-num { font-size: 12px; color: #6ab2f2; font-weight: 600; }
+    .post-title { font-size: 14px; font-weight: 600; }
+    .dup-badge { display: none; }
+    .photo { width: 100%; display: block; background: #0e1621; }
+    .caption {
+      padding: 10px 12px 8px;
+      font-size: 15px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .buttons {
+      display: flex;
+      gap: 6px;
+      padding: 0 12px 12px;
+    }
+    .btn {
+      flex: 1;
+      text-align: center;
+      font-size: 13px;
+      color: #6ab2f2;
+      background: #232e3c;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 4px;
+    }
+    .meta {
+      padding: 0 12px 10px;
+      font-size: 11px;
+      color: #5d6d7e;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>@kingmode_fit — превью</h1>
+    <p>Как уйдёт в Telegram: фото + текст + 3 кнопки<br>Пн / Ср / Пт · 10:00 Bangkok</p>
+  </div>
+  <div class="legend">
+    12 уникальных фото · только реальные снимки (master + iCloud photos), без стоп-кадров видео.
+  </div>
+  <div class="feed" id="feed"></div>
+  <script>
+    const posts = [
+      { n: 1, id: "data", title: "Данные", img: "assets/channel/data.jpg", src: "IMG_1020 — гантели",
+        text: "Раньше я тоже верил ощущениям.\n\n«Мало ем» — а на выходных съедал лишнее.\n«Тренируюсь нормально» — а объём за месяц упал.\n\nПо факту проще смотреть на цифры: веса, повторения, вес тела.\n\nНе нужна идеальная система. Нужна честная запись." },
+      { n: 2, id: "sleep", title: "Сон", img: "assets/channel/sleep.jpeg", src: "IMG_3641 — дорожка, отдых",
+        text: "Три ночи по 5 часов — и я всё равно шёл в зал как герой.\n\nПо факту сон — не «остаток дня».\nЭто часть тренировки.\n\nМеньше сил. Дольше восстановление. Хуже техника.\n\nИногда лучшее решение — не добивать, а выспаться." },
+      { n: 3, id: "plateau", title: "Плато", img: "assets/channel/plateau.jpeg", src: "IMG_9511 — жим, контроль",
+        text: "Упёрся в плато — сначала не меняю программу.\n\nПроверяю базу:\n— сон\n— еда под цель\n— объём за месяц\n\nЧасто проблема не в схеме.\nА в том, что база поплыла.\n\nОдна плохая неделя — не повод менять всю жизнь." },
+      { n: 4, id: "show_up", title: "Регулярность", img: "assets/channel/show_up.jpeg", src: "IMG_9397 — пришёл в зал",
+        text: "Самый недооценённый прогресс — не новый вес на штанге.\n\nА то, что ты просто пришёл.\n\nСнова. В среднюю тренировку. Без настроения. Без идеальных условий.\n\nПо факту форму держит не один героический день.\nА сотня обычных." },
+      { n: 5, id: "nutrition", title: "Питание", img: "assets/channel/nutrition.jpeg", src: "IMG_9481 — нормальная еда",
+        text: "Долго думал, что питание — это либо жёсткая диета, либо хаос.\n\nПо факту работает середина:\n— понятная цель\n— нормальная еда\n— повторяемость\n\nНе религия. Не наказание.\nПросто часть системы, как тренировки." },
+      { n: 6, id: "beginner", title: "Начать", img: "assets/channel/beginner.jpeg", src: "IMG_9391 — резина, старт",
+        text: "Люди откладывают старт, пока не появится идеальный план.\n\nЯ сам так делал.\n\nНо по факту лучше начать криво и продолжить,\nчем ждать идеальные условия и не начать вообще.\n\nОдна тренировка в неделю лучше нуля.\nПотом добавишь вторую." },
+      { n: 7, id: "recovery", title: "Восстановление", img: "assets/channel/recovery.jpeg", src: "IMG_9399 — после тренировки",
+        text: "Раньше восстановление казалось слабостью.\n\nТипа настоящий мужик тренируется через усталость.\n\nПо факту усталость копится тихо.\nСначала падает техника. Потом сон. Потом мотивация.\n\nНеделя легче — не откат.\nЭто способ снова тянуть долго." },
+      { n: 8, id: "weekend", title: "Выходные", img: "assets/channel/weekend.jpeg", src: "IMG_9512 — жим, усилие",
+        text: "Многие убивают неделю одними выходными.\n\nПятница — сорвался.\nСуббота — «всё равно уже всё».\nВоскресенье — «с понедельника».\n\nПо факту один срыв — не приговор.\n\nВернись в понедельник к базе.\nНе начинай неделю с нуля в голове." },
+      { n: 9, id: "steps", title: "Шаги", img: "assets/channel/steps.jpeg", src: "IMG_9433 — активность, вода",
+        text: "Люди недооценивают обычную активность.\n\nДумают: если нет тренировки — день потерян.\n\nПо факту шаги, прогулки, быт — это тоже нагрузка.\nОсобенно когда цель — форма, а не только сила в зале.\n\nТренировка важна.\nНо жизнь между тренировками тоже считается." },
+      { n: 10, id: "discipline", title: "Дисциплина", img: "assets/channel/discipline.jpeg", src: "IMG_9390 — работа с резиной",
+        text: "Дисциплина у меня — не про насилие над собой.\n\nЭто про то, что решение принято заранее.\n\nНе «хочу ли я сегодня».\nА «я так делаю, потому что так устроена моя неделя».\n\nНастроение приходит после действия.\nНе до." },
+      { n: 11, id: "progress", title: "Прогресс", img: "assets/channel/progress.jpeg", src: "IMG_9510 — жим, результат",
+        text: "Прогресс редко выглядит как фильм.\n\nНет момента, когда вдруг всё щёлкнуло.\n\nЕсть скучные недели.\nОдинаковые тренировки.\nОдни и те же приёмы пищи.\n\nПотом смотришь назад на три месяца — и видишь разницу.\n\nТак и работает." },
+      { n: 12, id: "lifestyle", title: "Phuket", img: "assets/channel/lifestyle.jpeg", src: "IMG_9400 — зал, тропики",
+        text: "Живу и тренируюсь в Phuket 🇹🇭\n\nЖара. Другой ритм. Не всегда идеальный зал.\n\nИ это хороший тест системы.\n\nЕсли форма держится только в идеальных условиях —\nэто не система, а совпадение.\n\nСистема работает, когда условия обычные." },
+    ];
+
+    const feed = document.getElementById("feed");
+    for (const p of posts) {
+      const el = document.createElement("article");
+      el.className = "post";
+      el.innerHTML = `
+        <div class="post-head">
+          <div>
+            <div class="post-num">#${p.n} · ${p.id}</div>
+            <div class="post-title">${p.title}</div>
+          </div>
+        </div>
+        <img class="photo" src="${p.img}" alt="${p.title}" loading="lazy" />
+        <div class="caption">${p.text}</div>
+        <div class="buttons">
+          <div class="btn">Сайт</div>
+          <div class="btn">Личка</div>
+          <div class="btn">Бот</div>
+        </div>
+        <div class="meta">${p.src || p.img}</div>
+      `;
+      feed.appendChild(el);
+    }
+  </script>
+</body>
+</html>

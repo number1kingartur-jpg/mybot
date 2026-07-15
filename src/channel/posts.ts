@@ -1,22 +1,36 @@
-/** Посты @kingmode_fit — голос Артура (#8–9). Без цен, без воронки в тексте. */
+/** Посты @kingmode_fit — голос Артура. Фото из CONTENT/brand/media-archive. */
 
 export interface ChannelPost {
   id: string;
   title: string;
   body: string;
-  /** Локальное фото: assets/channel/ (только твои файлы на диске) */
+  /** Локальная копия для Railway: assets/channel/{id}.ext */
   image?: string;
+  /** Твоё фото: путь от media-archive/ */
+  archiveImage?: string;
+  /** Запас: generated/ в media-archive (только если нет своего) */
+  generatedImage?: string;
 }
 
-function post(title: string, body: string, id: string, image?: string): ChannelPost {
-  return { id, title, body, image };
+function post(
+  title: string,
+  body: string,
+  id: string,
+  images?: { archive?: string; generated?: string; local?: string }
+): ChannelPost {
+  return {
+    id,
+    title,
+    body,
+    image: images?.local,
+    archiveImage: images?.archive,
+    generatedImage: images?.generated,
+  };
 }
 
 /**
- * Уже в канале вручную — не дублируем:
- * #4 гайд 7 дней, #6 интро, #8 мотивация, #9 не усложняй
- *
- * Фото: msg-6/8/9.jpg из assets/channel/ — твои кадры с компьютера.
+ * Уже в канале: #4 гайд, #6 интро, #8 мотивация, #9 не усложняй
+ * Фото: CONTENT/brand/INDEX.md · media-map.json
  */
 export const CHANNEL_POSTS: ChannelPost[] = [
   post(
@@ -27,7 +41,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `По факту проще смотреть на цифры: веса, повторения, вес тела.\n\n` +
     `Не нужна идеальная система. Нужна честная запись.`,
     "data",
-    "msg-8.jpg"
+    { archive: "master/photos/IMG_1020.JPG" }
   ),
   post(
     "Сон",
@@ -36,7 +50,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Это часть тренировки.\n\n` +
     `Меньше сил. Дольше восстановление. Хуже техника.\n\n` +
     `Иногда лучшее решение — не добивать, а выспаться.`,
-    "sleep"
+    "sleep",
+    { archive: "master/photos/IMG_3641.JPEG" }
   ),
   post(
     "Плато",
@@ -49,7 +64,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `А в том, что база поплыла.\n\n` +
     `Одна плохая неделя — не повод менять всю жизнь.`,
     "plateau",
-    "msg-9.jpg"
+    { archive: "master/photos/IMG_9511.JPEG" }
   ),
   post(
     "Регулярность",
@@ -59,7 +74,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `По факту форму держит не один героический день.\n` +
     `А сотня обычных.`,
     "show_up",
-    "msg-6.jpg"
+    { archive: "2026-07-11-icloud/photos/IMG_9397.JPEG" }
   ),
   post(
     "Питание",
@@ -71,7 +86,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Не религия. Не наказание.\n` +
     `Просто часть системы, как тренировки.`,
     "nutrition",
-    "msg-9.jpg"
+    { archive: "master/photos/IMG_9481.JPEG" }
   ),
   post(
     "Начать",
@@ -82,7 +97,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Одна тренировка в неделю лучше нуля.\n` +
     `Потом добавишь вторую.`,
     "beginner",
-    "msg-9.jpg"
+    { archive: "2026-07-11-icloud/photos/IMG_9391.JPEG" }
   ),
   post(
     "Восстановление",
@@ -93,7 +108,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Неделя легче — не откат.\n` +
     `Это способ снова тянуть долго.`,
     "recovery",
-    "msg-8.jpg"
+    { archive: "2026-07-11-icloud/photos/IMG_9399.JPEG" }
   ),
   post(
     "Выходные",
@@ -105,7 +120,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Вернись в понедельник к базе.\n` +
     `Не начинай неделю с нуля в голове.`,
     "weekend",
-    "msg-9.jpg"
+    { archive: "master/photos/IMG_9512.JPEG" }
   ),
   post(
     "Шаги",
@@ -116,7 +131,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Тренировка важна.\n` +
     `Но жизнь между тренировками тоже считается.`,
     "steps",
-    "msg-6.jpg"
+    { archive: "2026-07-11-icloud/photos/IMG_9433.JPEG" }
   ),
   post(
     "Дисциплина",
@@ -127,7 +142,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Настроение приходит после действия.\n` +
     `Не до.`,
     "discipline",
-    "msg-8.jpg"
+    { archive: "2026-07-11-icloud/photos/IMG_9390.JPEG" }
   ),
   post(
     "Прогресс",
@@ -139,7 +154,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Потом смотришь назад на три месяца — и видишь разницу.\n\n` +
     `Так и работает.`,
     "progress",
-    "msg-8.jpg"
+    { archive: "master/photos/IMG_9510.JPEG" }
   ),
   post(
     "Phuket",
@@ -150,6 +165,6 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `это не система, а совпадение.\n\n` +
     `Система работает, когда условия обычные.`,
     "lifestyle",
-    "msg-6.jpg"
+    { archive: "2026-07-11-icloud/photos/IMG_9400.JPEG" }
   ),
 ];
