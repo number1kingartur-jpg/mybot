@@ -1,4 +1,7 @@
+import { existsSync } from "fs";
+import { join } from "path";
 import type { Api } from "grammy";
+import { InputFile } from "grammy";
 import { brandKeyboard } from "./brand";
 import { CHANNEL_POSTS, type ChannelPost } from "./posts";
 import { getChannelState, markChannelPosted } from "../db";
@@ -33,6 +36,32 @@ function formatPost(post: ChannelPost): string {
   return cut;
 }
 
+function postImageFile(image?: string): InputFile | undefined {
+  if (!image) return undefined;
+  const path = join(__dirname, "..", "..", "assets", "channel", image);
+  if (!existsSync(path)) {
+    console.warn(`channel image missing: ${path}`);
+    return undefined;
+  }
+  return new InputFile(path, image);
+}
+
+async function sendChannelPost(api: Api, post: ChannelPost, text: string): Promise<void> {
+  const kb = brandKeyboard();
+  const photo = postImageFile(post.image);
+  if (photo) {
+    await api.sendPhoto(CHANNEL_ID!, photo, {
+      caption: text,
+      reply_markup: kb,
+    });
+    return;
+  }
+  await api.sendMessage(CHANNEL_ID!, text, {
+    link_preview_options: { is_disabled: true },
+    reply_markup: kb,
+  });
+}
+
 /** Следующий пост: тот, что давно не публиковали; цикл по кругу. */
 export function pickNextPost(): ChannelPost {
   const state = getChannelState();
@@ -63,6 +92,26 @@ export function postedToday(today: string): boolean {
   return getChannelState().posted.some((p) => p.date === today);
 }
 
+export async function publishChannelPostById(
+  api: Api,
+  postId: string,
+  opts?: { markDate?: string }
+): Promise<{ ok: boolean; error?: string }> {
+  if (!CHANNEL_ID) return { ok: false, error: "TELEGRAM_CHANNEL_ID not set" };
+  const post = CHANNEL_POSTS.find((p) => p.id === postId);
+  if (!post) return { ok: false, error: `unknown post: ${postId}` };
+  const text = formatPost(post);
+  try {
+    await sendChannelPost(api, post, text);
+    if (opts?.markDate) markChannelPosted(post.id, opts.markDate);
+    console.log(`channel post ok: ${post.id} → ${CHANNEL_ID}`);
+    return { ok: true };
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: err };
+  }
+}
+
 export async function publishNextChannelPost(
   api: Api,
   opts?: { force?: boolean; today?: string }
@@ -78,10 +127,7 @@ export async function publishNextChannelPost(
   const html = formatPost(post);
 
   try {
-    await api.sendMessage(CHANNEL_ID, html, {
-      link_preview_options: { is_disabled: true },
-      reply_markup: brandKeyboard(),
-    });
+    await sendChannelPost(api, post, html);
     markChannelPosted(post.id, today);
     console.log(`channel post ok: ${post.id} → ${CHANNEL_ID}`);
     return { ok: true, postId: post.id };

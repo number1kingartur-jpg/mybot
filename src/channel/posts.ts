@@ -4,17 +4,19 @@ export interface ChannelPost {
   id: string;
   title: string;
   body: string;
+  /** Файл в assets/channel/ */
+  image?: string;
 }
 
-function post(title: string, body: string, id: string): ChannelPost {
-  return { id, title, body };
+function post(title: string, body: string, id: string, image?: string): ChannelPost {
+  return { id, title, body, image };
 }
 
 /**
  * Уже в канале вручную — не дублируем:
  * #4 гайд 7 дней, #6 интро, #8 мотивация, #9 не усложняй
  *
- * Автопост пн/ср/пт — одна мысль, кнопки под постом.
+ * Автопост пн/ср/пт — одна мысль + фото, кнопки под постом.
  */
 export const CHANNEL_POSTS: ChannelPost[] = [
   post(
@@ -24,7 +26,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `«Тренируюсь нормально» — а объём за месяц упал.\n\n` +
     `По факту проще смотреть на цифры: веса, повторения, вес тела.\n\n` +
     `Не нужна идеальная система. Нужна честная запись.`,
-    "data"
+    "data",
+    "data.png"
   ),
   post(
     "Сон",
@@ -33,7 +36,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Это часть тренировки.\n\n` +
     `Меньше сил. Дольше восстановление. Хуже техника.\n\n` +
     `Иногда лучшее решение — не добивать, а выспаться.`,
-    "sleep"
+    "sleep",
+    "sleep.png"
   ),
   post(
     "Плато",
@@ -45,7 +49,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Часто проблема не в схеме.\n` +
     `А в том, что база поплыла.\n\n` +
     `Одна плохая неделя — не повод менять всю жизнь.`,
-    "plateau"
+    "plateau",
+    "plateau.png"
   ),
   post(
     "Регулярность",
