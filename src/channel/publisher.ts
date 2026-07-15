@@ -32,8 +32,7 @@ export function channelId(): string | undefined {
 function formatPost(post: ChannelPost): string {
   const text = post.body;
   if (text.length <= 4096) return text;
-  const cut = text.slice(0, 4080) + "…";
-  return cut;
+  return text.slice(0, 4080) + "…";
 }
 
 function postImageFile(image?: string): InputFile | undefined {

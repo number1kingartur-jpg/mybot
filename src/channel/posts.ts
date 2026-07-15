@@ -4,7 +4,7 @@ export interface ChannelPost {
   id: string;
   title: string;
   body: string;
-  /** Файл в assets/channel/ */
+  /** Локальное фото: assets/channel/ (только твои файлы на диске) */
   image?: string;
 }
 
@@ -16,7 +16,7 @@ function post(title: string, body: string, id: string, image?: string): ChannelP
  * Уже в канале вручную — не дублируем:
  * #4 гайд 7 дней, #6 интро, #8 мотивация, #9 не усложняй
  *
- * Автопост пн/ср/пт — одна мысль + фото, кнопки под постом.
+ * Фото: msg-6/8/9.jpg из assets/channel/ — твои кадры с компьютера.
  */
 export const CHANNEL_POSTS: ChannelPost[] = [
   post(
@@ -27,7 +27,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `По факту проще смотреть на цифры: веса, повторения, вес тела.\n\n` +
     `Не нужна идеальная система. Нужна честная запись.`,
     "data",
-    "data.png"
+    "msg-8.jpg"
   ),
   post(
     "Сон",
@@ -36,8 +36,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Это часть тренировки.\n\n` +
     `Меньше сил. Дольше восстановление. Хуже техника.\n\n` +
     `Иногда лучшее решение — не добивать, а выспаться.`,
-    "sleep",
-    "sleep.png"
+    "sleep"
   ),
   post(
     "Плато",
@@ -50,7 +49,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `А в том, что база поплыла.\n\n` +
     `Одна плохая неделя — не повод менять всю жизнь.`,
     "plateau",
-    "plateau.png"
+    "msg-9.jpg"
   ),
   post(
     "Регулярность",
@@ -59,7 +58,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Снова. В среднюю тренировку. Без настроения. Без идеальных условий.\n\n` +
     `По факту форму держит не один героический день.\n` +
     `А сотня обычных.`,
-    "show_up"
+    "show_up",
+    "msg-6.jpg"
   ),
   post(
     "Питание",
@@ -70,7 +70,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `— повторяемость\n\n` +
     `Не религия. Не наказание.\n` +
     `Просто часть системы, как тренировки.`,
-    "nutrition"
+    "nutrition",
+    "msg-9.jpg"
   ),
   post(
     "Начать",
@@ -80,7 +81,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `чем ждать идеальные условия и не начать вообще.\n\n` +
     `Одна тренировка в неделю лучше нуля.\n` +
     `Потом добавишь вторую.`,
-    "beginner"
+    "beginner",
+    "msg-9.jpg"
   ),
   post(
     "Восстановление",
@@ -90,7 +92,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Сначала падает техника. Потом сон. Потом мотивация.\n\n` +
     `Неделя легче — не откат.\n` +
     `Это способ снова тянуть долго.`,
-    "recovery"
+    "recovery",
+    "msg-8.jpg"
   ),
   post(
     "Выходные",
@@ -101,7 +104,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `По факту один срыв — не приговор.\n\n` +
     `Вернись в понедельник к базе.\n` +
     `Не начинай неделю с нуля в голове.`,
-    "weekend"
+    "weekend",
+    "msg-9.jpg"
   ),
   post(
     "Шаги",
@@ -111,7 +115,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Особенно когда цель — форма, а не только сила в зале.\n\n` +
     `Тренировка важна.\n` +
     `Но жизнь между тренировками тоже считается.`,
-    "steps"
+    "steps",
+    "msg-6.jpg"
   ),
   post(
     "Дисциплина",
@@ -121,7 +126,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `А «я так делаю, потому что так устроена моя неделя».\n\n` +
     `Настроение приходит после действия.\n` +
     `Не до.`,
-    "discipline"
+    "discipline",
+    "msg-8.jpg"
   ),
   post(
     "Прогресс",
@@ -132,7 +138,8 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Одни и те же приёмы пищи.\n\n` +
     `Потом смотришь назад на три месяца — и видишь разницу.\n\n` +
     `Так и работает.`,
-    "progress"
+    "progress",
+    "msg-8.jpg"
   ),
   post(
     "Phuket",
@@ -142,6 +149,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Если форма держится только в идеальных условиях —\n` +
     `это не система, а совпадение.\n\n` +
     `Система работает, когда условия обычные.`,
-    "lifestyle"
+    "lifestyle",
+    "msg-6.jpg"
   ),
 ];
