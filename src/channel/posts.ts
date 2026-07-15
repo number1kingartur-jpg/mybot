@@ -64,7 +64,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `А в том, что база поплыла.\n\n` +
     `Одна плохая неделя — не повод менять всю жизнь.`,
     "plateau",
-    { archive: "master/photos/IMG_9511.JPEG" }
+    { archive: "2026-07-11-icloud/photos/IMG_9399.JPEG" }
   ),
   post(
     "Регулярность",
@@ -108,7 +108,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Неделя легче — не откат.\n` +
     `Это способ снова тянуть долго.`,
     "recovery",
-    { archive: "2026-07-11-icloud/photos/IMG_9399.JPEG" }
+    { archive: "2026-07-11-icloud/photos/IMG_9400.JPEG" }
   ),
   post(
     "Выходные",
@@ -120,7 +120,7 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `Вернись в понедельник к базе.\n` +
     `Не начинай неделю с нуля в голове.`,
     "weekend",
-    { archive: "master/photos/IMG_9512.JPEG" }
+    { archive: "master/photos/IMG_9474.JPEG" }
   ),
   post(
     "Шаги",
@@ -165,6 +165,6 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     `это не система, а совпадение.\n\n` +
     `Система работает, когда условия обычные.`,
     "lifestyle",
-    { archive: "2026-07-11-icloud/photos/IMG_9400.JPEG" }
+    { archive: "master/photos/IMG_9477.JPEG" }
   ),
 ];
