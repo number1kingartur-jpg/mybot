@@ -15,6 +15,7 @@ import {
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
+import { dayMenuSummary, mealDetailText, MEAL_KEYS, MEAL_LABELS, MENUS, type MealKey } from "./meals";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
@@ -2058,6 +2059,28 @@ function mealTodayBlock(userId: number, goal?: { kcal: number; proteinG: number 
   );
 }
 
+function nutritionEntryKeyboard(userId: number) {
+  const kb = new InlineKeyboard();
+  if (getUser(userId)?.nutrition) {
+    kb.text("📊 Мой КБЖУ", "nut_show").row();
+  }
+  kb.text("🧮 Рассчитать КБЖУ", "nut_restart").row();
+  kb.text("🇷🇺 Русское меню", "meal_menu_ru").row();
+  kb.text("🇹🇭 Тайское меню", "meal_menu_th").row();
+  kb.text("🛒 Чек-лист покупок", "meal_shop");
+  return kb;
+}
+
+function dayMenuKeyboard(menuId: "ru" | "th") {
+  const kb = new InlineKeyboard();
+  for (const k of MEAL_KEYS) {
+    const kcal = MENUS[menuId].meals[k].kbju[0];
+    kb.text(`${MEAL_LABELS[k]} (${kcal} ккал)`, `meal_pick_${menuId}_${k}`).row();
+  }
+  kb.text("◀️ Назад", "meal_home");
+  return kb;
+}
+
 function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: number): string {
   const m = calcMacros(p, actualWeight);
   const w = actualWeight ?? p.weightKg;
@@ -2092,27 +2115,61 @@ function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: numb
 bot.hears("🍗 Питание", async (ctx) => {
   const userId = ctx.from!.id;
   resetSession(userId);
-  const u = getUser(userId);
+  await ctx.reply(
+    `🍗 <b>Питание</b>\n${HR}\n\nВыбери:`,
+    { reply_markup: nutritionEntryKeyboard(userId), ...HTML },
+  );
+});
 
-  if (u?.nutrition) {
-    const bw = getBodyweight(userId, 1);
-    const actual = bw.length ? bw[bw.length - 1].weightKg : undefined;
-    await ctx.reply(nutritionText(u.nutrition, actual, userId), {
-      reply_markup: { inline_keyboard: [[{ text: "🔄 Заполнить заново", callback_data: "nut_restart" }]] },
-      ...HTML,
-    });
+bot.callbackQuery("nut_show", async (ctx) => {
+  const userId = ctx.from.id;
+  const u = getUser(userId);
+  if (!u?.nutrition) {
+    await ctx.answerCallbackQuery("Сначала рассчитай КБЖУ");
     return;
   }
+  const bw = getBodyweight(userId, 1);
+  const actual = bw.length ? bw[bw.length - 1].weightKg : undefined;
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(nutritionText(u.nutrition, actual, userId), {
+    reply_markup: nutritionEntryKeyboard(userId),
+    ...HTML,
+  });
+});
 
-  await ctx.reply(
-    `🍗 <b>РАСЧЁТ ПИТАНИЯ</b>\n${HR}\n\n<b>Шаг 1/5 ${DOT} Цель:</b>`,
-    {
-      reply_markup: new InlineKeyboard()
-        .text("📈 Набор массы", "ng_bulk").row()
-        .text("🔥 Сушка / снижение жира", "ng_cut").row()
-        .text("⚖️ Поддержание", "ng_maint"),
-      ...HTML,
-    }
+bot.callbackQuery(/^meal_menu_(ru|th)$/, async (ctx) => {
+  const menuId = ctx.match[1] as "ru" | "th";
+  const { text } = dayMenuSummary(menuId);
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(text, { reply_markup: dayMenuKeyboard(menuId), ...HTML });
+});
+
+bot.callbackQuery(/^meal_pick_(ru|th)_(breakfast|lunch|snack|dinner)$/, async (ctx) => {
+  const menuId = ctx.match[1] as "ru" | "th";
+  const key = ctx.match[2] as MealKey;
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(mealDetailText(menuId, key), {
+    reply_markup: new InlineKeyboard()
+      .text("◀️ К меню", `meal_menu_${menuId}`),
+    ...HTML,
+  });
+});
+
+bot.callbackQuery("meal_home", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `🍗 <b>Питание</b>\n${HR}\n\nВыбери:`,
+    { reply_markup: nutritionEntryKeyboard(ctx.from.id), ...HTML },
+  );
+});
+
+bot.callbackQuery("meal_shop", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `🛒 <b>Чек-лист покупок на неделю</b>\n${HR}\n\n` +
+    `▪️ Курица / индейка\n▪️ Яйца\n▪️ Творог, йогурт\n▪️ Гречка, рис, овсянка\n` +
+    `▪️ Овощи (свежие и замороженные)\n▪️ Рыба\n▪️ Орехи\n▪️ Оливковое масло`,
+    { reply_markup: new InlineKeyboard().text("◀️ Назад", "meal_home"), ...HTML },
   );
 });
 
