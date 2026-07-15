@@ -15,7 +15,7 @@ import {
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
-import { dayMenuSummary, mealDetailText, MEAL_KEYS, MEAL_LABELS, MENUS, type MealKey } from "./meals";
+import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
@@ -2071,13 +2071,21 @@ function nutritionEntryKeyboard(userId: number) {
   return kb;
 }
 
-function dayMenuKeyboard(menuId: "ru" | "th") {
+function goalPickerKeyboard(menuId: MenuId) {
+  return new InlineKeyboard()
+    .text(`🔥 Сушка (~${GOAL_KCAL.cut} ккал)`, `meal_goal_${menuId}_cut`).row()
+    .text(`⚖️ Поддержание (~${GOAL_KCAL.maint} ккал)`, `meal_goal_${menuId}_maint`).row()
+    .text(`📈 Набор (~${GOAL_KCAL.bulk} ккал)`, `meal_goal_${menuId}_bulk`).row()
+    .text("◀️ Назад", "meal_home");
+}
+
+function dayMenuKeyboard(menuId: MenuId, goal: MealGoal) {
   const kb = new InlineKeyboard();
   for (const k of MEAL_KEYS) {
-    const kcal = MENUS[menuId].meals[k].kbju[0];
-    kb.text(`${MEAL_LABELS[k]} (${kcal} ккал)`, `meal_pick_${menuId}_${k}`).row();
+    const kcal = scaledMealKcal(menuId, goal, k);
+    kb.text(`${MEAL_LABELS[k]} (${kcal} ккал)`, `meal_pick_${menuId}_${goal}_${k}`).row();
   }
-  kb.text("◀️ Назад", "meal_home");
+  kb.text("◀️ К целям", `meal_menu_${menuId}`).text("🏠 Питание", "meal_home");
   return kb;
 }
 
@@ -2138,19 +2146,27 @@ bot.callbackQuery("nut_show", async (ctx) => {
 });
 
 bot.callbackQuery(/^meal_menu_(ru|th)$/, async (ctx) => {
-  const menuId = ctx.match[1] as "ru" | "th";
-  const { text } = dayMenuSummary(menuId);
+  const menuId = ctx.match[1] as MenuId;
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(text, { reply_markup: dayMenuKeyboard(menuId), ...HTML });
+  await ctx.editMessageText(goalPickerText(menuId), { reply_markup: goalPickerKeyboard(menuId), ...HTML });
 });
 
-bot.callbackQuery(/^meal_pick_(ru|th)_(breakfast|lunch|snack|dinner)$/, async (ctx) => {
-  const menuId = ctx.match[1] as "ru" | "th";
-  const key = ctx.match[2] as MealKey;
+bot.callbackQuery(/^meal_goal_(ru|th)_(cut|maint|bulk)$/, async (ctx) => {
+  const menuId = ctx.match[1] as MenuId;
+  const goal = ctx.match[2] as MealGoal;
+  const { text } = dayMenuSummary(menuId, goal);
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(mealDetailText(menuId, key), {
+  await ctx.editMessageText(text, { reply_markup: dayMenuKeyboard(menuId, goal), ...HTML });
+});
+
+bot.callbackQuery(/^meal_pick_(ru|th)_(cut|maint|bulk)_(breakfast|lunch|snack|dinner)$/, async (ctx) => {
+  const menuId = ctx.match[1] as MenuId;
+  const goal = ctx.match[2] as MealGoal;
+  const key = ctx.match[3] as MealKey;
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(mealDetailText(menuId, goal, key), {
     reply_markup: new InlineKeyboard()
-      .text("◀️ К меню", `meal_menu_${menuId}`),
+      .text("◀️ К меню", `meal_goal_${menuId}_${goal}`),
     ...HTML,
   });
 });

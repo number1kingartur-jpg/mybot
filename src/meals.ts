@@ -1,6 +1,8 @@
-/** Готовые меню на день (~2000 ккал) — русское и тайское. */
+/** Готовые меню на день — русское и тайское, под цель. */
 
 export type MealKey = "breakfast" | "lunch" | "snack" | "dinner";
+export type MenuId = "ru" | "th";
+export type MealGoal = "cut" | "maint" | "bulk";
 
 export type MealItem = {
   name: string;
@@ -22,7 +24,22 @@ export const MEAL_LABELS: Record<MealKey, string> = {
   dinner: "🌙 Ужин",
 };
 
-export const MENUS: Record<"ru" | "th", DayMenu> = {
+export const GOAL_LABELS: Record<MealGoal, string> = {
+  cut: "🔥 Сушка",
+  maint: "⚖️ Поддержание",
+  bulk: "📈 Набор массы",
+};
+
+/** Целевой калораж дня от базового меню ~2000 ккал. */
+export const GOAL_KCAL: Record<MealGoal, number> = {
+  cut: 1600,
+  maint: 2200,
+  bulk: 2800,
+};
+
+const BASE_KCAL = 2000;
+
+export const MENUS: Record<MenuId, DayMenu> = {
   ru: {
     title: "Русское меню",
     meals: {
@@ -75,26 +92,63 @@ export const MENUS: Record<"ru" | "th", DayMenu> = {
   },
 };
 
-export function dayMenuSummary(menuId: "ru" | "th"): { text: string; total: [number, number, number, number] } {
-  const menu = MENUS[menuId];
+const PORTION_HINT: Record<MealGoal, string> = {
+  cut: "Порции на ~20% меньше базовых. Больше овощей, меньше масла и круп.",
+  maint: "Стандартные порции под ежедневную активность.",
+  bulk: "Порции на ~30–40% больше. Добавь рис/гречку и белок в обед и ужин.",
+};
+
+function scaleKbju(kbju: MealItem["kbju"], goal: MealGoal): MealItem["kbju"] {
+  const f = GOAL_KCAL[goal] / BASE_KCAL;
+  return kbju.map((v) => Math.round(v * f)) as MealItem["kbju"];
+}
+
+function dayTotal(menuId: MenuId, goal: MealGoal): [number, number, number, number] {
   const total: [number, number, number, number] = [0, 0, 0, 0];
   for (const k of MEAL_KEYS) {
-    const [kcal, p, c, f] = menu.meals[k].kbju;
-    total[0] += kcal;
-    total[1] += p;
-    total[2] += c;
-    total[3] += f;
+    const s = scaleKbju(MENUS[menuId].meals[k].kbju, goal);
+    total[0] += s[0];
+    total[1] += s[1];
+    total[2] += s[2];
+    total[3] += s[3];
   }
+  return total;
+}
+
+export function goalPickerText(menuId: MenuId): string {
+  const menu = MENUS[menuId];
+  return (
+    `<b>${menu.title}</b>\n\n` +
+    `Выбери цель — подстрою калораж и порции:\n\n` +
+    `🔥 <b>Сушка</b> — ~${GOAL_KCAL.cut} ккал\n` +
+    `⚖️ <b>Поддержание</b> — ~${GOAL_KCAL.maint} ккал\n` +
+    `📈 <b>Набор</b> — ~${GOAL_KCAL.bulk} ккал`
+  );
+}
+
+export function dayMenuSummary(menuId: MenuId, goal: MealGoal): { text: string; total: [number, number, number, number] } {
+  const menu = MENUS[menuId];
+  const total = dayTotal(menuId, goal);
   const text =
-    `<b>${menu.title} — 2000 ккал</b>\n\n` +
-    `Итого: ${total[0]} ккал · Б ${total[1]} · У ${total[2]} · Ж ${total[3]}\n\n` +
+    `<b>${menu.title}</b> · ${GOAL_LABELS[goal]}\n` +
+    `<i>${PORTION_HINT[goal]}</i>\n\n` +
+    `Итого: <b>${total[0]} ккал</b> · Б ${total[1]} · У ${total[2]} · Ж ${total[3]}\n\n` +
     `Выбери приём пищи:`;
   return { text, total };
 }
 
-export function mealDetailText(menuId: "ru" | "th", key: MealKey): string {
+export function mealDetailText(menuId: MenuId, goal: MealGoal, key: MealKey): string {
   const meal = MENUS[menuId].meals[key];
-  const [kcal, p, c, f] = meal.kbju;
+  const [kcal, p, c, f] = scaleKbju(meal.kbju, goal);
   const items = meal.items.map((i) => `▪️ ${i}`).join("\n");
-  return `<b>${meal.name}</b>\n\n${items}\n\n${kcal} ккал · Б ${p} · У ${c} · Ж ${f}`;
+  return (
+    `<b>${meal.name}</b> · ${GOAL_LABELS[goal]}\n\n` +
+    `${items}\n\n` +
+    `<b>${kcal} ккал</b> · Б ${p} · У ${c} · Ж ${f}\n\n` +
+    `<i>${PORTION_HINT[goal]}</i>`
+  );
+}
+
+export function scaledMealKcal(menuId: MenuId, goal: MealGoal, key: MealKey): number {
+  return scaleKbju(MENUS[menuId].meals[key].kbju, goal)[0];
 }
