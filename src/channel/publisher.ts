@@ -27,7 +27,7 @@ export function channelId(): string | undefined {
 }
 
 function formatPost(post: ChannelPost): string {
-  const text = `${post.title}\n\n${post.body}`;
+  const text = post.body;
   if (text.length <= 4096) return text;
   const cut = text.slice(0, 4080) + "…";
   return cut;
@@ -79,7 +79,6 @@ export async function publishNextChannelPost(
 
   try {
     await api.sendMessage(CHANNEL_ID, html, {
-      parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
       reply_markup: brandKeyboard(),
     });
