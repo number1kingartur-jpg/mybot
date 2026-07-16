@@ -1,30 +1,43 @@
 /** Посты @kingmode_fit — голос Артура. Фото из CONTENT/brand/media-archive. */
 
+import { CHANNEL_POSTS_EXTRA } from "./posts-extra";
+import { CHANNEL_POSTS_MORE } from "./posts-more";
+import { CHANNEL_POSTS_BANK } from "./posts-bank";
+import { CHANNEL_POSTS_WAVE4 } from "./posts-wave4";
+
 export interface ChannelPost {
   id: string;
   title: string;
   body: string;
+  /** Явные части (2–3) — приоритет над автоматическим разбиением body */
+  parts?: string[];
   /** Локальная копия для Railway: assets/channel/{id}.ext */
   image?: string;
   /** Твоё фото: путь от media-archive/ */
   archiveImage?: string;
   /** Запас: generated/ в media-archive (только если нет своего) */
   generatedImage?: string;
+  /** Кнопка «Забрать гайд» → t.me/bot?start=guide_7day и т.д. */
+  guideStart?: string;
 }
 
 function post(
   title: string,
   body: string,
   id: string,
-  images?: { archive?: string; generated?: string; local?: string }
+  images?: { archive?: string; generated?: string; local?: string },
+  guideStart?: string,
+  parts?: string[]
 ): ChannelPost {
   return {
     id,
     title,
-    body,
+    body: parts?.length ? parts.join("\n\n") : body,
+    parts,
     image: images?.local,
     archiveImage: images?.archive,
     generatedImage: images?.generated,
+    guideStart,
   };
 }
 
@@ -32,7 +45,7 @@ function post(
  * Уже в канале: #4 гайд, #6 интро, #8 мотивация, #9 не усложняй
  * Фото: CONTENT/brand/INDEX.md · media-map.json
  */
-export const CHANNEL_POSTS: ChannelPost[] = [
+const CHANNEL_POSTS_BASE: ChannelPost[] = [
   post(
     "Данные",
     `Раньше я тоже верил ощущениям.\n\n` +
@@ -167,4 +180,68 @@ export const CHANNEL_POSTS: ChannelPost[] = [
     "lifestyle",
     { archive: "master/photos/IMG_9477.JPEG" }
   ),
+  post(
+    "Гайд 7 дней",
+    `Хочешь стартовать без хаоса?\n\n` +
+    `Собрал простую неделю: питание + 4 силовые + шаги.\n` +
+    `Без жёстких диет. С цифрами, которые можно повторить.\n\n` +
+    `Это не «волшебная таблетка».\n` +
+    `Это шаблон, с которого проще не сорваться на второй день.\n\n` +
+    `Забери файл в боте — сохрани на телефон и иди по дням.`,
+    "guide_7day",
+    { archive: "master/photos/IMG_9481.JPEG" },
+    "guide_7day"
+  ),
+  post(
+    "7 ошибок",
+    "",
+    "guide_7mistakes",
+    { archive: "master/photos/IMG_1020.JPG" },
+    "guide_7mistakes",
+    [
+      `Тренируешься 3–4 раза в неделю — а форма стоит?\n\n` +
+      `Чаще всего дело не в «плохой программе».\n` +
+      `А в фоне, который не видно в зале.\n\n` +
+      `Ошибка 1 — мало белка\n` +
+      `Ориентир: 1,6–2,2 г/кг. При 80 кг — 128–176 г в сутки.\n` +
+      `Разнести на 3–4 приёма, не «добить вечером».\n\n` +
+      `Ошибка 2 — мало шагов\n` +
+      `8 000–10 000 в день. NEAT часто важнее 15 минут кардио в конце.`,
+      `Ошибка 3 — плохой сон\n` +
+      `Меньше 6–7 ч — растёт голод, падают силовые.\n` +
+      `Сон важнее новой программы.\n\n` +
+      `Ошибка 4 — хронический стресс\n` +
+      `Кортизол → срывы, плато веса.\n` +
+      `Сначала сон и шаги, не добивать отказ каждую тренировку.\n\n` +
+      `Ошибка 5 — хаотичные тренировки\n` +
+      `Нужен каркас: 2–4 силовые, одни паттерны 8–12 недель, дневник, прогрессия.`,
+      `Ошибка 6 — постоянные жёсткие сушки\n` +
+      `Дефицит 300–500 ккал, белок высокий, силовые 3×/нед.\n` +
+      `Быстрее 0,8% веса/нед — цена мышцами.\n\n` +
+      `Ошибка 7 — нет системы\n` +
+      `Мотивация кончилась — всё рассыпалось.\n` +
+      `Система: когда тренируешься, как считаешь белок, как меряешь прогресс.\n\n` +
+      `Полный гайд — файлом в боте 👇`,
+    ]
+  ),
+  post(
+    "КБЖУ",
+    `«Сколько есть?» — самый частый вопрос.\n\n` +
+    `Ответ за 10 минут: формула, пример на 80 кг, типичные ошибки.\n\n` +
+    `Дальше — бот посчитает под твой вес и цель.\n` +
+    `Фото тарелки → оценка калорий.\n\n` +
+    `Мини-гайд в файле 👇`,
+    "guide_kbju",
+    { archive: "2026-07-11-icloud/photos/IMG_9399.JPEG" },
+    "guide_kbju"
+  ),
+];
+
+/** Базовые + резерв + банк + волны. Очередь не должна исчерпываться. */
+export const CHANNEL_POSTS: ChannelPost[] = [
+  ...CHANNEL_POSTS_BASE,
+  ...CHANNEL_POSTS_EXTRA,
+  ...CHANNEL_POSTS_MORE,
+  ...CHANNEL_POSTS_BANK,
+  ...CHANNEL_POSTS_WAVE4,
 ];

@@ -31,8 +31,13 @@ import {
   channelStatusText,
   channelId,
   CHANNEL_CRON,
+  channelPostsPerDay,
+  channelPostTotal,
+  reserveDaysNew,
+  channelToday,
   previewNextPost,
   publishNextChannelPost,
+  publishChannelPostById,
 } from "./channel/publisher";
 import {
   applyBrandingFromEnv,
@@ -42,6 +47,12 @@ import {
   setChannelTitle,
 } from "./channel/branding";
 import { brandKeyboard, brandLinksHtml } from "./channel/brand";
+import {
+  sendGuidesMenu,
+  sendGuideWelcome,
+  sendGuideFile,
+  parseGuidePayload,
+} from "./guides";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -121,7 +132,7 @@ const MENU_BUTTONS = [
   "📊 Прогресс", "🏆 Рекорды",
   "📋 Программа", "🧮 1RM калькулятор",
   "⚖️ Вес тела", "📈 Отчёт недели",
-  "🍗 Питание", "⚔️ Челлендж", "📸 Еда",
+  "🍗 Питание", "⚔️ Челлендж", "📸 Еда", "📥 Гайды",
   "🏋️ Тренировка на сегодня", "📈 Мой прогресс", "❓ Помощь",
 ];
 
@@ -149,7 +160,7 @@ const SIMPLE_KEYBOARD = {
     [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
     [{ text: "🍗 Питание" }, { text: "⚖️ Вес тела" }],
     [{ text: "⚔️ Челлендж" }, { text: "📸 Еда" }],
-    [{ text: "❓ Помощь" }],
+    [{ text: "📥 Гайды" }, { text: "❓ Помощь" }],
   ],
   resize_keyboard: true,
 };
@@ -657,6 +668,7 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
     `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — пошагово и видео техники.\n\n` +
     `📈 <b>Мой прогресс</b> — сколько тренировок, календарь, серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько есть, чтобы худеть или набирать.\n\n` +
+    `📥 <b>Гайды</b> — файлы: 7 дней похудения, 7 ошибок в зале, КБЖУ за 10 минут.\n\n` +
     `⏰ Хочешь, буду напоминать о тренировках? Нажми /remind\n\n` +
     `${brandLinksHtml()}\n\n` +
     `<i>Начни с кнопки «🏋️ Тренировка на сегодня» 👇</i>`,
@@ -701,6 +713,15 @@ bot.command("start", async (ctx) => {
   // Диплинк из канала: t.me/<bot>?start=kingmode
   if (payload === "kingmode") {
     updateUser(ctx.from!.id, { ref: "kingmode" });
+  }
+
+  const guideKey = parseGuidePayload(payload);
+  if (guideKey) {
+    if (guideKey === "list") {
+      await sendGuidesMenu(ctx);
+    } else {
+      await sendGuideWelcome(ctx, guideKey, ctx.from?.first_name ?? "друг");
+    }
   }
 
   if (payload.startsWith("ch_")) {
@@ -1107,6 +1128,11 @@ bot.hears("📈 Мой прогресс", async (ctx) => {
   );
 });
 
+bot.hears("📥 Гайды", async (ctx) => {
+  resetSession(ctx.from!.id);
+  await sendGuidesMenu(ctx);
+});
+
 bot.hears("❓ Помощь", async (ctx) => {
   resetSession(ctx.from!.id);
   await ctx.reply(
@@ -1116,11 +1142,41 @@ bot.hears("❓ Помощь", async (ctx) => {
     `🍗 <b>Питание</b> — сколько калорий и белка тебе нужно под твою цель.\n\n` +
     `⚖️ <b>Вес тела</b> — записывай вес, увидишь график.\n\n` +
     `⚔️ <b>Челлендж</b> — вызови друга: кто больше тренировок за неделю.\n\n` +
+    `📥 <b>Гайды</b> — /guides или кнопка «📥 Гайды»: планы питания и тренировок файлами.\n\n` +
     `⏰ <b>Напоминания</b> — /remind, выбери дни и время.\n\n` +
     `💪 Ходишь в зал со своей программой? Просто напиши что сделал: <code>присед 50 3х10</code> — я запишу.\n\n` +
     `<i>Опытный атлет? Переключись в про-режим: /mode — там программы с периодизацией, 1RM и аналитика.</i>`,
     { reply_markup: SIMPLE_KEYBOARD, ...HTML }
   );
+});
+
+// ── Гайды ───────────────────────────────────────────────────────────────────
+bot.command("guides", async (ctx) => {
+  resetSession(ctx.from!.id);
+  await sendGuidesMenu(ctx);
+});
+
+bot.command("guide", async (ctx) => {
+  resetSession(ctx.from!.id);
+  const arg = typeof ctx.match === "string" ? ctx.match.trim() : "";
+  if (!arg) {
+    await sendGuidesMenu(ctx);
+    return;
+  }
+  const ok = await sendGuideFile(ctx, arg);
+  if (!ok) {
+    await ctx.reply(
+      `Гайд не найден. Доступные: <code>7day</code>, <code>7mistakes</code>, <code>kbju</code>\n\nИли /guides`,
+      HTML
+    );
+  }
+});
+
+bot.callbackQuery(/^guide_dl_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery({ text: "Отправляю файл…" });
+  const slug = ctx.match![1];
+  const ok = await sendGuideFile(ctx, slug);
+  if (!ok) await ctx.reply("Гайд не найден. /guides", HTML);
 });
 
 // ── Гид для новичка ─────────────────────────────────────────────────────────
@@ -1309,10 +1365,82 @@ bot.command("channel_post", async (ctx) => {
   await ctx.reply(`👀 <b>Превью</b> (следующий пост: <code>${esc(post.id)}</code>)\n\n${html}`, HTML);
   const result = await publishNextChannelPost(bot.api, { force: true });
   if (result.ok) {
-    await ctx.reply(`✅ Опубликовано в канал: <b>${esc(post.title)}</b>`, HTML);
+    await ctx.reply(`✅ Опубликовано в канал: <b>${esc(post.title)}</b> (<code>${result.postId}</code>)`, HTML);
   } else {
     await ctx.reply(`⚠️ Не вышло: <i>${esc(result.error ?? "unknown")}</i>`, HTML);
   }
+});
+
+/** Удалить сообщение в канале: /channel_delete 123 или ответ на пересланный пост. */
+bot.command("channel_delete", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  const ch = channelId();
+  if (!ch) {
+    await ctx.reply("TELEGRAM_CHANNEL_ID не задан.", HTML);
+    return;
+  }
+
+  let messageId: number | undefined;
+  const arg = typeof ctx.match === "string" ? ctx.match.trim() : "";
+  const linkMatch = arg.match(/t\.me\/\w+\/(\d+)/);
+  const numMatch = arg.match(/^(\d+)$/);
+  if (linkMatch) messageId = parseInt(linkMatch[1], 10);
+  else if (numMatch) messageId = parseInt(numMatch[1], 10);
+
+  const reply = ctx.message?.reply_to_message;
+  if (!messageId && reply) {
+    const origin = reply.forward_origin;
+    if (origin && origin.type === "channel") {
+      messageId = origin.message_id;
+    } else if (reply.message_id) {
+      await ctx.reply(
+        "Перешли пост из канала в этот чат и ответь:\n<code>/channel_delete</code>\n\n" +
+        "Или: <code>/channel_delete 42</code> / ссылка t.me/kingmode_fit/42",
+        HTML
+      );
+      return;
+    }
+  }
+
+  if (!messageId) {
+    await ctx.reply(
+      "Укажи ID поста:\n<code>/channel_delete 42</code>\n\n" +
+      "Или перешли пост из канала и ответь <code>/channel_delete</code>",
+      HTML
+    );
+    return;
+  }
+
+  try {
+    await bot.api.deleteMessage(ch, messageId);
+    await ctx.reply(`🗑 Удалено сообщение <code>${messageId}</code> в ${ch}`, HTML);
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    await ctx.reply(
+      `⚠️ Не удалось: <i>${esc(err)}</i>\n\n` +
+      `Бот должен быть <b>админом</b> канала с правом удаления сообщений.`,
+      HTML
+    );
+  }
+});
+
+/** Опубликовать конкретный пост: /channel_post_id sleep */
+bot.command("channel_post_id", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  const postId = typeof ctx.match === "string" ? ctx.match.trim() : "";
+  if (!postId) {
+    await ctx.reply("Напиши: <code>/channel_post_id sleep</code>", HTML);
+    return;
+  }
+  const result = await publishChannelPostById(bot.api, postId, { markDate: channelToday() });
+  if (result.ok) await ctx.reply(`✅ Опубликован <code>${esc(postId)}</code>`, HTML);
+  else await ctx.reply(`⚠️ ${esc(result.error ?? "error")}`, HTML);
 });
 
 // ── Запись тренировки ─────────────────────────────────────────────────────
@@ -3169,7 +3297,11 @@ cron.schedule("0 21 * * *", async () => {
 if (channelPostingEnabled()) {
   cron.schedule(CHANNEL_CRON, async () => {
     const result = await publishNextChannelPost(bot.api);
-    if (!result.ok && result.error !== "already posted today") {
+    if (result.ok) {
+      console.log(`channel cron ok: ${result.postId}`);
+    } else if (result.error === `daily limit (${channelPostsPerDay()})`) {
+      console.log(`channel cron skip: daily limit`);
+    } else {
       console.error("channel cron:", result.error);
     }
   }, { timezone: "Asia/Bangkok" });
@@ -3218,6 +3350,11 @@ async function main() {
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
       console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no vision API key)"}`);
       console.log(`   Channel posts: ${channelPostingEnabled() ? `on (${CHANNEL_CRON})` : "OFF"}`);
+      if (channelPostingEnabled()) {
+        console.log(
+          `   Channel queue: ${channelPostTotal()} posts, ~${reserveDaysNew()}d new, then rotation`
+        );
+      }
     },
   });
 }
