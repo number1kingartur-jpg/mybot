@@ -22,7 +22,7 @@ export function channelPostSlots(): number[] {
   const raw = process.env.CHANNEL_POST_SLOTS?.trim();
   if (raw) {
     return raw
-      .split(",")
+      .split(/[,\s]+/)
       .map((s) => parseInt(s.trim(), 10))
       .filter((h) => Number.isFinite(h) && h >= 0 && h <= 23);
   }
