@@ -17,14 +17,49 @@ const ENABLED =
   process.env.CHANNEL_POST_ENABLED !== "0" &&
   process.env.CHANNEL_POST_ENABLED !== "false";
 
-/** Постов в день (каждый слот cron = один пост, пока не достигнут лимит). */
-const POSTS_PER_DAY = Math.max(1, parseInt(process.env.CHANNEL_POSTS_PER_DAY ?? "3", 10) || 3);
+/** Слоты публикации (часы, Bangkok). По умолчанию 10:00, 15:00, 19:00 — 3 поста в день. */
+export function channelPostSlots(): number[] {
+  const raw = process.env.CHANNEL_POST_SLOTS?.trim();
+  if (raw) {
+    return raw
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((h) => Number.isFinite(h) && h >= 0 && h <= 23);
+  }
+  const cron = process.env.CHANNEL_POST_CRON?.trim();
+  if (cron) {
+    const parts = cron.split(/\s+/);
+    if (parts[1]?.includes(",")) {
+      return parts[1]
+        .split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((h) => Number.isFinite(h) && h >= 0 && h <= 23);
+    }
+    if (parts[1]) {
+      const h = parseInt(parts[1], 10);
+      if (Number.isFinite(h)) return [h];
+    }
+  }
+  return [10, 15, 19];
+}
 
-/** Cron: по умолчанию 10:00, 15:00, 19:00 Bangkok — каждый день */
-export const CHANNEL_CRON = process.env.CHANNEL_POST_CRON?.trim() || "0 10,15,19 * * *";
+const POST_SLOTS = channelPostSlots();
+
+/** Постов в день = число слотов (по умолчанию 3). */
+const POSTS_PER_DAY = Math.max(
+  POST_SLOTS.length,
+  parseInt(process.env.CHANNEL_POSTS_PER_DAY ?? String(POST_SLOTS.length), 10) || POST_SLOTS.length
+);
+
+/** Для статуса / логов */
+export const CHANNEL_CRON = `0 ${POST_SLOTS.join(",")} * * *`;
 
 export function channelPostsPerDay(): number {
   return POSTS_PER_DAY;
+}
+
+export function channelSlotsLabel(): string {
+  return POST_SLOTS.map((h) => `${h}:00`).join(" · ");
 }
 
 export function channelToday(): string {
@@ -263,7 +298,7 @@ export function channelStatusText(): string {
     `📢 <b>Автовыкладка в канал</b>\n\n` +
     `Статус: ${channelPostingEnabled() ? "✅ включена" : "⏸ выключена"}\n` +
     `Канал: <code>${esc(channelId() ?? "не задан")}</code>\n` +
-    `Расписание: <code>${CHANNEL_CRON}</code> (Asia/Bangkok)\n` +
+    `Расписание: <b>${esc(channelSlotsLabel())}</b> (Asia/Bangkok, ${POST_SLOTS.length}×/день)\n` +
     `Сегодня: <b>${doneToday}/${POSTS_PER_DAY}</b> постов\n` +
     `В базе: <b>${total}</b> · вышло: ${unique} · новых: <b>${left}</b> (~${reserve} дн.)\n` +
     `Режим: <b>${mode === "new" ? "новые темы" : `ротация (цикл ${rotationMinDays()} дн.)`}</b>\n` +

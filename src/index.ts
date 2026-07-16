@@ -31,7 +31,10 @@ import {
   channelStatusText,
   channelId,
   CHANNEL_CRON,
+  channelSlotsLabel,
   channelPostsPerDay,
+  channelPostSlots,
+  channelSlotsLabel,
   channelPostTotal,
   reserveDaysNew,
   channelToday,
@@ -3321,18 +3324,22 @@ cron.schedule("0 21 * * *", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
-// ── Автовыкладка в Telegram-канал ─────────────────────────────────────────
+// ── Автовыкладка в Telegram-канал: 3 слота в день ─────────────────────────
 if (channelPostingEnabled()) {
-  cron.schedule(CHANNEL_CRON, async () => {
-    const result = await publishNextChannelPost(bot.api);
-    if (result.ok) {
-      console.log(`channel cron ok: ${result.postId}`);
-    } else if (result.error === `daily limit (${channelPostsPerDay()})`) {
-      console.log(`channel cron skip: daily limit`);
-    } else {
-      console.error("channel cron:", result.error);
-    }
-  }, { timezone: "Asia/Bangkok" });
+  const slots = channelPostSlots();
+  for (const hour of slots) {
+    cron.schedule(`0 ${hour} * * *`, async () => {
+      const result = await publishNextChannelPost(bot.api);
+      if (result.ok) {
+        console.log(`channel cron ok (${hour}:00): ${result.postId}`);
+      } else if (result.error === `daily limit (${channelPostsPerDay()})`) {
+        console.log(`channel cron skip (${hour}:00): daily limit`);
+      } else {
+        console.error(`channel cron (${hour}:00):`, result.error);
+      }
+    }, { timezone: "Asia/Bangkok" });
+  }
+  console.log(`   Channel schedule: ${channelSlotsLabel()} Bangkok (${slots.length}/day)`);
 }
 
 // ── Отказоустойчивость ─────────────────────────────────────────────────────
@@ -3377,7 +3384,7 @@ async function main() {
       console.log("✅ Bot running…");
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
       console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no vision API key)"}`);
-      console.log(`   Channel posts: ${channelPostingEnabled() ? `on (${CHANNEL_CRON})` : "OFF"}`);
+      console.log(`   Channel posts: ${channelPostingEnabled() ? `on ${channelSlotsLabel()}` : "OFF"}`);
       if (channelPostingEnabled()) {
         console.log(
           `   Channel queue: ${channelPostTotal()} posts, ~${reserveDaysNew()}d new, then rotation`
