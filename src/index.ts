@@ -47,6 +47,8 @@ import {
   setChannelTitle,
 } from "./channel/branding";
 import { brandKeyboard, brandLinksHtml } from "./channel/brand";
+import { deleteChannelMessages, resolveChannelChatId } from "./channel/channel-delete";
+import { getChannelLastPublish } from "./db";
 import {
   sendGuidesMenu,
   sendGuideWelcome,
@@ -1371,57 +1373,83 @@ bot.command("channel_post", async (ctx) => {
   }
 });
 
+/** Удалить последнюю публикацию бота (все части серии). */
+bot.command("channel_delete_last", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  const last = getChannelLastPublish();
+  if (!last?.messageIds?.length) {
+    await ctx.reply("Нет записи последней публикации. Укажи ID: <code>/channel_delete 42</code>", HTML);
+    return;
+  }
+  const result = await deleteChannelMessages(bot.api, last.messageIds);
+  if (result.deleted > 0) {
+    await ctx.reply(
+      `🗑 Удалено <b>${result.deleted}</b> сообщ. (пост <code>${esc(last.postId)}</code>)\n` +
+      `ID: ${last.messageIds.map((id) => `<code>${id}</code>`).join(", ")}`,
+      HTML
+    );
+  } else {
+    await ctx.reply(
+      `⚠️ Не удалось.\n${result.errors.map(esc).join("\n")}\n\n` +
+      `Права бота: админ + <b>удаление сообщений</b>.`,
+      HTML
+    );
+  }
+});
+
 /** Удалить сообщение в канале: /channel_delete 123 или ответ на пересланный пост. */
 bot.command("channel_delete", async (ctx) => {
   if (!isOwner(ctx.from!.id)) {
     await ctx.reply("Команда только для владельца бота.", HTML);
     return;
   }
-  const ch = channelId();
-  if (!ch) {
-    await ctx.reply("TELEGRAM_CHANNEL_ID не задан.", HTML);
-    return;
-  }
 
-  let messageId: number | undefined;
+  let messageIds: number[] = [];
   const arg = typeof ctx.match === "string" ? ctx.match.trim() : "";
   const linkMatch = arg.match(/t\.me\/\w+\/(\d+)/);
-  const numMatch = arg.match(/^(\d+)$/);
-  if (linkMatch) messageId = parseInt(linkMatch[1], 10);
-  else if (numMatch) messageId = parseInt(numMatch[1], 10);
+  const nums = arg.match(/\d+/g);
+
+  if (linkMatch) messageIds = [parseInt(linkMatch[1], 10)];
+  else if (nums?.length) messageIds = nums.map((n) => parseInt(n, 10));
 
   const reply = ctx.message?.reply_to_message;
-  if (!messageId && reply) {
+  if (!messageIds.length && reply) {
     const origin = reply.forward_origin;
-    if (origin && origin.type === "channel") {
-      messageId = origin.message_id;
-    } else if (reply.message_id) {
-      await ctx.reply(
-        "Перешли пост из канала в этот чат и ответь:\n<code>/channel_delete</code>\n\n" +
-        "Или: <code>/channel_delete 42</code> / ссылка t.me/kingmode_fit/42",
-        HTML
-      );
-      return;
+    if (origin?.type === "channel") {
+      messageIds = [origin.message_id];
+    }
+    // старый формат пересылки
+    const legacy = reply as { forward_from_chat?: { id: number }; forward_from_message_id?: number };
+    if (!messageIds.length && legacy.forward_from_message_id) {
+      messageIds = [legacy.forward_from_message_id];
     }
   }
 
-  if (!messageId) {
+  if (!messageIds.length) {
     await ctx.reply(
-      "Укажи ID поста:\n<code>/channel_delete 42</code>\n\n" +
-      "Или перешли пост из канала и ответь <code>/channel_delete</code>",
+      `<b>Удаление поста в канале</b>\n\n` +
+      `1. <code>/channel_delete_last</code> — последний пост бота (все части)\n` +
+      `2. <code>/channel_delete 42</code> — по номеру из ссылки t.me/kingmode_fit/42\n` +
+      `3. Перешли пост боту → ответь <code>/channel_delete</code>\n\n` +
+      `<i>Бот = админ канала с правом удаления.</i>`,
       HTML
     );
     return;
   }
 
-  try {
-    await bot.api.deleteMessage(ch, messageId);
-    await ctx.reply(`🗑 Удалено сообщение <code>${messageId}</code> в ${ch}`, HTML);
-  } catch (e) {
-    const err = e instanceof Error ? e.message : String(e);
+  const result = await deleteChannelMessages(bot.api, messageIds);
+  if (result.deleted > 0) {
+    await ctx.reply(`🗑 Удалено: ${result.deleted} сообщ.`, HTML);
+  } else {
+    const chat = await resolveChannelChatId(bot.api);
     await ctx.reply(
-      `⚠️ Не удалось: <i>${esc(err)}</i>\n\n` +
-      `Бот должен быть <b>админом</b> канала с правом удаления сообщений.`,
+      `⚠️ Не удалось удалить.\n` +
+      result.errors.map(esc).join("\n") +
+      `\n\nКанал: <code>${esc(chat ?? "?")}</code>\n` +
+      `Проверь: бот админ → право <b>Delete messages</b>.`,
       HTML
     );
   }

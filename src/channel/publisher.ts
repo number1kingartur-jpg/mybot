@@ -3,7 +3,7 @@ import { brandKeyboard, getBrandLinks } from "./brand";
 import { postImageFile } from "./images";
 import { labelParts, formatPostPreview, partCount, splitPostText } from "./split";
 import { CHANNEL_POSTS, type ChannelPost } from "./posts";
-import { getChannelState, markChannelPosted } from "../db";
+import { getChannelState, markChannelPosted, saveChannelLastPublish } from "../db";
 
 const DEFAULT_CHANNEL = "@kingmode_fit";
 
@@ -110,11 +110,12 @@ function postKeyboard(post: ChannelPost): InlineKeyboard {
   return kb;
 }
 
-async function sendChannelPost(api: Api, post: ChannelPost): Promise<void> {
+async function sendChannelPost(api: Api, post: ChannelPost): Promise<number[]> {
   const photo = postImageFile(post);
   const parts = labelParts(resolveParts(post, Boolean(photo)));
   const kb = postKeyboard(post);
   let threadId: number | undefined;
+  const messageIds: number[] = [];
 
   for (let i = 0; i < parts.length; i++) {
     const text = parts[i];
@@ -127,6 +128,7 @@ async function sendChannelPost(api: Api, post: ChannelPost): Promise<void> {
         reply_markup: replyMarkup,
       });
       threadId = msg.message_id;
+      messageIds.push(msg.message_id);
     } else {
       const msg = await api.sendMessage(CHANNEL_ID!, text, {
         link_preview_options: { is_disabled: true },
@@ -134,12 +136,14 @@ async function sendChannelPost(api: Api, post: ChannelPost): Promise<void> {
         ...(threadId ? { reply_parameters: { message_id: threadId } } : {}),
       });
       if (!threadId) threadId = msg.message_id;
+      messageIds.push(msg.message_id);
     }
 
     if (i < parts.length - 1) {
       await new Promise((r) => setTimeout(r, 400));
     }
   }
+  return messageIds;
 }
 
 /** Следующий пост: новые → после паузы → самый давний. Материал всегда есть. */
@@ -201,9 +205,12 @@ export async function publishChannelPostById(
   const post = CHANNEL_POSTS.find((p) => p.id === postId);
   if (!post) return { ok: false, error: `unknown post: ${postId}` };
   try {
-    await sendChannelPost(api, post);
-    if (opts?.markDate) markChannelPosted(post.id, opts.markDate);
-    console.log(`channel post ok: ${post.id} → ${CHANNEL_ID}`);
+    const messageIds = await sendChannelPost(api, post);
+    if (opts?.markDate) {
+      markChannelPosted(post.id, opts.markDate);
+      saveChannelLastPublish(post.id, messageIds, opts.markDate);
+    }
+    console.log(`channel post ok: ${post.id} → ${CHANNEL_ID} msgs=${messageIds.join(",")}`);
     return { ok: true };
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
@@ -225,8 +232,9 @@ export async function publishNextChannelPost(
   const post = pickNextPost(today);
 
   try {
-    await sendChannelPost(api, post);
+    const messageIds = await sendChannelPost(api, post);
     markChannelPosted(post.id, today);
+    saveChannelLastPublish(post.id, messageIds, today);
     const left = remainingPostCount();
     if (left > 0 && left <= 10) {
       console.warn(`channel queue low: ${left} new posts left — add to posts-bank.ts`);
@@ -262,6 +270,7 @@ export function channelStatusText(): string {
     `Материал: <b>всегда</b> (новые → ротация)\n` +
     (last ? `Последний: <code>${last.postId}</code> (${last.date})\n` : "") +
     `\nСледующий: <b>${esc(next.title) + partInfo(next)}</b>\n\n` +
+    `<code>/channel_delete_last</code> · <code>/channel_delete ID</code>\n` +
     `<code>/channel_name</code> · <code>/channel_about</code> · <code>/channel_photo</code>`
   );
 }

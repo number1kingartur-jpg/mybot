@@ -119,10 +119,12 @@ interface DB {
   challenges: Challenge[];
   meals: MealEntry[];
   channelPosted?: { postId: string; date: string }[];
+  /** Последняя публикация бота в канал — для удаления всей серии (1–3 сообщения). */
+  channelLastPublish?: { postId: string; messageIds: number[]; date: string };
 }
 
 function load(): DB {
-  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], channelPosted: [] };
+  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], channelPosted: [], channelLastPublish: undefined };
   if (!fs.existsSync(DB_PATH)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
@@ -533,4 +535,14 @@ export function markChannelPosted(postId: string, date: string) {
   if (!db.channelPosted) db.channelPosted = [];
   db.channelPosted.push({ postId, date });
   save(db);
+}
+
+export function saveChannelLastPublish(postId: string, messageIds: number[], date: string) {
+  const db = load();
+  db.channelLastPublish = { postId, messageIds, date };
+  save(db);
+}
+
+export function getChannelLastPublish(): { postId: string; messageIds: number[]; date: string } | undefined {
+  return load().channelLastPublish;
 }
