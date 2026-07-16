@@ -1,3 +1,4 @@
+/** @deprecated Не подключать в posts.ts — короткие дубли тем. */
 import type { ChannelPost } from "./posts";
 
 const P = [

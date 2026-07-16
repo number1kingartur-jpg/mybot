@@ -533,6 +533,7 @@ export function getChannelState(): { posted: { postId: string; date: string }[] 
 export function markChannelPosted(postId: string, date: string) {
   const db = load();
   if (!db.channelPosted) db.channelPosted = [];
+  if (db.channelPosted.some((p) => p.postId === postId && p.date === date)) return;
   db.channelPosted.push({ postId, date });
   save(db);
 }

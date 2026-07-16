@@ -34,7 +34,6 @@ import {
   channelSlotsLabel,
   channelPostsPerDay,
   channelPostSlots,
-  channelSlotsLabel,
   channelPostTotal,
   reserveDaysNew,
   channelToday,
@@ -1366,7 +1365,12 @@ bot.command("channel_post", async (ctx) => {
     );
     return;
   }
-  const { post, html } = previewNextPost();
+  const preview = previewNextPost();
+  if (!preview.post) {
+    await ctx.reply(preview.html, HTML);
+    return;
+  }
+  const { post, html } = preview;
   await ctx.reply(`👀 <b>Превью</b> (следующий пост: <code>${esc(post.id)}</code>)\n\n${html}`, HTML);
   const result = await publishNextChannelPost(bot.api, { force: true });
   if (result.ok) {
@@ -3334,12 +3338,15 @@ if (channelPostingEnabled()) {
         console.log(`channel cron ok (${hour}:00): ${result.postId}`);
       } else if (result.error === `daily limit (${channelPostsPerDay()})`) {
         console.log(`channel cron skip (${hour}:00): daily limit`);
+      } else if (result.error === "queue exhausted (no repeats)") {
+        console.log(`channel cron skip (${hour}:00): queue exhausted`);
       } else {
         console.error(`channel cron (${hour}:00):`, result.error);
       }
     }, { timezone: "Asia/Bangkok" });
   }
   console.log(`   Channel schedule: ${channelSlotsLabel()} Bangkok (${slots.length}/day)`);
+  console.log(`   Channel: один процесс с CHANNEL_POST_ENABLED=1 — не запускай npm run dev параллельно с Railway`);
 }
 
 // ── Отказоустойчивость ─────────────────────────────────────────────────────
@@ -3387,7 +3394,7 @@ async function main() {
       console.log(`   Channel posts: ${channelPostingEnabled() ? `on ${channelSlotsLabel()}` : "OFF"}`);
       if (channelPostingEnabled()) {
         console.log(
-          `   Channel queue: ${channelPostTotal()} posts, ~${reserveDaysNew()}d new, then rotation`
+          `   Channel queue: ${channelPostTotal()} posts, ~${reserveDaysNew()}d left, no repeats`
         );
       }
     },

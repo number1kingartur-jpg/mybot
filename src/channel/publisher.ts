@@ -66,26 +66,8 @@ export function channelToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
 }
 
-function daysBetween(from: string, to: string): number {
-  const a = new Date(`${from}T12:00:00Z`).getTime();
-  const b = new Date(`${to}T12:00:00Z`).getTime();
-  return Math.floor((b - a) / 86_400_000);
-}
-
-function lastPostedById(state = getChannelState()): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const row of state.posted) {
-    const prev = map.get(row.postId);
-    if (!prev || row.date > prev) map.set(row.postId, row.date);
-  }
-  return map;
-}
-
-/** Полный цикл перед повтором того же postId. */
-function rotationMinDays(): number {
-  const env = parseInt(process.env.CHANNEL_ROTATION_DAYS ?? "", 10);
-  if (env > 0) return env;
-  return Math.ceil(CHANNEL_POSTS.length / POSTS_PER_DAY);
+function postedTodayIds(today: string, state = getChannelState()): Set<string> {
+  return new Set(state.posted.filter((p) => p.date === today).map((p) => p.postId));
 }
 
 export function channelPostTotal(): number {
@@ -96,25 +78,13 @@ export function reserveDaysNew(): number {
   return Math.ceil(remainingPostCount() / POSTS_PER_DAY);
 }
 
-function pickOldestPost(pool: ChannelPost[], lastById: Map<string, string>): ChannelPost {
-  let oldest = pool[0];
-  let oldestDate = lastById.get(oldest.id) ?? "0000-00-00";
-  for (const post of pool) {
-    const d = lastById.get(post.id) ?? "0000-00-00";
-    if (d < oldestDate) {
-      oldestDate = d;
-      oldest = post;
-    }
-  }
-  return oldest;
-}
-
 function postedEverIds(state = getChannelState()): Set<string> {
   return new Set(state.posted.map((p) => p.postId));
 }
 
-export function queueMode(): "new" | "rotation" {
-  return remainingPostCount() > 0 ? "new" : "rotation";
+/** new — есть неопубликованные; exhausted — все вышли, повторов нет. */
+export function queueMode(): "new" | "exhausted" {
+  return remainingPostCount() > 0 ? "new" : "exhausted";
 }
 
 export function channelPostingEnabled(): boolean {
@@ -181,40 +151,42 @@ async function sendChannelPost(api: Api, post: ChannelPost): Promise<number[]> {
   return messageIds;
 }
 
-/** Следующий пост: новые → после паузы → самый давний. Материал всегда есть. */
-export function pickNextPost(today = channelToday()): ChannelPost {
-  if (CHANNEL_POSTS.length === 0) {
-    throw new Error("CHANNEL_POSTS empty — add content to posts.ts");
-  }
+/**
+ * Следующий пост — только тот, что ещё ни разу не выходил.
+ * Повторов нет. Очередь пуста → null.
+ */
+export function pickNextPost(today = channelToday()): ChannelPost | null {
+  if (CHANNEL_POSTS.length === 0) return null;
   const state = getChannelState();
   const ever = postedEverIds(state);
-  const neverPosted = CHANNEL_POSTS.filter((p) => !ever.has(p.id));
-  if (neverPosted.length > 0) return neverPosted[0];
-
-  const lastById = lastPostedById(state);
-  const minDays = rotationMinDays();
-  const cooled = CHANNEL_POSTS.filter((p) => {
-    const last = lastById.get(p.id);
-    if (!last) return true;
-    return daysBetween(last, today) >= minDays;
-  });
-  const pool = cooled.length > 0 ? cooled : CHANNEL_POSTS;
-  return pickOldestPost(pool, lastById);
+  const todayIds = postedTodayIds(today, state);
+  const neverPosted = CHANNEL_POSTS.filter((p) => !ever.has(p.id) && !todayIds.has(p.id));
+  return neverPosted[0] ?? null;
 }
+
+let publishLock = false;
+let exhaustedLoggedDate: string | undefined;
 
 export function remainingPostCount(): number {
   const ever = postedEverIds();
   return CHANNEL_POSTS.filter((p) => !ever.has(p.id)).length;
 }
 
-export function previewNextPost(): { post: ChannelPost; html: string; mode: "new" | "rotation" } {
+export function previewNextPost():
+  | { post: ChannelPost; html: string; mode: "new" }
+  | { post: null; html: string; mode: "exhausted" } {
   const post = pickNextPost();
-  const mode = queueMode();
-  const modeNote =
-    mode === "rotation"
-      ? `\n\n<i>Режим ротации — повтор через ${rotationMinDays()}+ дн. после полного цикла.</i>`
-      : "";
-  return { post, html: formatPost(post) + modeNote, mode };
+  if (!post) {
+    return {
+      post: null,
+      html:
+        `<b>Очередь исчерпана</b>\n\n` +
+        `Все ${CHANNEL_POSTS.length} постов уже вышли в канал.\n` +
+        `Повторов нет. Добавь новые посты в <code>posts-extra.ts</code> и задеплой.`,
+      mode: "exhausted",
+    };
+  }
+  return { post, html: formatPost(post), mode: "new" };
 }
 
 function partInfo(post: ChannelPost): string {
@@ -234,11 +206,15 @@ export function canPostToday(today = channelToday()): boolean {
 export async function publishChannelPostById(
   api: Api,
   postId: string,
-  opts?: { markDate?: string }
+  opts?: { markDate?: string; allowRepeat?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   if (!CHANNEL_ID) return { ok: false, error: "TELEGRAM_CHANNEL_ID not set" };
   const post = CHANNEL_POSTS.find((p) => p.id === postId);
   if (!post) return { ok: false, error: `unknown post: ${postId}` };
+  const ever = postedEverIds();
+  if (!opts?.allowRepeat && ever.has(postId)) {
+    return { ok: false, error: `post already published once: ${postId}` };
+  }
   try {
     const messageIds = await sendChannelPost(api, post);
     if (opts?.markDate) {
@@ -258,6 +234,7 @@ export async function publishNextChannelPost(
   opts?: { force?: boolean; today?: string }
 ): Promise<{ ok: boolean; postId?: string; error?: string }> {
   if (!CHANNEL_ID) return { ok: false, error: "TELEGRAM_CHANNEL_ID not set" };
+  if (publishLock) return { ok: false, error: "publish in progress" };
 
   const today = opts?.today ?? channelToday();
   if (!opts?.force && !canPostToday(today)) {
@@ -265,21 +242,38 @@ export async function publishNextChannelPost(
   }
 
   const post = pickNextPost(today);
+  if (!post) {
+    if (exhaustedLoggedDate !== today) {
+      console.warn(`channel queue exhausted (${CHANNEL_POSTS.length} posts published, no repeats)`);
+      exhaustedLoggedDate = today;
+    }
+    return { ok: false, error: "queue exhausted (no repeats)" };
+  }
 
+  if (postedTodayIds(today).has(post.id)) {
+    return { ok: false, error: `already posted today: ${post.id}` };
+  }
+
+  publishLock = true;
   try {
     const messageIds = await sendChannelPost(api, post);
     markChannelPosted(post.id, today);
     saveChannelLastPublish(post.id, messageIds, today);
     const left = remainingPostCount();
     if (left > 0 && left <= 10) {
-      console.warn(`channel queue low: ${left} new posts left — add to posts-bank.ts`);
+      console.warn(`channel queue low: ${left} posts left — add to posts-extra.ts`);
     }
-    console.log(`channel post ok: ${post.id} → ${CHANNEL_ID} (${left} new left)`);
+    if (left === 0) {
+      console.warn(`channel queue exhausted — autopost will stop until new posts added`);
+    }
+    console.log(`channel post ok: ${post.id} → ${CHANNEL_ID} (${left} left, no repeats)`);
     return { ok: true, postId: post.id };
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     console.error("channel post error:", err);
     return { ok: false, error: err };
+  } finally {
+    publishLock = false;
   }
 }
 
@@ -292,20 +286,24 @@ export function channelStatusText(): string {
   const today = channelToday();
   const doneToday = postsTodayCount(today);
   const reserve = reserveDaysNew();
-  const next = pickNextPost();
   const mode = queueMode();
+  const next = pickNextPost();
   return (
     `📢 <b>Автовыкладка в канал</b>\n\n` +
     `Статус: ${channelPostingEnabled() ? "✅ включена" : "⏸ выключена"}\n` +
     `Канал: <code>${esc(channelId() ?? "не задан")}</code>\n` +
     `Расписание: <b>${esc(channelSlotsLabel())}</b> (Asia/Bangkok, ${POST_SLOTS.length}×/день)\n` +
     `Сегодня: <b>${doneToday}/${POSTS_PER_DAY}</b> постов\n` +
-    `В базе: <b>${total}</b> · вышло: ${unique} · новых: <b>${left}</b> (~${reserve} дн.)\n` +
-    `Режим: <b>${mode === "new" ? "новые темы" : `ротация (цикл ${rotationMinDays()} дн.)`}</b>\n` +
-    `Материал: <b>всегда</b> (новые → ротация)\n` +
+    `В базе: <b>${total}</b> · вышло: ${unique} · осталось: <b>${left}</b>` +
+    (left > 0 ? ` (~${reserve} дн.)` : "") +
+    `\n` +
+    `Повторы: <b>никогда</b> (каждый id — один раз)\n` +
+    `Режим: <b>${mode === "new" ? "новые посты" : "очередь пуста — добавь контент"}</b>\n` +
     (last ? `Последний: <code>${last.postId}</code> (${last.date})\n` : "") +
-    `\nСледующий: <b>${esc(next.title) + partInfo(next)}</b>\n\n` +
-    `<code>/channel_delete_last</code> · <code>/channel_delete ID</code>\n` +
+    (next
+      ? `\nСледующий: <b>${esc(next.title) + partInfo(next)}</b>\n`
+      : `\n<i>Следующих постов нет — очередь исчерпана.</i>\n`) +
+    `\n<code>/channel_delete_last</code> · <code>/channel_delete ID</code>\n` +
     `<code>/channel_name</code> · <code>/channel_about</code> · <code>/channel_photo</code>`
   );
 }

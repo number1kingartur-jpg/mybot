@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "ts-node --transpile-only src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/check-channel-posts.mjs",
     "start": "node dist/index.js",
     "setup:channel": "node scripts/setup-channel.mjs",
     "channel:sync-photos": "npm run build && node scripts/sync-channel-photos.mjs",
