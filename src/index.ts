@@ -16,7 +16,7 @@ import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
-import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place } from "./simple";
+import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place, type SimpleExercise, exerciseVideoUrl, isDirectVideo } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
 import { transcribeVoice, voiceEnabled } from "./voice";
@@ -73,6 +73,7 @@ interface UserState {
   liftNames?: string[];
   liftIdx?: number;
   exList?: string[];
+  simpleWorkoutMsgId?: number;
 }
 
 // Порядок базовых движений по дням недели
@@ -653,7 +654,7 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
   await ctx.reply(
     `<b>💪 Привет, ${esc(name)}!</b>\n${HR}\n\n` +
     `Я помогу тебе держать форму, даже если ты никогда не тренировался:\n\n` +
-    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. У каждого упражнения кнопка «❓ Как делать»: пошагово, с ошибками и видео.\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — пошагово и видео техники.\n\n` +
     `📈 <b>Мой прогресс</b> — сколько тренировок, календарь, серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько есть, чтобы худеть или набирать.\n\n` +
     `⏰ Хочешь, буду напоминать о тренировках? Нажми /remind\n\n` +
@@ -829,9 +830,8 @@ function diffAdvice(userId: number, place: Place): string {
   return "";
 }
 
-async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, userId: number) {
+function buildSimpleWorkoutText(userId: number): string {
   const { place, w } = currentSimpleWorkout(userId);
-
   const items = w.items
     .map((e, i) =>
       `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(e.scheme)}\n` +
@@ -839,24 +839,72 @@ async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promis
     )
     .join("\n\n");
 
+  return (
+    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
+    `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом.</i>\n\n` +
+    items +
+    diffAdvice(userId, place) +
+    `\n\n👇 <b>Под каждым упражнением:</b>\n` +
+    `📖 <i>Как делать</i> — пошагово + видео\n` +
+    `🟢 <i>Легче</i> — если тяжело\n\n` +
+    `⏱ <i>Отдых между подходами: 1.5–2 минуты.</i>`
+  );
+}
+
+function buildSimpleWorkoutKeyboard(userId: number): InlineKeyboard {
+  const { place, w } = currentSimpleWorkout(userId);
   const kb = new InlineKeyboard();
   w.items.forEach((e, i) => {
-    kb.text(`❓ ${i + 1}`, `sdet_${i}`).text(`🟢 ${i + 1}`, `seas_${i}`);
+    const short = e.name.length > 14 ? e.name.slice(0, 13) + "…" : e.name;
+    kb.text(`📖 ${i + 1}. ${short}`, `sdet_${i}`).text(`🟢 Легче ${i + 1}`, `seas_${i}`);
     kb.row();
   });
   kb.text("✅ Выполнил — записать", "simple_done").row();
   kb.text("⚡ Нет времени — 15 минут", "simple_short").row();
   kb.text(place === "gym" ? "⚖️ Как выбрать вес" : "📈 Стало легко?", "simple_weight")
     .text("🔄 Дома/зал", "simple_place");
+  return kb;
+}
 
-  await ctx.reply(
-    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
-    `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом. Тело должно согреться.</i>\n\n` +
-    items +
-    diffAdvice(userId, place) +
-    `\n\n⏱ <i>Отдых между подходами: 1.5–2 минуты.\nНе знаешь, как делать упражнение, — жми «❓ Как делать».</i>`,
-    { reply_markup: kb, ...HTML }
+function buildExerciseGuideText(e: SimpleExercise): string {
+  const steps = e.steps.map((s, i) => `${i + 1}. ${esc(s)}`).join("\n");
+  const mistakes = e.mistakes.map((m) => `${DOT} ${esc(m)}`).join("\n");
+  const videoHint = isDirectVideo(exerciseVideoUrl(e))
+    ? "Кнопка ниже — короткое видео техники (2–3 мин)."
+    : "Видео — поиск на YouTube.";
+  return (
+    `📖 <b>${esc(e.name.toUpperCase())}</b>\n` +
+    `<i>${esc(e.scheme)}</i>\n${HR}\n\n` +
+    `<b>Как делать:</b>\n${steps}\n\n` +
+    `⚠️ <b>Частые ошибки:</b>\n${mistakes}\n\n` +
+    `🟢 <b>Если тяжело:</b> ${esc(e.easier)}\n\n` +
+    `<i>${videoHint} После просмотра — «← К тренировке».</i>`
   );
+}
+
+function buildExerciseGuideKeyboard(idx: number, e: SimpleExercise): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const videoUrl = exerciseVideoUrl(e);
+  const videoLabel = isDirectVideo(videoUrl) ? "▶️ Видео техники" : "▶️ Найти видео";
+  kb.url(videoLabel, videoUrl).row();
+  kb.text("🟢 Показать лёгкий вариант", `seas_${idx}`).row();
+  kb.text("← К тренировке", "simple_back");
+  return kb;
+}
+
+async function sendSimpleWorkout(ctx: { reply: (t: string, o?: object) => Promise<{ message_id: number }> }, userId: number) {
+  const msg = await ctx.reply(buildSimpleWorkoutText(userId), {
+    reply_markup: buildSimpleWorkoutKeyboard(userId),
+    ...HTML,
+  });
+  getSession(userId).simpleWorkoutMsgId = msg.message_id;
+}
+
+async function showSimpleWorkoutInPlace(ctx: { editMessageText: (t: string, o?: object) => Promise<unknown> }, userId: number) {
+  await ctx.editMessageText(buildSimpleWorkoutText(userId), {
+    reply_markup: buildSimpleWorkoutKeyboard(userId),
+    ...HTML,
+  });
 }
 
 bot.hears("🏋️ Тренировка на сегодня", async (ctx) => {
@@ -878,7 +926,11 @@ bot.callbackQuery(/^splace_(home|gym)$/, async (ctx) => {
   registerUser(ctx.from.id, ctx.from.first_name ?? "");
   updateUser(ctx.from.id, { simplePlace: place });
   await ctx.answerCallbackQuery(place === "home" ? "Тренируемся дома 🏠" : "Тренируемся в зале 🏋️");
-  await sendSimpleWorkout(ctx, ctx.from.id);
+  if (ctx.callbackQuery.message) {
+    await showSimpleWorkoutInPlace(ctx, ctx.from.id);
+  } else {
+    await sendSimpleWorkout(ctx, ctx.from.id);
+  }
 });
 
 bot.callbackQuery("simple_place", async (ctx) => {
@@ -886,54 +938,53 @@ bot.callbackQuery("simple_place", async (ctx) => {
   await ctx.reply(`🏋️ <b>Где будешь заниматься?</b>`, { reply_markup: PLACE_KEYBOARD, ...HTML });
 });
 
-// Облегчённый вариант упражнения (Muscle Booster: swap если тяжело)
+// Облегчённый вариант упражнения
 bot.callbackQuery(/^seas_(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   const { w } = currentSimpleWorkout(ctx.from.id);
-  const e = w.items[parseInt(ctx.match[1])];
+  const idx = parseInt(ctx.match[1]);
+  const e = w.items[idx];
   if (!e) return;
-  await ctx.reply(
-    `🟢 <b>ЛЕГЧЕ: ${esc(e.name)}</b>\n${HR}\n\n${esc(e.easier)}\n\n` +
+  const kb = new InlineKeyboard()
+    .text("📖 Как делать", `sdet_${idx}`).row()
+    .text("← К тренировке", "simple_back");
+  await ctx.editMessageText(
+    `🟢 <b>ЛЕГЧЕ: ${esc(e.name.toUpperCase())}</b>\n${HR}\n\n${esc(e.easier)}\n\n` +
     `<i>Сделай этот вариант вместо основного — засчитывается так же.</i>`,
-    HTML
+    { reply_markup: kb, ...HTML }
   );
 });
 
-// Подробная инструкция по упражнению
+// Пошаговая инструкция — открывается в том же сообщении (без прокрутки вниз)
 bot.callbackQuery(/^sdet_(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery({ text: "Открыл инструкцию ↑" });
   const { w } = currentSimpleWorkout(ctx.from.id);
-  const e = w.items[parseInt(ctx.match[1])];
+  const idx = parseInt(ctx.match[1]);
+  const e = w.items[idx];
   if (!e) return;
-
-  const steps = e.steps.map((s, i) => `${i + 1}. ${esc(s)}`).join("\n");
-  const mistakes = e.mistakes.map((m) => `${DOT} ${esc(m)}`).join("\n");
-  const videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(e.videoQuery)}`;
-
-  await ctx.reply(
-    `❓ <b>${esc(e.name.toUpperCase())}</b>\n` +
-    `<i>${esc(e.scheme)}</i>\n${HR}\n\n` +
-    `<b>Как делать:</b>\n${steps}\n\n` +
-    `⚠️ <b>Частые ошибки:</b>\n${mistakes}\n\n` +
-    `🟢 <b>Если тяжело:</b> ${esc(e.easier)}`,
-    {
-      reply_markup: { inline_keyboard: [[{ text: "▶️ Посмотреть видео", url: videoUrl }]] },
-      ...HTML,
-    }
+  await ctx.editMessageText(
+    buildExerciseGuideText(e),
+    { reply_markup: buildExerciseGuideKeyboard(idx, e), ...HTML }
   );
+});
+
+bot.callbackQuery("simple_back", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showSimpleWorkoutInPlace(ctx, ctx.from.id);
 });
 
 bot.callbackQuery("simple_weight", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { place } = currentSimpleWorkout(ctx.from.id);
   const rule = place === "gym" ? WEIGHT_RULE : HOME_RULE;
-  await ctx.reply(
-    `❓ <b>${place === "gym" ? "КАК ВЫБРАТЬ ВЕС" : "СТАЛО ЛЕГКО?"}</b>\n${HR}\n\n${esc(rule)}`,
-    HTML
+  const kb = new InlineKeyboard().text("← К тренировке", "simple_back");
+  await ctx.editMessageText(
+    `⚖️ <b>${place === "gym" ? "КАК ВЫБРАТЬ ВЕС" : "СТАЛО ЛЕГКО?"}</b>\n${HR}\n\n${esc(rule)}`,
+    { reply_markup: kb, ...HTML }
   );
 });
 
-// Экспресс-версия на 15 минут: 3 упражнения × 2 подхода (у 400 млн юзеров Keep средняя тренировка — 20 мин)
+// Экспресс-версия на 15 минут
 bot.callbackQuery("simple_short", async (ctx) => {
   await ctx.answerCallbackQuery();
   const userId = ctx.from.id;
@@ -948,19 +999,19 @@ bot.callbackQuery("simple_short", async (ctx) => {
     .join("\n\n");
 
   const kb = new InlineKeyboard();
-  shortItems.forEach((_, i) => {
-    kb.text(`❓ ${i + 1}. Как делать`, `sdet_${i}`);
-    if (i % 2 === 1) kb.row();
+  shortItems.forEach((e, i) => {
+    const short = e.name.length > 12 ? e.name.slice(0, 11) + "…" : e.name;
+    kb.text(`📖 ${i + 1}. ${short}`, `sdet_${i}`).row();
   });
-  if (shortItems.length % 2 !== 0) kb.row();
-  kb.text("✅ Выполнил — записать", "simple_done");
+  kb.text("✅ Выполнил — записать", "simple_done").row();
+  kb.text("← Полная тренировка", "simple_back");
 
-  await ctx.reply(
-    `⚡ <b>ЭКСПРЕСС ${w.label}</b> ${DOT} ~15 минут ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
-    `<i>Разминка: 2–3 минуты ходьбы на месте и махов руками.</i>\n\n` +
+  await ctx.editMessageText(
+    `⚡ <b>ЭКСПРЕСС ${w.label}</b> ${DOT} ~15 мин ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
+    `<i>Разминка: 2–3 минуты.</i>\n\n` +
     items +
-    `\n\n⏱ <i>Отдых между подходами: 1 минута.\n` +
-    `Короткая тренировка лучше пропущенной — 15 минут тоже засчитываются!</i>`,
+    `\n\n👇 <i>Жми 📖 — пошаговая инструкция откроется здесь же.</i>\n` +
+    `⏱ <i>Отдых: 1 минута между подходами.</i>`,
     { reply_markup: kb, ...HTML }
   );
 });
@@ -1060,7 +1111,7 @@ bot.hears("❓ Помощь", async (ctx) => {
   resetSession(ctx.from!.id);
   await ctx.reply(
     `❓ <b>КАК ПОЛЬЗОВАТЬСЯ</b>\n${HR}\n\n` +
-    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Не знаешь упражнение — жми «❓ Как делать»: объясню пошагово, покажу видео. Сделал всё — нажми «✅ Выполнил».\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — инструкция откроется прямо в этом сообщении (без прокрутки). Видео — короткое, по кнопке «▶️ Видео техники».\n\n` +
     `📈 <b>Мой прогресс</b> — календарь и серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько калорий и белка тебе нужно под твою цель.\n\n` +
     `⚖️ <b>Вес тела</b> — записывай вес, увидишь график.\n\n` +

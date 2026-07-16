@@ -9,7 +9,8 @@ export interface SimpleExercise {
   steps: string[];     // пошагово, простым языком
   mistakes: string[];  // частые ошибки
   easier: string;      // если слишком тяжело
-  videoQuery: string;  // запрос для поиска видео на YouTube
+  videoQuery: string;  // fallback-поиск, если нет videoUrl
+  videoUrl?: string;   // прямая ссылка на короткое видео техники
 }
 
 export interface SimpleWorkout {
@@ -292,3 +293,32 @@ export const WEIGHT_RULE =
 export const HOME_RULE =
   "Стало легко? Добавляй по 2 повторения к каждому подходу. Дошёл до 15–20 — переходи на более сложный вариант " +
   "(например, с отжиманий от стены на отжимания от стола, потом с колен).";
+
+/** Прямые ссылки на короткие видео техники (не поиск YouTube). */
+const VIDEO_URLS: Record<string, string> = {
+  "Приседания на стул": "https://www.youtube.com/watch?v=Yvu6nRT2JkU",
+  "Отжимания от стены": "https://www.youtube.com/watch?v=a6YHcGpW0e0",
+  "Ягодичный мостик": "https://www.youtube.com/watch?v=wPM8icPu6H8",
+  "Планка на коленях": "https://www.youtube.com/watch?v=ASdvN_XEl_c",
+  "Выпады на месте": "https://www.youtube.com/watch?v=3XDriUn0udo",
+  "Отжимания с колен": "https://www.youtube.com/watch?v=0pkjOk0EiAk",
+  "«Супермен»": "https://www.youtube.com/watch?v=z6PJMT2y8GQ",
+  "Скручивания": "https://www.youtube.com/watch?v=Xyd_fa5zoEU",
+  "Приседания с гантелью у груди": "https://www.youtube.com/watch?v=MeIiIdhvieg",
+  "Жим гантелей лёжа": "https://www.youtube.com/watch?v=VmB1G1L26I8",
+  "Тяга гантели в наклоне": "https://www.youtube.com/watch?v=roCP6w-fX20",
+  "Планка": "https://www.youtube.com/watch?v=ASdvN_XEl_c",
+  "Румынская тяга с гантелями": "https://www.youtube.com/watch?v=2SHsk9AzF0k",
+  "Жим гантелей вверх сидя": "https://www.youtube.com/watch?v=qEwKCR5JCog",
+  "Тяга верхнего блока к груди": "https://www.youtube.com/watch?v=CAwf7n6Luuc",
+  "Выпады с гантелями": "https://www.youtube.com/watch?v=3XDriUn0udo",
+};
+
+export function exerciseVideoUrl(e: SimpleExercise): string {
+  return e.videoUrl ?? VIDEO_URLS[e.name] ??
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(e.videoQuery)}`;
+}
+
+export function isDirectVideo(url: string): boolean {
+  return url.includes("watch?v=") || url.includes("youtu.be/");
+}
