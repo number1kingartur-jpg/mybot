@@ -1,4 +1,4 @@
-/** Посты @kingmode_fit — голос Артура. Фото из CONTENT/brand/media-archive. */
+/** Посты @kingmode_fit — фото: assets/channel/{id}.ext через photo-map.json */
 
 import { CHANNEL_POSTS_ANALYSIS } from "./posts-analysis";
 import { CHANNEL_POSTS_EXTRA } from "./posts-extra";

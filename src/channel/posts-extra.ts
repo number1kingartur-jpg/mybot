@@ -1,30 +1,14 @@
 import type { ChannelPost } from "./posts";
 
-const P = [
-  "master/photos/IMG_1020.JPG",
-  "master/photos/IMG_3641.JPEG",
-  "master/photos/IMG_9481.JPEG",
-  "master/photos/IMG_9474.JPEG",
-  "master/photos/IMG_9510.JPEG",
-  "master/photos/IMG_9477.JPEG",
-  "2026-07-11-icloud/photos/IMG_9399.JPEG",
-  "2026-07-11-icloud/photos/IMG_9397.JPEG",
-  "2026-07-11-icloud/photos/IMG_9391.JPEG",
-  "2026-07-11-icloud/photos/IMG_9400.JPEG",
-  "2026-07-11-icloud/photos/IMG_9433.JPEG",
-  "2026-07-11-icloud/photos/IMG_9390.JPEG",
-];
-
-function img(i: number) {
-  return { archive: P[i % P.length] };
+function img(_i: number) {
+  return undefined;
 }
 
-function p(title: string, body: string, id: string, photoIdx: number, guideStart?: string): ChannelPost {
+function p(title: string, body: string, id: string, _photoIdx: number, guideStart?: string): ChannelPost {
   return {
     id,
     title,
     body,
-    archiveImage: img(photoIdx).archive,
     guideStart,
   };
 }
