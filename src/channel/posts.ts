@@ -1,7 +1,5 @@
 /** Посты @kingmode_fit — фото: assets/channel/{id}.ext через photo-map.json */
 
-import { CHANNEL_POSTS_ANALYSIS } from "./posts-analysis";
-import { CHANNEL_POSTS_EXTRA } from "./posts-extra";
 import { POST_CLOSINGS } from "./post-closings";
 import { finalizeChannelPosts } from "./validate-posts";
 
@@ -80,7 +78,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `— правило «не пропускать два раза подряд».\n\n` +
     `Форму держит не героический понедельник. Сотня обычных средних тренировок.`,
     "show_up",
-    { archive: "2026-07-11-icloud/photos/IMG_9397.JPEG" }
+    { archive: "frames/gym-squat.jpg" }
   ),
   post(
     "Питание",
@@ -124,7 +122,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `— сон 7+ ч — не опция.\n\n` +
     `Лёгкая неделя — инвестиция, не слабость.`,
     "recovery",
-    { archive: "2026-07-11-icloud/photos/IMG_9400.JPEG" }
+    { archive: "master/photos/IMG_3641.JPEG" }
   ),
   post(
     "Выходные",
@@ -136,7 +134,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `— не взвешиваться 48 ч (вода + соль искажают).\n\n` +
     `Вернись к базе в понедельник. Не начинай неделю с нуля в голове.`,
     "weekend",
-    { archive: "master/photos/IMG_9474.JPEG" }
+    { archive: "2026-07-11-icloud/video-frames/full-9398-t210s.jpg" }
   ),
   post(
     "Дисциплина",
@@ -148,7 +146,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `— правило 5 минут: прийти в зал — дальше тело включится.\n\n` +
     `Настроение приходит после действия. Не жди его до.`,
     "discipline",
-    { archive: "2026-07-11-icloud/photos/IMG_9390.JPEG" }
+    { archive: "2026-07-14-icloud/video-frames/IMG_9516-t3s.jpg" }
   ),
   post(
     "Прогресс",
@@ -187,14 +185,14 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `Это шаблон на 7 дней, не пожизненная диета. Цель — почувствовать систему: тренировка + еда + сон в одном ритме.\n\n` +
     `Забери PDF в боте, сохрани на телефон, иди по дням.`,
     "guide_7day",
-    { archive: "master/photos/IMG_9481.JPEG" },
+    { archive: "2026-07-14-icloud/video-frames/IMG_9518-t3s.jpg" },
     "guide_7day"
   ),
   post(
     "7 ошибок",
     "",
     "guide_7mistakes",
-    { archive: "master/photos/IMG_1020.JPG" },
+    { archive: "master/photos/IMG_9512.JPEG" },
     "guide_7mistakes",
     [
       `Тренируешься 3–4 раза в неделю — а форма стоит?\n\n` +
@@ -233,17 +231,13 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `Дальше @Raschettbot посчитает под твой вес и цель. Фото тарелки — оценка порции без весов.\n\n` +
     `Файл по кнопке ниже — сохрани и пересчитывай раз в месяц.`,
     "guide_kbju",
-    { archive: "2026-07-11-icloud/photos/IMG_9399.JPEG" },
+    { archive: "master/photos/IMG_9474.JPEG" },
     "guide_kbju"
   ),
 ];
 
-/** База + разборы + практика. Только posts-analysis / posts-extra — не подключать wave4/bank/more. */
-const CHANNEL_POSTS_RAW: ChannelPost[] = [
-  ...CHANNEL_POSTS_BASE,
-  ...CHANNEL_POSTS_ANALYSIS,
-  ...CHANNEL_POSTS_EXTRA,
-];
+/** Автопост: только базовые посты с твоими фото. Разборы — в posts-analysis.ts, не в очереди. */
+const CHANNEL_POSTS_RAW: ChannelPost[] = [...CHANNEL_POSTS_BASE];
 
 /** Уникальная концовка по id — не общий шаблон на все посты. */
 function withClosing(post: ChannelPost): ChannelPost {

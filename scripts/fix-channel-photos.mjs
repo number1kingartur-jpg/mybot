@@ -36,7 +36,7 @@ const LEGACY_PHOTO = {
   8: "show_up",
   9: "discipline",
   45: "data",
-  46: "sleep",
+  46: "recovery",
   48: "plateau",
 };
 

@@ -17,7 +17,7 @@ const ENABLED =
   process.env.CHANNEL_POST_ENABLED !== "0" &&
   process.env.CHANNEL_POST_ENABLED !== "false";
 
-/** Слоты публикации (часы, Bangkok). По умолчанию 10:00, 15:00, 19:00 — 3 поста в день. */
+/** Слоты публикации (часы, Bangkok). По умолчанию 10:00 — 1 пост в слот. */
 export function channelPostSlots(): number[] {
   const raw = process.env.CHANNEL_POST_SLOTS?.trim();
   if (raw) {
@@ -40,15 +40,23 @@ export function channelPostSlots(): number[] {
       if (Number.isFinite(h)) return [h];
     }
   }
-  return [10, 15, 19];
+  return [10];
+}
+
+/** Дни недели (cron: 0=вс, 1=пн …). По умолчанию пн/ср/пт. Пусто = каждый день. */
+export function channelPostDays(): string | undefined {
+  const raw = process.env.CHANNEL_POST_DAYS?.trim();
+  if (raw === "*" || raw === "daily") return undefined;
+  if (raw) return raw;
+  return "1,3,5";
 }
 
 const POST_SLOTS = channelPostSlots();
 
-/** Постов в день = число слотов (по умолчанию 3). */
+/** Постов в день. По умолчанию 1 (один слот). */
 const POSTS_PER_DAY = Math.max(
-  POST_SLOTS.length,
-  parseInt(process.env.CHANNEL_POSTS_PER_DAY ?? String(POST_SLOTS.length), 10) || POST_SLOTS.length
+  1,
+  parseInt(process.env.CHANNEL_POSTS_PER_DAY ?? "1", 10) || 1
 );
 
 /** Для статуса / логов */
@@ -182,7 +190,7 @@ export function previewNextPost():
       html:
         `<b>Очередь исчерпана</b>\n\n` +
         `Все ${CHANNEL_POSTS.length} постов уже вышли в канал.\n` +
-        `Повторов нет. Добавь новые посты в <code>posts-extra.ts</code> и задеплой.`,
+        `Повторов нет. Добавь новые посты в <code>posts.ts</code> и задеплой.`,
       mode: "exhausted",
     };
   }

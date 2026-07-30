@@ -18,6 +18,10 @@ for (const p of CHANNEL_POSTS) {
     console.error(`FAIL: post ${p.id} has old generic footer`);
     process.exit(1);
   }
+  if (!p.archiveImage) {
+    console.error(`FAIL: post ${p.id} has no archiveImage`);
+    process.exit(1);
+  }
   const end = text.slice(-100);
   const list = dupEnds.get(end) ?? [];
   list.push(p.id);
@@ -37,6 +41,10 @@ for (const p of CHANNEL_POSTS) {
     console.error(`FAIL: no photo-map entry for ${p.id}`);
     process.exit(1);
   }
+  if (rel !== p.archiveImage) {
+    console.error(`FAIL: photo-map ${p.id} != archiveImage (${rel})`);
+    process.exit(1);
+  }
   const ext = extname(rel).toLowerCase() || ".jpg";
   const file = join(assetsDir, p.id + ext);
   if (!existsSync(file)) {
@@ -46,7 +54,7 @@ for (const p of CHANNEL_POSTS) {
   const h = createHash("md5").update(readFileSync(file)).digest("hex");
   const prev = hashes.get(h);
   if (prev) {
-    console.error(`FAIL: duplicate photo ${p.id} == ${prev}`);
+    console.error(`FAIL: duplicate photo ${p.id} == ${prev} (${rel})`);
     process.exit(1);
   }
   hashes.set(h, p.id);
@@ -54,5 +62,5 @@ for (const p of CHANNEL_POSTS) {
 
 const lens = CHANNEL_POSTS.map((p) => (p.parts?.join("") ?? p.body).length);
 console.log(
-  `OK: ${CHANNEL_POSTS.length} posts, unique endings, unique photos, min ${Math.min(...lens)} chars`
+  `OK: ${CHANNEL_POSTS.length} posts, unique endings, ${hashes.size} unique photos, min ${Math.min(...lens)} chars`
 );

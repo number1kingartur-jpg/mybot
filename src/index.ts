@@ -34,6 +34,7 @@ import {
   channelSlotsLabel,
   channelPostsPerDay,
   channelPostSlots,
+  channelPostDays,
   channelPostTotal,
   reserveDaysNew,
   channelToday,
@@ -3328,11 +3329,13 @@ cron.schedule("0 21 * * *", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
-// ── Автовыкладка в Telegram-канал: 3 слота в день ─────────────────────────
+// ── Автовыкладка в Telegram-канал (по умолчанию пн/ср/пт 10:00 Bangkok) ───
 if (channelPostingEnabled()) {
   const slots = channelPostSlots();
+  const days = channelPostDays();
+  const dow = days ?? "*";
   for (const hour of slots) {
-    cron.schedule(`0 ${hour} * * *`, async () => {
+    cron.schedule(`0 ${hour} * * ${dow}`, async () => {
       const result = await publishNextChannelPost(bot.api);
       if (result.ok) {
         console.log(`channel cron ok (${hour}:00): ${result.postId}`);
@@ -3345,7 +3348,8 @@ if (channelPostingEnabled()) {
       }
     }, { timezone: "Asia/Bangkok" });
   }
-  console.log(`   Channel schedule: ${channelSlotsLabel()} Bangkok (${slots.length}/day)`);
+  const dayLabel = days ? `дни ${days}` : "ежедневно";
+  console.log(`   Channel schedule: ${channelSlotsLabel()} Bangkok, ${dayLabel}, max ${channelPostsPerDay()}/day`);
   console.log(`   Channel: один процесс с CHANNEL_POST_ENABLED=1 — не запускай npm run dev параллельно с Railway`);
 }
 
