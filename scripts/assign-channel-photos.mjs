@@ -1,5 +1,6 @@
 /**
- * Уникальное фото на каждый пост. Удаляет старые {id}.* перед копированием.
+ * Фото канала @kingmode_fit — только реальные IMG_* из архива CONTENT.
+ * Приоритет: archiveImage из posts.ts, иначе следующее уникальное IMG.
  * node scripts/assign-channel-photos.mjs
  */
 import {
@@ -26,14 +27,15 @@ const POOL_DIRS = [
   join(ARCHIVE, "2026-07-11-icloud", "photos"),
 ];
 
-const IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
+/** Только камера iPhone/Android — без PNG, UUID, AI. */
+const IMG_ONLY = /^IMG_\d+\.(jpe?g)$/i;
 
-function collectPhotos() {
+function collectImgPool() {
   const files = [];
   for (const dir of POOL_DIRS) {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir)) {
-      if (!IMAGE_EXT.test(name)) continue;
+      if (!IMG_ONLY.test(name)) continue;
       const full = join(dir, name);
       if (!statSync(full).isFile()) continue;
       const rel = full.slice(ARCHIVE.length + 1).replace(/\\/g, "/");
@@ -44,67 +46,70 @@ function collectPhotos() {
   return files;
 }
 
-function clearPostAssets(postId) {
+function resolveArchive(rel) {
+  const path = join(ARCHIVE, rel.replace(/\//g, "\\"));
+  return existsSync(path) ? path : null;
+}
+
+function clearAllAssets(validIds) {
   if (!existsSync(OUT)) return;
   for (const name of readdirSync(OUT)) {
     if (name === "photo-map.json") continue;
-    const base = name.replace(IMAGE_EXT, "");
-    if (base === postId) unlinkSync(join(OUT, name));
+    const id = name.replace(/\.(jpe?g|png|webp)$/i, "");
+    unlinkSync(join(OUT, name));
   }
 }
 
-function clearOrphans(validIds) {
-  if (!existsSync(OUT)) return;
-  let removed = 0;
-  for (const name of readdirSync(OUT)) {
-    if (name === "photo-map.json") continue;
-    if (!IMAGE_EXT.test(name)) continue;
-    const id = name.replace(IMAGE_EXT, "");
-    if (!validIds.has(id)) {
-      unlinkSync(join(OUT, name));
-      removed++;
-    }
-  }
-  if (removed) console.log(`removed ${removed} orphan assets`);
-}
-
-const pool = collectPhotos();
-const validIds = new Set(CHANNEL_POSTS.map((p) => p.id));
-clearOrphans(validIds);
-
+const pool = collectImgPool();
 if (pool.length < CHANNEL_POSTS.length) {
-  console.warn(`warning: only ${pool.length} photos for ${CHANNEL_POSTS.length} posts`);
+  console.error(`FAIL: need ${CHANNEL_POSTS.length} IMG photos, found ${pool.length}`);
+  process.exit(1);
 }
+
+const validIds = new Set(CHANNEL_POSTS.map((p) => p.id));
+clearAllAssets(validIds);
 
 const map = {};
 const used = new Set();
 
-for (let i = 0; i < CHANNEL_POSTS.length; i++) {
-  const post = CHANNEL_POSTS[i];
-  let rel = pool[i % pool.length];
-  if (used.has(rel) && pool.length > used.size) {
-    rel = pool.find((p) => !used.has(p)) ?? rel;
-  }
+function assign(postId, rel) {
+  if (!rel || used.has(rel)) return false;
+  if (!resolveArchive(rel)) return false;
+  map[postId] = rel;
   used.add(rel);
-  map[post.id] = rel;
+  return true;
+}
+
+// 1) Явный archiveImage из posts.ts
+for (const post of CHANNEL_POSTS) {
+  if (post.archiveImage) assign(post.id, post.archiveImage);
+}
+
+// 2) Остальным — следующее уникальное IMG из пула
+for (const post of CHANNEL_POSTS) {
+  if (map[post.id]) continue;
+  const rel = pool.find((p) => !used.has(p));
+  if (!rel) {
+    console.error(`FAIL: no unique IMG left for ${post.id}`);
+    process.exit(1);
+  }
+  assign(post.id, rel);
 }
 
 mkdirSync(OUT, { recursive: true });
 writeFileSync(MAP_FILE, JSON.stringify(map, null, 2), "utf-8");
-console.log(`photo-map: ${Object.keys(map).length} posts, ${used.size} unique sources`);
 
+let copied = 0;
 for (const post of CHANNEL_POSTS) {
   const rel = map[post.id];
-  if (!rel) continue;
-  const src = join(ARCHIVE, rel.replace(/\//g, "\\"));
-  if (!existsSync(src)) {
-    console.log(post.id, "missing", rel);
+  const src = resolveArchive(rel);
+  if (!src) {
+    console.error("missing", post.id, rel);
     continue;
   }
-  clearPostAssets(post.id);
   const ext = extname(src).toLowerCase() || ".jpg";
-  const dest = join(OUT, `${post.id}${ext}`);
-  copyFileSync(src, dest);
+  copyFileSync(src, join(OUT, `${post.id}${ext}`));
+  copied++;
 }
 
-console.log("done — unique photos assigned");
+console.log(`photo-map: ${Object.keys(map).length} posts, ${used.size} unique IMG sources, copied ${copied}`);
