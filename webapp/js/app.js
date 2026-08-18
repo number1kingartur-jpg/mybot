@@ -37,6 +37,7 @@
     foodGrams: "",
     migrated: false, // локальные записи веса уже перенесены в базу бота
     localMeals: [], // режим без сервера: только ручной ввод, хранение на устройстве
+    localWater: {}, // режим без сервера: { "YYYY-MM-DD": мл }
     profile: { sex: "m", age: 30, heightCm: 180, weightKg: 80, activity: "mid", goal: "maint" },
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
@@ -73,6 +74,7 @@
           entries: state.entries,
           lastOrm: state.lastOrm,
           localMeals: state.localMeals,
+          localWater: state.localWater,
           setupDone: state.setupDone,
           migrated: state.migrated
         })
@@ -92,6 +94,7 @@
       });
       if (Array.isArray(saved.entries)) state.entries = saved.entries;
       if (Array.isArray(saved.localMeals)) state.localMeals = saved.localMeals;
+      if (saved.localWater && typeof saved.localWater === "object") state.localWater = saved.localWater;
       if (saved.lastOrm) state.lastOrm = saved.lastOrm;
       state.setupDone = Boolean(saved.setupDone);
       state.migrated = Boolean(saved.migrated);
@@ -605,15 +608,38 @@
       ) +
       "</div>" +
       '<div class="grid-2">' +
+      (function () {
+        var w = water();
+        return metric(
+          "Вода",
+          fmtWater(w.ml),
+          w.ml >= w.targetMl ? "норма закрыта" : "из " + fmtWater(w.targetMl)
+        );
+      })() +
       metric(
         "Последний 1ПМ",
         state.lastOrm ? state.lastOrm.oneRm + " <span class=\"figure__unit\">кг</span>" : "—",
         state.lastOrm ? state.lastOrm.weightKg + " кг × " + state.lastOrm.reps : "не считал"
       ) +
+      "</div>" +
+      '<div class="chips" style="margin-bottom:18px">' +
+      [250, 500]
+        .map(function (ml) {
+          return '<button type="button" class="chip" data-water="' + ml + '">+' + ml + " мл</button>";
+        })
+        .join("") +
+      '<button type="button" class="chip" data-go="profile">Профиль</button>' +
+      "</div>" +
+      '<div class="grid-2">' +
       metric(
         "Программа",
         modelName(pr.model),
         pr.weeks + " " + plural(pr.weeks, "неделя", "недели", "недель") + " · " + pr.days + " в нед."
+      ) +
+      metric(
+        "Тренировок",
+        state.day ? String(state.day.workoutsTotal) : "—",
+        state.day ? "записано всего" : "нет связи с ботом"
       ) +
       "</div>" +
       card(
@@ -1711,6 +1737,162 @@
     );
   }
 
+  /* ── Экран: профиль ─────────────────────────────────────────────────────── */
+
+  var SEX_WORD = { m: "Мужчина", f: "Женщина" };
+  var ACTIVITY_WORD = { low: "Низкая", mid: "Средняя", high: "Высокая" };
+
+  /**
+   * Вода за сегодня. С сервером — общая цифра с ботом; без сервера — только на
+   * устройстве. Ориентир: 35 мл на кг, от свежего веса из дневника, а не из анкеты.
+   */
+  function water() {
+    if (state.day && state.day.water) return state.day.water;
+    var last = sortedEntries().slice(-1)[0];
+    var kg = last ? last.weightKg : num(state.profile.weightKg) || 0;
+    return {
+      ml: state.localWater[today()] || 0,
+      targetMl: Math.round(((kg > 0 ? kg : 80) * 35) / 100) * 100,
+      basedOnKg: kg || null,
+      local: true
+    };
+  }
+
+  function fmtWater(ml) {
+    return ml >= 1000 ? (Math.round(ml / 100) / 10).toFixed(1).replace(".", ",") + " л" : ml + " мл";
+  }
+
+  function waterCard() {
+    var w = water();
+    var left = w.targetMl - w.ml;
+    return card(
+      cardHead(
+        left > 0 ? "Вода: осталось " + fmtWater(left) : "Вода: норма закрыта",
+        w.basedOnKg
+          ? "Ориентир " + fmtWater(w.targetMl) + " — 35 мл на кг при весе " + w.basedOnKg + " кг"
+          : "Ориентир " + fmtWater(w.targetMl) + " — задай вес, посчитаю точнее",
+        w.local ? "на устройстве" : null
+      ) +
+        figure(fmtWater(w.ml).replace(/ (мл|л)$/, ""), w.ml >= 1000 ? " л" : " мл", "выпито сегодня") +
+        '<div class="bars">' +
+        bar(
+          "Норма дня",
+          left > 0 ? "#6fa8c7" : "#cba968",
+          fmtWater(w.ml) + " / " + fmtWater(w.targetMl),
+          (w.ml * 100) / w.targetMl
+        ) +
+        "</div>" +
+        '<div class="chips" style="margin-top:14px">' +
+        [250, 500, 750]
+          .map(function (ml) {
+            return (
+              '<button type="button" class="chip" data-water="' +
+              ml +
+              '">+' +
+              ml +
+              " мл</button>"
+            );
+          })
+          .join("") +
+        (w.ml > 0 ? '<button type="button" class="chip" data-water="-250">−250 мл</button>' : "") +
+        "</div>" +
+        '<p class="note note--plain">Цифра — ориентир для тренирующегося человека, а не ' +
+        "медицинская норма. В жару и в тяжёлый день добавляй 500–700 мл сверху: Таиланд " +
+        "и час работы со штангой стоят литра пота.</p>"
+    );
+  }
+
+  function renderProfile() {
+    var p = state.profile;
+    var m = macros();
+    var eaten = eatenTotals();
+    var entries = sortedEntries();
+    var advice = KM.weightTrendAdvice(entries, p.goal);
+    var last = entries.length ? entries[entries.length - 1] : null;
+    var name = state.day && state.day.firstName ? state.day.firstName : "";
+    var workouts = state.day ? state.day.workoutsTotal : null;
+
+    var factCard = m
+      ? card(
+          cardHead(
+            "Съедено сегодня",
+            "Норма " + m.kcal + " ккал · цель: " + GOAL_WORD[p.goal],
+            eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
+          ) +
+            figure(eaten.kcal, " ккал", "осталось " + Math.max(0, m.kcal - eaten.kcal)) +
+            '<div class="bars">' +
+            bar(
+              "Калории",
+              m.kcal - eaten.kcal >= 0 ? "#cba968" : "#d98a8a",
+              eaten.kcal + " / " + m.kcal,
+              (eaten.kcal * 100) / m.kcal
+            ) +
+            bar("Белок", "#8a7a52", eaten.proteinG + " / " + m.proteinG + " г", (eaten.proteinG * 100) / m.proteinG) +
+            bar("Жиры", "#b08d45", eaten.fatG + " / " + m.fatG + " г", (eaten.fatG * 100) / m.fatG) +
+            bar("Углеводы", "#7d8ea8", eaten.carbsG + " / " + m.carbsG + " г", (eaten.carbsG * 100) / m.carbsG) +
+            "</div>",
+          { gold: true, tap: "nutrition" }
+        )
+      : card(
+          cardHead("Съедено сегодня", "Норма ещё не посчитана") +
+            '<p class="lead">Заполни данные ниже — покажу, сколько осталось до нормы.</p>',
+          { tap: "nutrition" }
+        );
+
+    return (
+      noticeHtml() +
+      card(
+        cardHead(
+          name ? esc(name) : "Личный профиль",
+          SEX_WORD[p.sex] + " · " + num(p.age) + " лет · " + num(p.heightCm) + " см",
+          GOAL_WORD[p.goal]
+        ) +
+          '<div class="grid-2">' +
+          metric("Вес", last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "—", last ? "запись " + formatDate(last.date) : "нет записей") +
+          metric(
+            "Тренд",
+            advice ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + ' <span class="figure__unit">кг/нед</span>' : "—",
+            advice ? "за " + advice.days + " дн." : "нужно 4 взвешивания"
+          ) +
+          "</div>" +
+          '<div class="grid-2">' +
+          metric("Активность", ACTIVITY_WORD[p.activity], "коэффициент в норме калорий") +
+          metric(
+            "Тренировок",
+            workouts === null ? "—" : String(workouts),
+            workouts === null ? "считается в чате" : "записано всего"
+          ) +
+          "</div>" +
+          '<div class="btn-stack" style="margin-top:16px">' +
+          '<button class="btn btn--outline btn--slim" data-action="edit-profile">Изменить данные</button>' +
+          "</div>"
+      ) +
+      factCard +
+      waterCard() +
+      renderDiary()
+    );
+  }
+
+  function addWater(ml) {
+    haptic("light");
+    if (state.day) {
+      KM_API.addWater(ml, state.day.date)
+        .then(function (data) {
+          state.day = data;
+          render();
+        })
+        .catch(function (e) {
+          state.notice = { kind: "err", text: e && e.message ? e.message : "Не сохранилось." };
+          render();
+        });
+      return;
+    }
+    var key = today();
+    state.localWater[key] = Math.max(0, (state.localWater[key] || 0) + ml);
+    persist();
+    render();
+  }
+
   function formatDate(iso) {
     var p = iso.split("-");
     return p[2] + "." + p[1];
@@ -1800,15 +1982,18 @@
     workout: "M4 9v6M8 6.5v11M16 6.5v11M20 9v6M8 12h8",
     nutrition: "M7 3v8M5 3v3.5a2 2 0 0 0 4 0V3M7 11v10M15.5 21V3c2 1.2 3 3.2 3 6.2s-1 3.8-3 3.8",
     calc: "M6 3.5h12v17H6zM9.5 7.5h5M9 11.5h.01M12 11.5h.01M15 11.5h.01M9 15.5h.01M12 15.5h.01M15 15.5h.01",
-    diary: "M4 19h16M6.5 15.5l4-5 3 3 4.5-6.5"
+    diary: "M4 19h16M6.5 15.5l4-5 3 3 4.5-6.5",
+    profile: "M12 12.5a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5 20.5c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5"
   };
 
+  // Дневник веса больше не отдельная вкладка: он часть профиля — там же, где вес,
+  // тренд и вода. Экран `diary` остался в SCREENS, на него ведут ссылки из подсказок.
   var TABS = [
     ["home", "Сегодня", "Сегодня"],
     ["workout", "Тренировка", "Тренировка"],
     ["nutrition", "Питание", "Питание"],
     ["calc", "Расчёты", "Расчёты"],
-    ["diary", "Дневник", "Дневник веса"]
+    ["profile", "Профиль", "Личный профиль"]
   ];
 
   function renderTabs() {
@@ -1834,7 +2019,8 @@
     workout: renderWorkout,
     nutrition: renderNutrition,
     calc: renderCalc,
-    diary: renderDiary
+    diary: renderDiary,
+    profile: renderProfile
   };
 
   function render() {
@@ -1890,6 +2076,11 @@
     var goEl = t.closest("[data-go]");
     if (goEl) return go(goEl.getAttribute("data-go"));
 
+    // Вода проверяется до .chip: кнопки объёма используют тот же класс,
+    // но переключателем разделов не являются
+    var wat = t.closest("[data-water]");
+    if (wat) return addWater(parseInt(wat.getAttribute("data-water"), 10));
+
     var chip = t.closest(".chip");
     if (chip) return onSeg(chip);
 
@@ -1906,6 +2097,19 @@
       var url = link.getAttribute("data-link");
       if (tg && tg.openLink) tg.openLink(url);
       else window.open(url, "_blank", "noopener");
+      return;
+    }
+
+    // Ссылки в подвале. Внутри Telegram обычный target="_blank" не открывается:
+    // WebView блокирует новое окно, поэтому адрес отдаём в SDK. Для t.me нужен
+    // именно openTelegramLink — openLink уводит канал во внешний браузер.
+    var ext = t.closest("[data-ext]");
+    if (ext && tg) {
+      ev.preventDefault();
+      var extUrl = ext.getAttribute("href");
+      if (ext.getAttribute("data-ext") === "tg" && tg.openTelegramLink) tg.openTelegramLink(extUrl);
+      else if (tg.openLink) tg.openLink(extUrl);
+      else window.open(extUrl, "_blank", "noopener");
       return;
     }
 
@@ -1970,6 +2174,11 @@
         state.nutTab = "norm";
         state.notice = null;
         return render();
+      case "edit-profile":
+        // Данные профиля живут в одной форме с нормой калорий: две копии полей
+        // разошлись бы, и человек не понял бы, какая цифра считается
+        state.nutTab = "norm";
+        return go("nutrition");
       case "add-text-form":
       case "add-manual-form":
       case "add-food-form":

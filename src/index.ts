@@ -156,8 +156,21 @@ function appRow(): { text: string; web_app?: { url: string } }[][] {
   return [[{ text: "⚡️ Приложение", web_app: { url: MINIAPP_URL } }]];
 }
 
+/**
+ * Режим лаунчера: бот не дублирует приложение, а открывает его.
+ * Включён по умолчанию, когда адрес приложения известен. `APP_ONLY=0` возвращает
+ * прежнее меню из двенадцати кнопок — обработчики никуда не делись, к ним просто
+ * больше не ведёт интерфейс.
+ */
+const APP_ONLY = Boolean(MINIAPP_URL) && process.env.APP_ONLY !== "0";
+
+const APP_KEYBOARD = {
+  keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: MINIAPP_URL } }]] : [],
+  resize_keyboard: true,
+};
+
 // ── Keyboards ──────────────────────────────────────────────────────────────
-const MAIN_KEYBOARD = {
+const FULL_MAIN_KEYBOARD = {
   keyboard: [
     ...appRow(),
     [{ text: "📝 Записать тренировку" }, { text: "📔 Сегодня" }],
@@ -170,13 +183,15 @@ const MAIN_KEYBOARD = {
   resize_keyboard: true,
 };
 
+const MAIN_KEYBOARD = APP_ONLY ? APP_KEYBOARD : FULL_MAIN_KEYBOARD;
+
 const PRESET_EXERCISES = ["Присед", "Жим лёжа", "Становая", "ОХ жим", "Подтягивания", "Тяга"];
 const EXERCISE_EMOJI: Record<string, string> = {
   "Присед": "🦵", "Жим лёжа": "🏋️", "Становая": "💀",
   "ОХ жим": "🔺", "Подтягивания": "💪", "Тяга": "🚣",
 };
 
-const SIMPLE_KEYBOARD = {
+const FULL_SIMPLE_KEYBOARD = {
   keyboard: [
     ...appRow(),
     [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
@@ -187,11 +202,14 @@ const SIMPLE_KEYBOARD = {
   resize_keyboard: true,
 };
 
+const SIMPLE_KEYBOARD = APP_ONLY ? APP_KEYBOARD : FULL_SIMPLE_KEYBOARD;
+
 function userMode(userId: number): "simple" | "pro" | null {
   return getUser(userId)?.mode ?? null;
 }
 
 function mainKeyboardFor(userId: number) {
+  if (APP_ONLY) return APP_KEYBOARD;
   return userMode(userId) === "simple" ? SIMPLE_KEYBOARD : MAIN_KEYBOARD;
 }
 
@@ -699,6 +717,35 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
   await ctx.reply(`Меню внизу 👇`, { reply_markup: SIMPLE_KEYBOARD });
 }
 
+/**
+ * Приветствие в режиме лаунчера: одна кнопка вместо двенадцати.
+ * Списка функций в чате нет намеренно — он был бы вторым интерфейсом, который
+ * расходится с приложением при каждой правке.
+ */
+async function sendAppWelcome(
+  ctx: { reply: (t: string, o?: object) => Promise<unknown> },
+  name: string
+) {
+  const kb = new InlineKeyboard();
+  if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", MINIAPP_URL).row();
+  kb.url("📢 Канал", "https://t.me/kingmode_fit");
+
+  await ctx.reply(
+    `<b>⚡️ KINGMODE</b> · <i>Artur King</i>\n${HR}\n\n` +
+    `Привет, <b>${esc(name)}</b>. Всё в приложении:\n\n` +
+    `🍗 калории и БЖУ под цель, дневник съеденного, фото еды\n` +
+    `💧 вода за день с ориентиром по весу\n` +
+    `🏋️ тренировка на сегодня и программа по неделям\n` +
+    `🧮 1ПМ и таблица процентов\n` +
+    `⚖️ вес, тренд и личный профиль\n\n` +
+    `<i>Кнопка ниже и «⚡️ Открыть KINGMODE» в меню — это одно и то же.</i>`,
+    { reply_markup: kb, ...HTML }
+  );
+  if (MINIAPP_URL) {
+    await ctx.reply("Кнопка внизу всегда под рукой 👇", { reply_markup: APP_KEYBOARD });
+  }
+}
+
 async function sendProWelcome(ctx: { reply: (t: string, o?: object) => Promise<unknown> }, name: string) {
   await ctx.reply(
     `<b>💎 KINGMODE</b> · <i>Artur King</i>\n` +
@@ -783,6 +830,11 @@ bot.command("start", async (ctx) => {
     }
     // новому пользователю всё равно нужен выбор режима
     if (userMode(ctx.from!.id) !== null) return;
+  }
+
+  if (APP_ONLY) {
+    await sendAppWelcome(ctx, ctx.from?.first_name ?? "друг");
+    return;
   }
 
   if (mode === "simple") {
@@ -1231,6 +1283,12 @@ bot.callbackQuery("guide_start", async (ctx) => {
 // ── /help ─────────────────────────────────────────────────────────────────
 bot.command("help", async (ctx) => {
   resetSession(ctx.from!.id);
+
+  if (APP_ONLY) {
+    await sendAppWelcome(ctx, ctx.from?.first_name ?? "друг");
+    return;
+  }
+
   await ctx.reply(
     `❓ <b>СПРАВКА</b>\n${HR}\n\n` +
     `📝 <b>Записать тренировку</b>\nПросто напиши в чат: <code>присед 100 5х5</code>. Разные веса: <code>жим 60х8, 80х5, 100х3</code>. Несколько упражнений — с новой строки. Можно голосовым 🎙. Бот сам заметит рекорды. Кнопка «📝» — если удобнее пошагово.\n\n` +
@@ -1256,13 +1314,7 @@ bot.command("app", async (ctx) => {
     await ctx.reply("Приложение пока не подключено. Все расчёты работают кнопками в чате.", HTML);
     return;
   }
-  await ctx.reply(
-    `⚡️ <b>ПРИЛОЖЕНИЕ</b>\n${HR}\n\n` +
-    `Те же расчёты, но без переписки: калории и БЖУ, 1RM с таблицей процентов, ` +
-    `программа на недели с весами, готовые тренировки с техникой, дневник веса с трендом.\n\n` +
-    `<i>Кнопка «⚡️ Приложение» — в меню внизу.</i>`,
-    { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
-  );
+  await sendAppWelcome(ctx, ctx.from?.first_name ?? "друг");
 });
 
 // ── Канал: автовыкладка (только владелец) ───────────────────────────────────
@@ -3434,20 +3486,33 @@ async function main() {
   if (branding.length) console.log(`   Channel branding applied: ${branding.join(", ")}`);
   await verifyChannelAccess();
 
-  await bot.api.setMyCommands([
-    { command: "start", description: "Главное меню" },
-    { command: "app", description: "Приложение: расчёты, тренировки, питание" },
-    { command: "mode", description: "Режим: простой / про" },
-    { command: "remind", description: "Напоминания о тренировках" },
-    { command: "premium", description: "Premium подписка (Stars)" },
-    { command: "help", description: "Справка по функциям" },
-  ]);
+  // В режиме лаунчера список команд короткий: длинный список — это второе меню,
+  // которое обещает в чате то, что живёт в приложении.
+  await bot.api.setMyCommands(
+    APP_ONLY
+      ? [
+          { command: "app", description: "Открыть KINGMODE" },
+          { command: "guides", description: "Гайды в файлах" },
+          { command: "start", description: "Начать заново" },
+        ]
+      : [
+          { command: "start", description: "Главное меню" },
+          { command: "app", description: "Приложение: расчёты, тренировки, питание" },
+          { command: "mode", description: "Режим: простой / про" },
+          { command: "remind", description: "Напоминания о тренировках" },
+          { command: "premium", description: "Premium подписка (Stars)" },
+          { command: "help", description: "Справка по функциям" },
+        ]
+  );
   await bot.start({
     onStart: () => {
       console.log("✅ Bot running…");
       console.log(
         `   Mini App: ${MINIAPP_URL ? MINIAPP_URL : "OFF (нет MINIAPP_URL и домена Railway)"}` +
         (MINIAPP_URL && !process.env.MINIAPP_URL ? " (домен Railway)" : "")
+      );
+      console.log(
+        `   Режим: ${APP_ONLY ? "лаунчер — одна кнопка в приложение" : "полное меню в чате (APP_ONLY=0)"}`
       );
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
       console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no vision API key)"}`);

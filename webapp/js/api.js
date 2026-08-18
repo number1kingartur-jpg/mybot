@@ -119,6 +119,10 @@ window.KM_API = (function () {
     removeWeight: function (date) {
       return request("DELETE", "/api/bodyweight?date=" + encodeURIComponent(date));
     },
+    /* Уходит объём порции, а не итог: сумму за день считает сервер. */
+    addWater: function (ml, date) {
+      return request("POST", "/api/water", { ml: ml, date: date });
+    },
     saveProgram: function (payload) {
       return request("POST", "/api/program", payload);
     },

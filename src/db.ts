@@ -113,6 +113,13 @@ export interface Challenge {
   lastPingDate?: string;
 }
 
+/** Вода: одна строка на день, объём накапливается за сутки. */
+export interface WaterEntry {
+  userId: number;
+  date: string;        // YYYY-MM-DD
+  ml: number;
+}
+
 interface DB {
   workouts: WorkoutEntry[];
   programs: Program[];
@@ -120,13 +127,14 @@ interface DB {
   users: UserRecord[];
   challenges: Challenge[];
   meals: MealEntry[];
+  water?: WaterEntry[];
   channelPosted?: { postId: string; date: string }[];
   /** Последняя публикация бота в канал — для удаления всей серии (1–3 сообщения). */
   channelLastPublish?: { postId: string; messageIds: number[]; date: string };
 }
 
 function load(): DB {
-  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], channelPosted: [], channelLastPublish: undefined };
+  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], water: [], channelPosted: [], channelLastPublish: undefined };
   if (!fs.existsSync(DB_PATH)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
@@ -137,7 +145,11 @@ function load(): DB {
       users: parsed.users ?? [],
       challenges: parsed.challenges ?? [],
       meals: parsed.meals ?? [],
+      water: parsed.water ?? [],
       channelPosted: parsed.channelPosted ?? [],
+      // Поле терялось при каждом чтении базы, из-за чего /channel_delete_last
+      // не находил последнюю публикацию: записать её было можно, прочитать — нет.
+      channelLastPublish: parsed.channelLastPublish,
     };
     migrate(db);
     return db;
@@ -308,6 +320,49 @@ export function removeBodyweight(userId: number, date: string): boolean {
   if (db.bodyweight.length === before) return false;
   save(db);
   return true;
+}
+
+// ── Вода ──────────────────────────────────────────────────────────────────────
+// Хранится днями, а не отдельными глотками: для нормы важен итог за сутки,
+// а история отдельных стаканов никому ничего не даёт.
+
+function bangkokToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
+}
+
+/** Прибавить объём к дню. Отрицательное значение убирает лишнее, минимум — ноль. */
+export function addWater(userId: number, ml: number, date?: string): number {
+  const db = load();
+  const day = date ?? bangkokToday();
+  db.water = db.water ?? [];
+  const row = db.water.find((w) => w.userId === userId && w.date === day);
+  const next = Math.max(0, Math.min(15000, Math.round((row?.ml ?? 0) + ml)));
+  if (row) row.ml = next;
+  else db.water.push({ userId, date: day, ml: next });
+  db.water.sort((a, b) => a.date.localeCompare(b.date));
+  save(db);
+  return next;
+}
+
+export function getWater(userId: number, date?: string): number {
+  const day = date ?? bangkokToday();
+  const rows = load().water ?? [];
+  return rows.find((w) => w.userId === userId && w.date === day)?.ml ?? 0;
+}
+
+export function getWaterHistory(userId: number, limit = 14): WaterEntry[] {
+  return (load().water ?? []).filter((w) => w.userId === userId).slice(-limit);
+}
+
+/**
+ * Ориентир по воде: 35 мл на кг массы, округление до 100 мл.
+ * Это средняя рекомендация для тренирующегося человека, а не медицинская норма:
+ * жара и объём тренировки добавляют сверху, поэтому цифра в приложении подписана
+ * как ориентир, а не как обязательство.
+ */
+export function waterTargetMl(weightKg: number): number {
+  const w = weightKg > 0 ? weightKg : 80;
+  return Math.round((w * 35) / 100) * 100;
 }
 
 // ── Users (для рассылки сводок) ───────────────────────────────────────────────

@@ -6,6 +6,7 @@ import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, getMeals, mealTotals,
   addBodyweight, getBodyweight, removeBodyweight,
+  addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, checkPr,
   saveProgram, getActiveProgram, advanceProgramDay,
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium,
@@ -137,6 +138,18 @@ function programState(userId: number) {
   };
 }
 
+/** Вода за день: факт и ориентир. Ориентир считается от свежего веса, а не от анкеты. */
+function waterState(userId: number, date: string) {
+  const u = getUser(userId);
+  const last = getBodyweight(userId, 1)[0];
+  const kg = last?.weightKg ?? u?.nutrition?.weightKg ?? 0;
+  return {
+    ml: getWater(userId, date),
+    targetMl: waterTargetMl(kg),
+    basedOnKg: kg || null,
+  };
+}
+
 function dayState(userId: number, date: string) {
   const u = getUser(userId);
   return {
@@ -144,6 +157,7 @@ function dayState(userId: number, date: string) {
     today: today(),
     firstName: u?.firstName ?? "",
     nutrition: u?.nutrition ?? null,
+    water: waterState(userId, date),
     meals: getMeals(userId, date).map((m) => ({
       id: m.id,
       name: m.name,
@@ -318,6 +332,27 @@ async function handleApi(
     }
     const ok = removeBodyweight(user.id, day);
     json(res, ok ? 200 : 404, { ok, ...dayState(user.id, date) });
+    return;
+  }
+
+  // ── Вода ──────────────────────────────────────────────────────────────────
+  // Приходит объём порции, а не итог за день: клиент не должен уметь переписать
+  // сумму, иначе двойное нажатие или старый экран затрут уже выпитое.
+  if (req.method === "POST" && urlPath === "/api/water") {
+    const body = JSON.parse(await readBody(req)) as { ml?: number; date?: string };
+    const ml = Number(body.ml);
+    if (!Number.isFinite(ml) || ml === 0 || Math.abs(ml) > 3000) {
+      json(res, 400, { error: "bad_ml", message: "Порция: от 1 до 3000 мл." });
+      return;
+    }
+    const raw = body.date == null ? "" : String(body.date);
+    const day = raw ? safeDate(raw) : date;
+    if (!day) {
+      json(res, 400, { error: "bad_date", message: "Дата должна быть не в будущем." });
+      return;
+    }
+    addWater(user.id, Math.round(ml), day);
+    json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;
   }
 

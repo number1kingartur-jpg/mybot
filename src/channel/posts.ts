@@ -66,7 +66,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `4. Стресс: работа, переезд, жара — временное снижение нормально.\n\n` +
     `Одна плохая неделя — шум. Три недели без прогресса при закрытой базе — тогда меняй стимул.`,
     "plateau",
-    { archive: "2026-07-11-icloud/photos/IMG_9399.JPEG" }
+    { archive: "frames/IMG_8870_t8.jpg" }
   ),
   post(
     "Регулярность",
@@ -134,7 +134,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     `— не взвешиваться 48 ч (вода + соль искажают).\n\n` +
     `Вернись к базе в понедельник. Не начинай неделю с нуля в голове.`,
     "weekend",
-    { archive: "2026-07-11-icloud/video-frames/full-9398-t210s.jpg" }
+    { archive: "2026-07-11-icloud/video-frames/full-9398-t150s.jpg" }
   ),
   post(
     "Дисциплина",
@@ -192,7 +192,7 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
     "7 ошибок",
     "",
     "guide_7mistakes",
-    { archive: "master/photos/IMG_9512.JPEG" },
+    { archive: "frames/outdoor-kit.jpg" },
     "guide_7mistakes",
     [
       `Тренируешься 3–4 раза в неделю — а форма стоит?\n\n` +
