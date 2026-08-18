@@ -85,6 +85,34 @@ window.KM_API = (function () {
     });
   }
 
+  /**
+   * Оригинал файла без сжатия — запасной путь. Нужен, когда снимок не декодируется
+   * в <img>: так ведут себя HEIC с iPhone в части WebView. Gemini такие форматы
+   * принимает, поэтому терять кадр из-за неудачного сжатия незачем.
+   */
+  function raw(file) {
+    return new Promise(function (resolve, reject) {
+      if (file.size > 6 * 1024 * 1024) {
+        reject({ code: "too_big", message: "Снимок больше 6 МБ — сними ещё раз или добавь текстом." });
+        return;
+      }
+      var fr = new FileReader();
+      fr.onload = function () {
+        var s = String(fr.result || "");
+        var comma = s.indexOf(",");
+        if (comma < 0) {
+          reject({ code: "compress", message: "Не удалось прочитать снимок." });
+          return;
+        }
+        resolve({ b64: s.slice(comma + 1), mime: file.type || "image/jpeg" });
+      };
+      fr.onerror = function () {
+        reject({ code: "compress", message: "Не удалось прочитать снимок." });
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+
   return {
     available: available,
     state: function (date) {
@@ -94,9 +122,16 @@ window.KM_API = (function () {
       return request("GET", "/api/foods");
     },
     photo: function (file) {
-      return compress(file, 1024, 0.72).then(function (b64) {
-        return request("POST", "/api/meal/photo", { imageBase64: b64, mime: "image/jpeg" });
-      });
+      return compress(file, 1024, 0.72)
+        .then(function (b64) {
+          return { b64: b64, mime: "image/jpeg" };
+        })
+        .catch(function () {
+          return raw(file);
+        })
+        .then(function (img) {
+          return request("POST", "/api/meal/photo", { imageBase64: img.b64, mime: img.mime });
+        });
     },
     text: function (text) {
       return request("POST", "/api/meal/text", { text: text });

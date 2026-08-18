@@ -31,7 +31,10 @@ import { SIMPLE_PLANS, type Place } from "./simple";
  */
 
 const WEBAPP_DIR = path.join(__dirname, "..", "webapp");
-const MAX_BODY = 8 * 1024 * 1024; // фото с телефона после сжатия — сотни КБ, 8 МБ с запасом
+// Сжатый кадр — сотни КБ. Запас нужен для запасного пути: если снимок не удалось
+// сжать на устройстве (HEIC с iPhone), уходит оригинал до 6 МБ, а base64 раздувает
+// его примерно на 37% — 8 МБ уже не хватало.
+const MAX_BODY = 12 * 1024 * 1024;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -70,11 +73,19 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let over = false;
     req.on("data", (c: Buffer) => {
       size += c.length;
       if (size > MAX_BODY) {
-        reject(new Error("payload_too_large"));
-        req.destroy();
+        if (!over) {
+          over = true;
+          chunks.length = 0; // держать в памяти уже нечего
+          reject(new Error("payload_too_large"));
+        }
+        // Остаток сливаем, а не рвём соединение сразу: при разрыве клиент видит
+        // сетевую ошибку и делает вывод «сервер лежит» вместо честной причины.
+        // Совсем бесконечную загрузку всё же обрываем.
+        if (size > MAX_BODY * 3) req.destroy();
         return;
       }
       chunks.push(c);
@@ -511,8 +522,17 @@ async function handleApi(
       return;
     }
 
+    // Форматы, которые понимает Gemini. Раньше всё кроме PNG объявлялось JPEG:
+    // HEIC с iPhone уходил под чужим типом и отбивался распознаванием.
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+    const mime = allowed.includes(String(body.mime)) ? String(body.mime) : "image/jpeg";
+
+    // Лог прихода обязателен: без него по пустому логу нельзя отличить «запрос не дошёл
+    // с телефона» от «дошёл и молча отработал», а это разные поломки
+    console.log(`api meal photo: ${Math.round(buf.length / 1024)} КБ, ${mime}, user=${user.id}`);
+
     try {
-      const meal = await analyzeMealPhoto(buf, body.mime === "image/png" ? "image/png" : "image/jpeg");
+      const meal = await analyzeMealPhoto(buf, mime);
       addMeal({
         userId: user.id, date,
         name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
@@ -633,7 +653,15 @@ export function startWebappServer(botToken: string): http.Server | null {
       handleApi(req, res, urlPath, url.searchParams, botToken).catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("api error:", msg.slice(0, 160));
-        json(res, msg === "payload_too_large" ? 413 : 500, { error: "server_error" });
+        if (msg === "payload_too_large") {
+          res.setHeader("Connection", "close");
+          json(res, 413, {
+            error: "payload_too_large",
+            message: "Снимок слишком большой. Сними ещё раз или добавь еду текстом.",
+          });
+          return;
+        }
+        json(res, 500, { error: "server_error" });
       });
       return;
     }

@@ -1059,15 +1059,23 @@
     return card(
       cardHead("Добавить приём пищи", limitLine) +
         '<div class="btn-stack">' +
-        '<label class="btn btn--primary" for="photoInput">Сфотографировать еду</label>' +
-        '<input id="photoInput" type="file" accept="image/*" capture="environment" hidden />' +
+        // Кнопка, а не <label for>, и открытие через .click() из кода: в WebView
+        // Telegram связка «label → input с display:none» часто не срабатывает, причём
+        // молча. Атрибута capture нет намеренно — с ним Android уходит сразу в камеру
+        // и падает без разрешения, а галерея становится недоступна.
+        '<button class="btn btn--primary" data-action="pick-photo">Сфотографировать еду</button>' +
+        '<input id="photoInput" type="file" accept="image/*" ' +
+        'style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" />' +
         '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
         '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
         '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
         "</div>" +
         (state.addMode === "food" ? foodForm() : "") +
         (state.addMode === "text" ? textForm() : "") +
-        (state.addMode === "manual" ? manualForm() : "")
+        (state.addMode === "manual" ? manualForm() : "") +
+        '<p class="note note--plain">Если выбор фото не открывается — это ограничение ' +
+        "встроенного браузера Telegram, а не сервера: посчитай тот же приём кнопкой " +
+        "«Добавить текстом», результат одинаковый.</p>"
     );
   }
 
@@ -2188,6 +2196,14 @@
         state.notice = null;
         haptic("light");
         return render();
+      case "pick-photo": {
+        var pick = document.getElementById("photoInput");
+        if (!pick) return;
+        pick.value = "";
+        haptic("light");
+        pick.click();
+        return;
+      }
       case "add-food":
         return addMealFood(action.getAttribute("data-food"), Number(action.getAttribute("data-grams")));
       case "day-prev":
@@ -2258,7 +2274,9 @@
     });
   });
 
-  view.addEventListener("change", function (ev) {
+  // Слушаем на document, а не на #view: событие change от файлового поля в некоторых
+  // WebView не всплывает до промежуточного контейнера
+  document.addEventListener("change", function (ev) {
     if (!ev.target || ev.target.id !== "photoInput") return;
     var file = ev.target.files && ev.target.files[0];
     ev.target.value = ""; // чтобы повторный выбор того же файла снова дал событие
