@@ -31,6 +31,7 @@
     busy: null, // "photo" | "text" | "manual" | "food"
     notice: null, // { kind: "ok" | "err", text }
     day: null, // ответ сервера: meals, totals, photo, вес, программа
+    linkError: null, // почему сервер не ответил; null = связь есть или её и не ждём
     viewDate: null, // какой день открыт в «Съедено»; null = сегодня
     foods: null, // справочник продуктов, грузится один раз
     foodQuery: "",
@@ -360,6 +361,7 @@
     KM_API.state(state.viewDate || undefined)
       .then(function (data) {
         state.day = data;
+        state.linkError = null;
         // План тренировки ведёт бот: в чате и в приложении должна быть одна
         // очередь A/B. Ручное переключение в этой сессии не перетираем.
         if (!workoutTouched && data.simple) {
@@ -383,10 +385,17 @@
         else if (state.screen === "home" || state.screen === "nutrition") render();
       })
       .catch(function (err) {
-        // 401 — приложение открыто вне Telegram или подпись устарела: молча уходим
+        // 401 — приложение открыто вне Telegram или подпись устарела: уходим
         // в локальный режим, он честно об этом скажет на экране
-        if (err && err.status === 401) online = false;
-        if (!silent) render();
+        if (err && err.status === 401) {
+          online = false;
+          state.linkError = null;
+        } else {
+          // Сеть, таймаут, сбой сервера: причину показываем, а не прячем за
+          // «фото не работает» — иначе человек ищет поломку не там
+          state.linkError = (err && err.message) || "Сервер бота не ответил.";
+        }
+        render();
       });
   }
 
@@ -1037,6 +1046,26 @@
           '<p class="lead">Распознавание идёт через сервер бота: ключ модели нельзя ' +
           "держать в приложении. Здесь работает ручной ввод — если КБЖУ написаны на упаковке.</p>" +
           '<div class="btn-stack" style="margin-top:14px">' +
+          '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
+          "</div>" +
+          (state.addMode === "manual" ? manualForm() : "")
+      );
+    }
+
+    // Подпись Telegram есть, а ответа сервера ещё нет. Раньше этот случай попадал
+    // в ветку «нужен GEMINI_API_KEY» и врал: ключ на месте, не хватало связи.
+    // Разные причины — разные тексты, иначе диагноз ищется наугад.
+    if (!state.day) {
+      return card(
+        cardHead(
+          state.linkError ? "Нет связи с ботом" : "Связываюсь с ботом…",
+          state.linkError
+            ? "Фото и справочник продуктов работают через сервер бота"
+            : "Секунду — подгружаю дневник"
+        ) +
+          (state.linkError ? '<p class="lead">' + esc(state.linkError) + "</p>" : "") +
+          '<div class="btn-stack" style="margin-top:14px">' +
+          '<button class="btn btn--primary" data-action="reload-day">Обновить</button>' +
           '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
           "</div>" +
           (state.addMode === "manual" ? manualForm() : "")
@@ -2222,6 +2251,12 @@
         state.notice = null;
         haptic("light");
         return render();
+      case "reload-day":
+        state.linkError = null;
+        state.notice = null;
+        haptic("light");
+        render();
+        return loadDay(false);
       case "pick-photo": {
         var pick = document.getElementById("photoInput");
         if (!pick) return;

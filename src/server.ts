@@ -106,9 +106,17 @@ function cors(res: http.ServerResponse): void {
 function auth(req: http.IncomingMessage, botToken: string): WebAppUser | null {
   const raw = req.headers["x-telegram-init-data"];
   const initData = Array.isArray(raw) ? raw[0] : raw;
-  if (!initData) return null;
+  // Отказ авторизации логируем без самой подписи: иначе по молчащему приложению
+  // невозможно понять, дошёл ли запрос и почему не был принят
+  if (!initData) {
+    console.warn(`api auth: нет подписи, ${req.method} ${req.url}`);
+    return null;
+  }
   const user = verifyInitData(initData, botToken);
-  if (!user) return null;
+  if (!user) {
+    console.warn(`api auth: подпись не принята (${initData.length} симв.), ${req.method} ${req.url}`);
+    return null;
+  }
   registerUser(user.id, user.firstName); // первый вход может быть из приложения, а не из чата
   return user;
 }
