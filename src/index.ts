@@ -9,10 +9,11 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
-  addMeal, getMeals, getMealsForDays, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, canAnalyzePhoto, bumpPhotoCount, grantPremium,
+  addMeal, getMeals, getMealsForDays, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, trialMode, freePhotoWeek, photoGate, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
+import { startWebappServer } from "./server";
 import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError } from "./meal";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
@@ -141,9 +142,24 @@ const MENU_BUTTONS = [
   "🏋️ Тренировка на сегодня", "📈 Мой прогресс", "❓ Помощь",
 ];
 
+// ── Mini App ───────────────────────────────────────────────────────────────
+// Приложение (webapp/) — те же расчёты, но интерфейсом вместо переписки.
+// Без HTTPS-адреса Telegram отклоняет web_app-кнопку, поэтому она добавляется
+// только когда адрес известен. Бот раздаёт приложение сам (см. server.ts), поэтому
+// на Railway достаточно нажать Generate Domain — адрес подхватится автоматически.
+const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN;
+const MINIAPP_URL =
+  process.env.MINIAPP_URL ?? (RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/` : undefined);
+
+function appRow(): { text: string; web_app?: { url: string } }[][] {
+  if (!MINIAPP_URL) return [];
+  return [[{ text: "⚡️ Приложение", web_app: { url: MINIAPP_URL } }]];
+}
+
 // ── Keyboards ──────────────────────────────────────────────────────────────
 const MAIN_KEYBOARD = {
   keyboard: [
+    ...appRow(),
     [{ text: "📝 Записать тренировку" }, { text: "📔 Сегодня" }],
     [{ text: "📊 Прогресс" }, { text: "🏆 Рекорды" }],
     [{ text: "📋 Программа" }, { text: "🍗 Питание" }],
@@ -162,6 +178,7 @@ const EXERCISE_EMOJI: Record<string, string> = {
 
 const SIMPLE_KEYBOARD = {
   keyboard: [
+    ...appRow(),
     [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
     [{ text: "🍗 Питание" }, { text: "⚖️ Вес тела" }],
     [{ text: "⚔️ Челлендж" }, { text: "📸 Еда" }],
@@ -1230,6 +1247,21 @@ bot.command("help", async (ctx) => {
     `📈 <b>Отчёт недели</b>\nТоннаж, тренды, застой, дисбаланс жим/тяга. Приходит сам по воскресеньям в 18:00.\n\n` +
     `<i>Сбились кнопки? Нажми /start</i>`,
     { reply_markup: MAIN_KEYBOARD, ...HTML }
+  );
+});
+
+bot.command("app", async (ctx) => {
+  resetSession(ctx.from!.id);
+  if (!MINIAPP_URL) {
+    await ctx.reply("Приложение пока не подключено. Все расчёты работают кнопками в чате.", HTML);
+    return;
+  }
+  await ctx.reply(
+    `⚡️ <b>ПРИЛОЖЕНИЕ</b>\n${HR}\n\n` +
+    `Те же расчёты, но без переписки: калории и БЖУ, 1RM с таблицей процентов, ` +
+    `программа на недели с весами, готовые тренировки с техникой, дневник веса с трендом.\n\n` +
+    `<i>Кнопка «⚡️ Приложение» — в меню внизу.</i>`,
+    { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
   );
 });
 
@@ -2558,21 +2590,23 @@ bot.hears("📸 Еда", async (ctx) => {
   const wk = weekKey(today());
   const u = getUser(ctx.from!.id);
   const used = u?.photoWeekKey === wk ? (u?.photoCount ?? 0) : 0;
-  const left = mealPhotoUnlimited()
-    ? "безлимит (тест)"
+  const left = trialMode()
+    ? "без ограничений — пробный период"
+    : mealPhotoUnlimited()
+    ? "безлимит"
     : isOwner(ctx.from!.id)
     ? "безлимит (владелец)"
     : isPremium(ctx.from!.id)
     ? "безлимит (Premium ✨)"
-    : `${Math.max(0, 5 - used)} из 5 бесплатных на эту неделю`;
+    : `${Math.max(0, freePhotoWeek() - used)} из ${freePhotoWeek()} бесплатных на эту неделю`;
   await ctx.reply(
     `📸 <b>ЗАПИСЬ ЕДЫ</b>\n${HR}\n\n` +
     `• <b>Фото</b> — сфотографируй тарелку и отправь сюда\n` +
     `• <b>Текст</b> — напиши что съел:\n` +
     `<code>лосось 150 г, рис 200 г, салат</code>\n` +
     `• <b>Дневник</b> — /meals или кнопка после записи\n\n` +
-    `<i>Осталось фото: ${left}. Точность ±15–25%.</i>\n\n` +
-    `Безлимит фото: /premium`,
+    `<i>Фото: ${left}. Точность ±15–25%.</i>` +
+    (trialMode() ? `\n\n<i>Пока бесплатно для всех. Позже вход станет платным.</i>` : `\n\nБезлимит фото: /premium`),
     { reply_markup: mainKeyboardFor(ctx.from!.id), ...HTML }
   );
   getSession(ctx.from!.id).state = "awaiting_meal_text";
@@ -2679,7 +2713,7 @@ async function saveMealFromAnalysis(userId: number, meal: { name: string; kcal: 
     fatG: meal.fatG,
     carbsG: meal.carbsG,
   });
-  if (countPhoto) bumpPhotoCount(userId, weekKey(today()));
+  if (countPhoto) bumpPhotoCount(userId, weekKey(today()), today());
   return row;
 }
 
@@ -2704,10 +2738,14 @@ async function processMealPhoto(
   resetSession(userId);
   const wk = weekKey(today());
 
-  if (!canAnalyzePhoto(userId, wk)) {
+  const gate = photoGate(userId, wk, today());
+  if (!gate.ok) {
     await ctx.reply(
-      `📸 Лимит 5 фото-анализов в неделю исчерпан.\n\n` +
-      `<i>Безлимит с Premium: /premium</i>`,
+      gate.reason === "day"
+        ? `📸 ${gate.limit} фото за день — это уже не учёт еды.\n\n` +
+          `<i>Продолжишь завтра или запиши текстом: лосось 150 г, рис 200 г</i>`
+        : `📸 Лимит ${gate.limit} фото-анализов в неделю исчерпан.\n\n` +
+          `<i>Безлимит с Premium: /premium</i>`,
       HTML
     );
     return;
@@ -2858,6 +2896,17 @@ bot.command("myid", async (ctx) => {
 bot.command("premium", async (ctx) => {
   registerUser(ctx.chat.id, ctx.from?.first_name ?? "");
   const u = getUser(ctx.from!.id);
+  // В пробном режиме Premium продавать нечего: безлимит фото уже у всех.
+  // Брать Stars за то, что и так работает, — это продажа воздуха.
+  if (trialMode()) {
+    await ctx.reply(
+      `✨ <b>Сейчас всё бесплатно</b>\n${HR}\n\n` +
+      `Идёт пробный период: фото еды, расчёты, программы и приложение — без лимитов и без оплаты.\n\n` +
+      `<i>Когда вход станет платным, скажу заранее. Покупать сейчас нечего.</i>`,
+      HTML
+    );
+    return;
+  }
   if (isPremium(ctx.from!.id)) {
     const label = isOwner(ctx.from!.id) ? "Владелец — безлимит" : `Premium активен до <b>${u?.premiumUntil}</b>`;
     await ctx.reply(
@@ -3379,12 +3428,15 @@ async function verifyChannelAccess() {
 
 // ── Start polling ─────────────────────────────────────────────────────────
 async function main() {
+  startWebappServer(bot.token); // раздаёт webapp/ и API дневника питания для приложения
+
   const branding = await applyBrandingFromEnv(bot.api);
   if (branding.length) console.log(`   Channel branding applied: ${branding.join(", ")}`);
   await verifyChannelAccess();
 
   await bot.api.setMyCommands([
     { command: "start", description: "Главное меню" },
+    { command: "app", description: "Приложение: расчёты, тренировки, питание" },
     { command: "mode", description: "Режим: простой / про" },
     { command: "remind", description: "Напоминания о тренировках" },
     { command: "premium", description: "Premium подписка (Stars)" },
@@ -3393,6 +3445,10 @@ async function main() {
   await bot.start({
     onStart: () => {
       console.log("✅ Bot running…");
+      console.log(
+        `   Mini App: ${MINIAPP_URL ? MINIAPP_URL : "OFF (нет MINIAPP_URL и домена Railway)"}` +
+        (MINIAPP_URL && !process.env.MINIAPP_URL ? " (домен Railway)" : "")
+      );
       console.log(`   Voice: ${voiceEnabled() ? "on" : "OFF (no GROQ_API_KEY)"}`);
       console.log(`   Meal photo: ${mealVisionEnabled() ? `on (${mealVisionProvider()})` : "OFF (no vision API key)"}`);
       console.log(`   Channel posts: ${channelPostingEnabled() ? `on ${channelSlotsLabel()}` : "OFF"}`);

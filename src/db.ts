@@ -86,6 +86,8 @@ export interface UserRecord {
   premiumUntil?: string;       // ISO-дата окончания подписки
   photoWeekKey?: string;       // неделя для лимита бесплатных фото-анализов
   photoCount?: number;         // сколько фото-анализов за текущую неделю
+  photoDayKey?: string;        // день для дневной планки (YYYY-MM-DD)
+  photoDayCount?: number;      // сколько фото-анализов за сегодня
   ref?: string;                // источник: kingmode, channel, …
 }
 
@@ -282,12 +284,13 @@ export function advanceProgramDay(userId: number): Program | null {
 }
 
 // ── Bodyweight ────────────────────────────────────────────────────────────────
-export function addBodyweight(userId: number, weightKg: number): BodyweightEntry {
+/** Дата необязательна: в чате пишется «сегодня», из приложения можно указать день. */
+export function addBodyweight(userId: number, weightKg: number, date?: string): BodyweightEntry {
   const db = load();
-  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
+  const day = date ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
   // одна запись в день — перезаписываем
-  db.bodyweight = db.bodyweight.filter((b) => !(b.userId === userId && b.date === date));
-  const row: BodyweightEntry = { userId, date, weightKg };
+  db.bodyweight = db.bodyweight.filter((b) => !(b.userId === userId && b.date === day));
+  const row: BodyweightEntry = { userId, date: day, weightKg };
   db.bodyweight.push(row);
   db.bodyweight.sort((a, b) => a.date.localeCompare(b.date));
   save(db);
@@ -296,6 +299,15 @@ export function addBodyweight(userId: number, weightKg: number): BodyweightEntry
 
 export function getBodyweight(userId: number, limit = 30): BodyweightEntry[] {
   return load().bodyweight.filter((b) => b.userId === userId).slice(-limit);
+}
+
+export function removeBodyweight(userId: number, date: string): boolean {
+  const db = load();
+  const before = db.bodyweight.length;
+  db.bodyweight = db.bodyweight.filter((b) => !(b.userId === userId && b.date === date));
+  if (db.bodyweight.length === before) return false;
+  save(db);
+  return true;
 }
 
 // ── Users (для рассылки сводок) ───────────────────────────────────────────────
@@ -438,15 +450,34 @@ export function mealTotals(userId: number, date: string) {
   );
 }
 
-// ── Premium / лимиты ────────────────────────────────────────────────────────
+// ── Доступ: пробный период / лимиты ─────────────────────────────────────────
+// Пробная версия включена по умолчанию: недельного лимита фото нет ни у кого.
+// Счётчики при этом продолжают писаться — на них будет опираться платный вход.
+// Дневная планка остаётся в любом режиме, и она не про деньги: ключи Gemini имеют
+// суточную квоту, один пользователь в цикле выжигает её для всех остальных.
+const TRIAL_MODE = process.env.TRIAL_MODE !== "0" && process.env.TRIAL_MODE !== "false";
 const FREE_PHOTO_WEEK = Number(process.env.MEAL_PHOTO_WEEK_LIMIT ?? 5);
+const PHOTO_DAY_CAP = Number(process.env.MEAL_PHOTO_DAY_CAP ?? 40);
 const MEAL_PHOTO_UNLIMITED =
+  TRIAL_MODE ||
   process.env.MEAL_PHOTO_UNLIMITED === "1" ||
   process.env.MEAL_PHOTO_UNLIMITED === "true" ||
   FREE_PHOTO_WEEK <= 0;
 
+export function trialMode(): boolean {
+  return TRIAL_MODE;
+}
+
 export function mealPhotoUnlimited(): boolean {
   return MEAL_PHOTO_UNLIMITED;
+}
+
+export function freePhotoWeek(): number {
+  return FREE_PHOTO_WEEK;
+}
+
+export function photoDayCap(): number {
+  return PHOTO_DAY_CAP;
 }
 
 function ownerIds(): number[] {
@@ -471,17 +502,29 @@ export function isPremium(chatId: number): boolean {
   return u.premiumUntil >= new Date().toISOString().slice(0, 10);
 }
 
-/** Можно ли сделать фото-анализ еды (5/нед бесплатно, безлимит владельцу и Premium). */
-export function canAnalyzePhoto(chatId: number, weekKey: string): boolean {
-  if (MEAL_PHOTO_UNLIMITED || isOwner(chatId) || isPremium(chatId)) return true;
+export type PhotoGate = { ok: true } | { ok: false; reason: "week" | "day"; limit: number };
+
+/**
+ * Можно ли сделать фото-анализ еды.
+ * В пробном режиме недельного лимита нет; дневная планка защищает квоту ключей.
+ */
+export function photoGate(chatId: number, weekKey: string, dayKey: string): PhotoGate {
   const u = getUser(chatId);
-  if (!u) return true;
-  if (u.photoWeekKey !== weekKey) return true;
-  return (u.photoCount ?? 0) < FREE_PHOTO_WEEK;
+  const owner = isOwner(chatId);
+
+  const usedDay = u?.photoDayKey === dayKey ? u?.photoDayCount ?? 0 : 0;
+  if (PHOTO_DAY_CAP > 0 && !owner && usedDay >= PHOTO_DAY_CAP) {
+    return { ok: false, reason: "day", limit: PHOTO_DAY_CAP };
+  }
+
+  if (MEAL_PHOTO_UNLIMITED || owner || isPremium(chatId)) return { ok: true };
+  if (!u || u.photoWeekKey !== weekKey) return { ok: true };
+  if ((u.photoCount ?? 0) < FREE_PHOTO_WEEK) return { ok: true };
+  return { ok: false, reason: "week", limit: FREE_PHOTO_WEEK };
 }
 
-export function bumpPhotoCount(chatId: number, weekKey: string) {
-  if (isOwner(chatId)) return;
+/** Счётчики пишутся всем, включая владельца: это учёт расхода квоты, а не лимит. */
+export function bumpPhotoCount(chatId: number, weekKey: string, dayKey: string) {
   const db = load();
   const u = db.users.find((x) => x.chatId === chatId);
   if (!u) return;
@@ -490,6 +533,12 @@ export function bumpPhotoCount(chatId: number, weekKey: string) {
     u.photoCount = 1;
   } else {
     u.photoCount = (u.photoCount ?? 0) + 1;
+  }
+  if (u.photoDayKey !== dayKey) {
+    u.photoDayKey = dayKey;
+    u.photoDayCount = 1;
+  } else {
+    u.photoDayCount = (u.photoDayCount ?? 0) + 1;
   }
   save(db);
 }
