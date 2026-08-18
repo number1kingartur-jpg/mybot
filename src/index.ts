@@ -151,9 +151,19 @@ const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN;
 const MINIAPP_URL =
   process.env.MINIAPP_URL ?? (RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/` : undefined);
 
+/**
+ * Метка способа запуска в адресе. Подпись Telegram живёт в части адреса после `#`
+ * и до сервера не доходит, поэтому иначе невозможно узнать, какой кнопкой открыто
+ * приложение — а от этого зависит, передаёт Telegram подпись или нет.
+ */
+function appUrl(from: string): string {
+  if (!MINIAPP_URL) return "";
+  return MINIAPP_URL + (MINIAPP_URL.includes("?") ? "&" : "?") + "from=" + from;
+}
+
 function appRow(): { text: string; web_app?: { url: string } }[][] {
   if (!MINIAPP_URL) return [];
-  return [[{ text: "⚡️ Приложение", web_app: { url: MINIAPP_URL } }]];
+  return [[{ text: "⚡️ Приложение", web_app: { url: appUrl("row") } }]];
 }
 
 /**
@@ -165,7 +175,7 @@ function appRow(): { text: string; web_app?: { url: string } }[][] {
 const APP_ONLY = Boolean(MINIAPP_URL) && process.env.APP_ONLY !== "0";
 
 const APP_KEYBOARD = {
-  keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: MINIAPP_URL } }]] : [],
+  keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: appUrl("kb") } }]] : [],
   resize_keyboard: true,
 };
 
@@ -727,7 +737,7 @@ async function sendAppWelcome(
   name: string
 ) {
   const kb = new InlineKeyboard();
-  if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", MINIAPP_URL).row();
+  if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", appUrl("inline")).row();
   kb.url("📢 Канал", "https://t.me/kingmode_fit");
 
   await ctx.reply(

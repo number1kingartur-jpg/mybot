@@ -319,6 +319,10 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   // на живом устройстве: правка была в сети, а на экране оставалась прошлая
   // версия. Заголовкам верить нельзя, поэтому у файлов меняется сам адрес.
   if (ext === ".html") {
+    // Открытие приложения логируем вместе с меткой кнопки (?from=kb|inline|row):
+    // подпись Telegram лежит после «#» и до сервера не доходит, поэтому способ
+    // запуска иначе не определить, а от него зависит, есть ли подпись вообще.
+    console.log(`app open: ${urlPath}${req.url && req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
     let html = fs.readFileSync(full, "utf-8");
     html = html.replace(/(src|href)="((?:js|css)\/[^"?]+)"/g, `$1="$2?v=${BUILD_ID}"`);
     const body = Buffer.from(html, "utf-8");
