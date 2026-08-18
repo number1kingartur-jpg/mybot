@@ -2612,6 +2612,28 @@
     }
   }
 
+  // Метка версии в подвале: по скриншоту сразу видно, какой код открыт на
+  // устройстве. Без неё «я обновил» против «у меня по-прежнему» не проверить.
+  try {
+    var mark = document.getElementById("buildMark");
+    var b = KM_API.build ? KM_API.build() : "";
+    if (mark) {
+      var when = b ? new Date(Number(b) * 1000) : null;
+      mark.textContent = when
+        ? "Сборка " +
+          String(when.getDate()).padStart(2, "0") +
+          "." +
+          String(when.getMonth() + 1).padStart(2, "0") +
+          " " +
+          String(when.getHours()).padStart(2, "0") +
+          ":" +
+          String(when.getMinutes()).padStart(2, "0")
+        : "Сборка — версия не определена";
+    }
+  } catch (e) {
+    /* метка не критична */
+  }
+
   render();
   loadDay(true);
 })();

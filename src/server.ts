@@ -31,6 +31,29 @@ import { SIMPLE_PLANS, type Place } from "./simple";
  */
 
 const WEBAPP_DIR = path.join(__dirname, "..", "webapp");
+
+/**
+ * Метка версии приложения: время последней правки js/css. Подставляется в адреса
+ * файлов в index.html, поэтому после деплоя устройство физически не может отдать
+ * старый код из кэша — адрес другой. Заодно видна в /health: по ней можно
+ * сверить, ту ли версию открыл пользователь.
+ */
+const BUILD_ID = (() => {
+  try {
+    let newest = 0;
+    for (const dir of ["js", "css"]) {
+      const d = path.join(WEBAPP_DIR, dir);
+      if (!fs.existsSync(d)) continue;
+      for (const f of fs.readdirSync(d)) {
+        const st = fs.statSync(path.join(d, f));
+        if (st.isFile() && st.mtimeMs > newest) newest = st.mtimeMs;
+      }
+    }
+    return newest ? String(Math.round(newest / 1000)) : String(Math.round(Date.now() / 1000));
+  } catch {
+    return String(Math.round(Date.now() / 1000));
+  }
+})();
 // Сжатый кадр — сотни КБ. Запас нужен для запасного пути: если снимок не удалось
 // сжать на устройстве (HEIC с iPhone), уходит оригинал до 6 МБ, а base64 раздувает
 // его примерно на 37% — 8 МБ уже не хватало.
@@ -291,9 +314,25 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
 
   const ext = path.extname(full).toLowerCase();
   const isAsset = ext === ".png" || ext === ".jpg" || ext === ".svg" || ext === ".ico";
+
+  // WebView Telegram держит старый js даже при no-cache — на iOS это проверено
+  // на живом устройстве: правка была в сети, а на экране оставалась прошлая
+  // версия. Заголовкам верить нельзя, поэтому у файлов меняется сам адрес.
+  if (ext === ".html") {
+    let html = fs.readFileSync(full, "utf-8");
+    html = html.replace(/(src|href)="((?:js|css)\/[^"?]+)"/g, `$1="$2?v=${BUILD_ID}"`);
+    const body = Buffer.from(html, "utf-8");
+    res.writeHead(200, {
+      "Content-Type": MIME[ext],
+      "Content-Length": body.length,
+      "Cache-Control": "no-store",
+    });
+    res.end(body);
+    return;
+  }
+
   res.writeHead(200, {
     "Content-Type": MIME[ext] ?? "application/octet-stream",
-    // html/js/css без кэша: иначе после деплоя у пользователя останется старая версия
     "Cache-Control": isAsset ? "public, max-age=86400" : "no-cache",
   });
   fs.createReadStream(full).pipe(res);
@@ -655,7 +694,7 @@ export function startWebappServer(botToken: string): http.Server | null {
       return;
     }
     if (urlPath === "/health") {
-      json(res, 200, { ok: true, vision: mealVisionEnabled() });
+      json(res, 200, { ok: true, vision: mealVisionEnabled(), build: BUILD_ID });
       return;
     }
 

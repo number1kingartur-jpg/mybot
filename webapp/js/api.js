@@ -63,6 +63,17 @@ window.KM_API = (function () {
     return Boolean(readInitData());
   }
 
+  /** Версия открытого кода: сервер подставляет её в адрес файла (?v=…). */
+  function build() {
+    try {
+      var s = document.querySelector('script[src*="js/app.js"]');
+      var m = s ? /[?&]v=([^&]+)/.exec(s.getAttribute("src") || "") : null;
+      return m ? m[1] : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
   /** Факты для экрана «нет связи»: без них причина ищется наугад. */
   function diag() {
     var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
@@ -167,6 +178,7 @@ window.KM_API = (function () {
   return {
     available: available,
     diag: diag,
+    build: build,
     state: function (date) {
       return request("GET", "/api/state" + (date ? "?date=" + encodeURIComponent(date) : ""));
     },
