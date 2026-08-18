@@ -884,47 +884,60 @@
       (!isToday
         ? '<p class="note note--plain">Открыт прошлый день — только просмотр. Новые приёмы ' +
           "пишутся в сегодняшний.</p>"
-        : state.busy
-        ? card(
-            '<p class="lead">' +
-              (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
-              '</p><p class="muted">Обычно 3–10 секунд.</p>'
-          )
-        : addBlock(quota)) +
-      (meals.length
-        ? card(
-            cardHead(
-              isToday ? "Приёмы за сегодня" : "Приёмы за " + formatDate(viewDate()),
-              online ? "Общий дневник с ботом" : "Хранится на устройстве"
-            ) +
-              '<ul class="log">' +
-              meals
-                .map(function (m) {
-                  return (
-                    '<li><span class="meal__name">' +
-                    esc(m.name) +
-                    '<span class="meal__macro">' +
-                    m.proteinG +
-                    " / " +
-                    m.fatG +
-                    " / " +
-                    m.carbsG +
-                    ' г</span></span><span class="log__value">' +
-                    m.kcal +
-                    ' ккал</span><button class="log__del" data-delmeal="' +
-                    esc(m.id) +
-                    '" aria-label="Удалить">×</button></li>'
-                  );
-                })
-                .join("") +
-              "</ul>"
-          )
-        : '<p class="empty">' +
-          (isToday ? "За сегодня ничего не записано." : "В этот день записей нет.") +
-          "</p>") +
+        : addOrBusy(quota)) +
+      mealsListCard(meals, isToday) +
       '<p class="note note--plain">Оценка по фото — компоненты определяет модель, ' +
       "калории берутся из справочника продуктов. Ошибка порции легко даёт ±15–20%, " +
       "особенно с маслом и соусами. Итог сверяй по тренду веса в дневнике, а не по одному дню.</p>"
+    );
+  }
+
+  /* Ввод еды и список приёмов — общие для «Питания» и «Профиля». Одна разметка на два
+     экрана: две копии разошлись бы при первой же правке форм. */
+
+  function addOrBusy(quota) {
+    if (!state.busy) return addBlock(quota);
+    return card(
+      '<p class="lead">' +
+        (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
+        '</p><p class="muted">Обычно 3–10 секунд.</p>'
+    );
+  }
+
+  function mealsListCard(meals, isToday) {
+    if (!meals.length) {
+      return (
+        '<p class="empty">' +
+        (isToday ? "За сегодня ничего не записано." : "В этот день записей нет.") +
+        "</p>"
+      );
+    }
+    return card(
+      cardHead(
+        isToday ? "Приёмы за сегодня" : "Приёмы за " + formatDate(viewDate()),
+        online ? "Общий дневник с ботом" : "Хранится на устройстве"
+      ) +
+        '<ul class="log">' +
+        meals
+          .map(function (m) {
+            return (
+              '<li><span class="meal__name">' +
+              esc(m.name) +
+              '<span class="meal__macro">' +
+              m.proteinG +
+              " / " +
+              m.fatG +
+              " / " +
+              m.carbsG +
+              ' г</span></span><span class="log__value">' +
+              m.kcal +
+              ' ккал</span><button class="log__del" data-delmeal="' +
+              esc(m.id) +
+              '" aria-label="Удалить">×</button></li>'
+            );
+          })
+          .join("") +
+        "</ul>"
     );
   }
 
@@ -1822,14 +1835,25 @@
     var name = state.day && state.day.firstName ? state.day.firstName : "";
     var workouts = state.day ? state.day.workoutsTotal : null;
 
-    var factCard = m
+    // Уйдя из «Питания» с открытым прошлым днём, мы ещё держим его данные, пока не
+    // придёт ответ за сегодня. Показывать их под заголовком «сегодня» нельзя.
+    var stale = Boolean(state.day && state.day.date !== state.day.today);
+
+    var left = m ? m.kcal - eaten.kcal : 0;
+    var factCard = stale
+      ? card(cardHead("Съедено сегодня", "Обновляю данные…"))
+      : m
       ? card(
           cardHead(
-            "Съедено сегодня",
-            "Норма " + m.kcal + " ккал · цель: " + GOAL_WORD[p.goal],
+            left >= 0 ? "Осталось на сегодня" : "Перебор",
+            "Съедено " + eaten.kcal + " из " + m.kcal + " ккал · цель: " + GOAL_WORD[p.goal],
             eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
           ) +
-            figure(eaten.kcal, " ккал", "осталось " + Math.max(0, m.kcal - eaten.kcal)) +
+            figure(
+              (left >= 0 ? "" : "+") + Math.abs(left),
+              " ккал",
+              left >= 0 ? "можно съесть ещё" : "сверх нормы"
+            ) +
             '<div class="bars">' +
             bar(
               "Калории",
@@ -1841,12 +1865,11 @@
             bar("Жиры", "#b08d45", eaten.fatG + " / " + m.fatG + " г", (eaten.fatG * 100) / m.fatG) +
             bar("Углеводы", "#7d8ea8", eaten.carbsG + " / " + m.carbsG + " г", (eaten.carbsG * 100) / m.carbsG) +
             "</div>",
-          { gold: true, tap: "nutrition" }
+          { gold: true }
         )
       : card(
-          cardHead("Съедено сегодня", "Норма ещё не посчитана") +
-            '<p class="lead">Заполни данные ниже — покажу, сколько осталось до нормы.</p>',
-          { tap: "nutrition" }
+          cardHead("Норма не задана", "Заполни данные — покажу, сколько осталось на день") +
+            '<div class="btn-stack"><button class="btn btn--primary" data-action="edit-profile">Задать норму</button></div>'
         );
 
     return (
@@ -1878,6 +1901,9 @@
           "</div>"
       ) +
       factCard +
+      // Еда и вода стоят рядом: то, что человек делает каждый день по многу раз,
+      // не должно требовать перехода в другой раздел
+      (stale ? "" : addOrBusy(state.day ? state.day.photo : null) + mealsListCard(mealsToday(), true)) +
       waterCard() +
       renderDiary()
     );
