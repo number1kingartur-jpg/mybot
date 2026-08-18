@@ -5,8 +5,47 @@
 window.KM_API = (function () {
   "use strict";
 
-  var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-  var initData = tg && tg.initData ? tg.initData : "";
+  // Подпись читается лениво, а не один раз при загрузке: SDK telegram.org —
+  // внешний файл, и если он не пришёл (сеть, блокировка, медленный старт), то
+  // при чтении «на старте» приложение навсегда считало себя открытым вне
+  // Telegram и прятало всё серверное — фото, справочник, общий дневник.
+  // Запасной путь без SDK: Telegram кладёт подпись в адрес страницы, читаем сами.
+  var cached = "";
+  var source = "нет";
+
+  function fromLocation() {
+    var keys = ["tgWebAppData"];
+    var places = [location.hash ? location.hash.replace(/^#/, "") : "", location.search.replace(/^\?/, "")];
+    for (var p = 0; p < places.length; p++) {
+      if (!places[p]) continue;
+      try {
+        var params = new URLSearchParams(places[p]);
+        for (var k = 0; k < keys.length; k++) {
+          var v = params.get(keys[k]);
+          if (v) return v;
+        }
+      } catch (e) {
+        /* старый браузер — просто нет запасного пути */
+      }
+    }
+    return "";
+  }
+
+  function readInitData() {
+    if (cached) return cached;
+    var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg && tg.initData) {
+      cached = tg.initData;
+      source = "sdk";
+      return cached;
+    }
+    var raw = fromLocation();
+    if (raw) {
+      cached = raw;
+      source = "адрес страницы";
+    }
+    return cached;
+  }
 
   // Приложение раздаётся самим ботом, поэтому база — свой же origin.
   // Если статика лежит отдельно (например, на GitHub Pages), адрес API можно
@@ -21,14 +60,26 @@ window.KM_API = (function () {
 
   /** Есть ли смысл дёргать сервер: подпись Telegram обязательна. */
   function available() {
-    return Boolean(initData);
+    return Boolean(readInitData());
+  }
+
+  /** Факты для экрана «нет связи»: без них причина ищется наугад. */
+  function diag() {
+    var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    return {
+      sdk: Boolean(tg),
+      platform: tg && tg.platform ? tg.platform : "—",
+      version: tg && tg.version ? tg.version : "—",
+      initLen: readInitData().length,
+      source: source,
+    };
   }
 
   function request(method, path, body) {
     return new Promise(function (resolve, reject) {
       var xhr = new XMLHttpRequest();
       xhr.open(method, base + path, true);
-      xhr.setRequestHeader("X-Telegram-Init-Data", initData);
+      xhr.setRequestHeader("X-Telegram-Init-Data", readInitData());
       if (body) xhr.setRequestHeader("Content-Type", "application/json");
       xhr.timeout = 60000; // распознавание фото занимает секунды, иногда десятки
       xhr.onload = function () {
@@ -115,6 +166,7 @@ window.KM_API = (function () {
 
   return {
     available: available,
+    diag: diag,
     state: function (date) {
       return request("GET", "/api/state" + (date ? "?date=" + encodeURIComponent(date) : ""));
     },

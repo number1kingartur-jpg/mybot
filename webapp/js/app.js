@@ -357,6 +357,10 @@
   }
 
   function loadDay(silent) {
+    // Проверяем заново: SDK Telegram — внешний файл и мог прийти позже первой
+    // отрисовки. Разовая проверка на старте оставляла приложение в локальном
+    // режиме до перезапуска.
+    if (!online) online = KM_API.available();
     if (!online) return;
     KM_API.state(state.viewDate || undefined)
       .then(function (data) {
@@ -1041,11 +1045,30 @@
 
   function addBlock(quota) {
     if (!online) {
+      var d = KM_API.diag ? KM_API.diag() : null;
+      // Внутри Telegram этот экран означает не «ты не в Telegram», а «подпись не
+      // прочиталась». Показываем факты: без них причина ищется наугад.
+      var inside = d && (d.sdk || d.platform !== "—");
       return card(
-        cardHead("Фото доступно только из Telegram", "Открой приложение кнопкой в боте") +
+        cardHead(
+          inside ? "Подпись Telegram не прочиталась" : "Фото доступно только из Telegram",
+          inside ? "Нажми «Проверить связь»" : "Открой приложение кнопкой в боте"
+        ) +
           '<p class="lead">Распознавание идёт через сервер бота: ключ модели нельзя ' +
           "держать в приложении. Здесь работает ручной ввод — если КБЖУ написаны на упаковке.</p>" +
+          (d
+            ? '<p class="note" style="margin-top:10px">SDK: ' +
+              (d.sdk ? "есть" : "не загрузился") +
+              " · клиент: " +
+              esc(d.platform) +
+              " " +
+              esc(d.version) +
+              " · подпись: " +
+              (d.initLen ? d.initLen + " симв. (" + esc(d.source) + ")" : "нет") +
+              "</p>"
+            : "") +
           '<div class="btn-stack" style="margin-top:14px">' +
+          '<button class="btn btn--primary" data-action="reload-day">Проверить связь</button>' +
           '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
           "</div>" +
           (state.addMode === "manual" ? manualForm() : "")

@@ -311,6 +311,9 @@ async function handleApi(
     json(res, 401, { error: "unauthorized", message: "Открой приложение из Telegram." });
     return;
   }
+  // Один запрос — одна строка. Пустой лог раньше не отличал «приложение молчит»
+  // от «приложение работает»: жалобу нечем было проверить.
+  console.log(`api ${req.method} ${urlPath} user=${user.id}`);
   const date = today();
 
   if (req.method === "GET" && urlPath === "/api/state") {
