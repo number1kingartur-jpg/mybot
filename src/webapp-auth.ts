@@ -32,9 +32,13 @@ export function verifyInitData(initData: string, botToken: string): WebAppUser |
   // и "…hash + мусор" декодировался бы в те же байты
   if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) return null;
 
+  // Исключается только hash. Поле signature (Bot API 7.2+) — обычное поле и
+  // входит в проверяемую строку: без него хеш расходится с телеграмовским на
+  // каждой настоящей подписи с телефона. Исключать signature нужно лишь при
+  // сторонней проверке по Ed25519, которой здесь нет.
   const pairs: string[] = [];
   params.forEach((value, key) => {
-    if (key !== "hash" && key !== "signature") pairs.push(`${key}=${value}`);
+    if (key !== "hash") pairs.push(`${key}=${value}`);
   });
   pairs.sort();
 
