@@ -43,6 +43,22 @@ window.KM_API = (function () {
     if (raw) {
       cached = raw;
       source = "адрес страницы";
+      return cached;
+    }
+    // Третий источник: SDK складывает параметры запуска в sessionStorage и
+    // восстанавливает их, когда страницу перезагрузили без адреса. Если сам SDK
+    // ещё не успел это сделать, читаем хранилище напрямую.
+    try {
+      var stored = sessionStorage.getItem("__telegram__initParams");
+      if (stored) {
+        var obj = JSON.parse(stored);
+        if (obj && obj.tgWebAppData) {
+          cached = obj.tgWebAppData;
+          source = "память сеанса";
+        }
+      }
+    } catch (e) {
+      /* хранилище недоступно — остаётся локальный режим */
     }
     return cached;
   }
@@ -74,6 +90,38 @@ window.KM_API = (function () {
     }
   }
 
+  /** Какие поля Telegram положил в адрес страницы. Только имена, без значений:
+      подпись в значениях, её нельзя показывать на экране. */
+  function launchKeys() {
+    var out = [];
+    try {
+      var places = [location.hash.replace(/^#/, ""), location.search.replace(/^\?/, "")];
+      for (var i = 0; i < places.length; i++) {
+        if (!places[i]) continue;
+        var p = new URLSearchParams(places[i]);
+        p.forEach(function (_v, k) {
+          if (out.indexOf(k) === -1) out.push(k.replace(/^tgWebApp/, ""));
+        });
+      }
+    } catch (e) {
+      /* старый браузер */
+    }
+    return out;
+  }
+
+  /** Запасник самого SDK: он складывает параметры запуска в sessionStorage и
+      восстанавливает их при перезагрузке страницы без адреса. */
+  function storedInit() {
+    try {
+      var raw = sessionStorage.getItem("__telegram__initParams");
+      if (!raw) return "нет";
+      var obj = JSON.parse(raw);
+      return obj && obj.tgWebAppData ? "есть с подписью" : "есть без подписи";
+    } catch (e) {
+      return "недоступно";
+    }
+  }
+
   /** Факты для экрана «нет связи»: без них причина ищется наугад. */
   function diag() {
     var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
@@ -83,6 +131,8 @@ window.KM_API = (function () {
       version: tg && tg.version ? tg.version : "—",
       initLen: readInitData().length,
       source: source,
+      keys: launchKeys(),
+      stored: storedInit(),
     };
   }
 

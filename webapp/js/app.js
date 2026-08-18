@@ -1065,6 +1065,10 @@
               esc(d.version) +
               " · подпись: " +
               (d.initLen ? d.initLen + " симв. (" + esc(d.source) + ")" : "нет") +
+              "<br />адрес: " +
+              (d.keys && d.keys.length ? esc(d.keys.join(", ")) : "пусто") +
+              " · память сеанса: " +
+              esc(d.stored || "—") +
               "</p>"
             : "") +
           '<div class="btn-stack" style="margin-top:14px">' +
