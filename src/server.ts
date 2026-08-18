@@ -538,7 +538,10 @@ async function handleApi(
       return;
     }
     setNutrition(user.id, profile);
-    json(res, 200, { ok: true, nutrition: profile });
+    // Отдаём всё состояние дня, как остальные изменяющие запросы: от веса зависит
+    // норма воды, и приложению не нужен второй запрос, чтобы её пересчитать.
+    // Поле nutrition в ответе осталось на месте — старые вызовы не ломаются.
+    json(res, 200, dayState(user.id, date));
     return;
   }
 

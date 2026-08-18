@@ -373,6 +373,16 @@
           state.workout.plan = data.simple.idx % KM_PLANS.plans[state.workout.place].length;
         }
         migrateWeights();
+        // Обратный случай: анкета заполнена в приложении, а в базе бота её нет.
+        // Так было всё время, пока подпись не проходила проверку: ответы жили
+        // только на устройстве, поэтому бот и норма воды считали по ориентиру
+        // 80 кг вместо настоящего веса.
+        if (!data.nutrition && state.setupDone && macros()) {
+          syncProfile(function (fresh) {
+            state.day = fresh;
+            render();
+          });
+        }
         // Профиль из бота подхватываем только на чистой установке, иначе перетрём то,
         // что человек уже ввёл в приложении
         if (!hadSavedProfile && data.nutrition) {
@@ -531,7 +541,7 @@
     go("home");
   }
 
-  function syncProfile() {
+  function syncProfile(onSaved) {
     if (!online || !macros()) return;
     KM_API.saveProfile({
       sex: state.profile.sex,
@@ -540,9 +550,15 @@
       weightKg: num(state.profile.weightKg),
       goal: state.profile.goal,
       activity: state.profile.activity
-    }).catch(function () {
-      /* норма всё равно посчитана локально — молчим */
-    });
+    })
+      .then(function (fresh) {
+        // Ответ — свежее состояние дня: норма воды считается от веса, поэтому
+        // после переноса анкеты цифры на экране должны обновиться сразу
+        if (onSaved && fresh && fresh.water) onSaved(fresh);
+      })
+      .catch(function () {
+        /* норма всё равно посчитана локально — молчим */
+      });
   }
 
   /* ── Экран: сегодня ─────────────────────────────────────────────────────── */
@@ -1142,9 +1158,9 @@
         (state.addMode === "food" ? foodForm() : "") +
         (state.addMode === "text" ? textForm() : "") +
         (state.addMode === "manual" ? manualForm() : "") +
-        '<p class="note note--plain">Если выбор фото не открывается — это ограничение ' +
-        "встроенного браузера Telegram, а не сервера: посчитай тот же приём кнопкой " +
-        "«Добавить текстом», результат одинаковый.</p>"
+        '<p class="note note--plain">Фото даёт оценку, а не взвешивание: жарку и масло ' +
+        "модель почти всегда считает скромнее, чем есть. Цифры можно поправить кнопкой " +
+        "«Ввести вручную».</p>"
     );
   }
 
