@@ -622,7 +622,7 @@
         state.lastOrm ? state.lastOrm.weightKg + " кг × " + state.lastOrm.reps : "не считал"
       ) +
       "</div>" +
-      '<div class="chips" style="margin-bottom:18px">' +
+      '<div class="chips chips--wrap" style="margin-bottom:18px">' +
       [250, 500]
         .map(function (ml) {
           return '<button type="button" class="chip" data-water="' + ml + '">+' + ml + " мл</button>";
@@ -1782,7 +1782,9 @@
           (w.ml * 100) / w.targetMl
         ) +
         "</div>" +
-        '<div class="chips" style="margin-top:14px">' +
+        // Перенос обязателен: на узком экране четвёртая кнопка уезжала в скролл
+        // и «убрать лишнее» просто не было видно
+        '<div class="chips chips--wrap" style="margin-top:14px">' +
         [250, 500, 750]
           .map(function (ml) {
             return (
