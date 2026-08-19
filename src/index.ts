@@ -18,7 +18,11 @@ import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, me
 import { putPending, takePending } from "./pending";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
-import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place, type SimpleExercise, exerciseVideoUrl, isDirectVideo } from "./simple";
+import {
+  SIMPLE_PLANS, type Place, type SimpleExercise, type Goal as SimpleGoal,
+  schemeFor, restFor, doseLabel, progressionRule, enduranceNote, SEX_NOTE,
+  exerciseHarder, exerciseVideoUrl, isDirectVideo,
+} from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
 import { transcribeVoice, voiceEnabled } from "./voice";
@@ -921,6 +925,12 @@ function currentSimpleWorkout(userId: number) {
   return { place, idx, w: plan[idx % plan.length] };
 }
 
+/** Цель из анкеты: дозировка плана, а не набор упражнений. */
+function simpleGoal(userId: number): SimpleGoal {
+  const g = getUser(userId)?.nutrition?.goal;
+  return g === "bulk" || g === "cut" ? g : "maint";
+}
+
 /** Совет по сложности на основе фидбэка после прошлых тренировок (подход Freeletics). */
 function diffAdvice(userId: number, place: Place): string {
   const diff = getUser(userId)?.simpleDiff ?? 0;
@@ -938,22 +948,25 @@ function diffAdvice(userId: number, place: Place): string {
 
 function buildSimpleWorkoutText(userId: number): string {
   const { place, w } = currentSimpleWorkout(userId);
+  const goal = simpleGoal(userId);
   const items = w.items
     .map((e, i) =>
-      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(e.scheme)}\n` +
+      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(schemeFor(e, goal))}\n` +
       `<i>${esc(e.short)}</i>`
     )
     .join("\n\n");
 
   return (
     `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
+    `<i>Цель: ${esc(doseLabel(goal))}. Отдых между подходами: ${esc(restFor(goal))}.</i>\n\n` +
     `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом.</i>\n\n` +
     items +
     diffAdvice(userId, place) +
     `\n\n👇 <b>Под каждым упражнением:</b>\n` +
     `📖 <i>Как делать</i> — пошагово + видео\n` +
-    `🟢 <i>Легче</i> — если тяжело\n\n` +
-    `⏱ <i>Отдых между подходами: 1.5–2 минуты.</i>`
+    `🟢 <i>Легче</i> — если тяжело\n` +
+    `🔥 <i>Сложнее</i> — если легко\n\n` +
+    `<i>${esc(enduranceNote(goal))}</i>`
   );
 }
 
@@ -972,18 +985,20 @@ function buildSimpleWorkoutKeyboard(userId: number): InlineKeyboard {
   return kb;
 }
 
-function buildExerciseGuideText(e: SimpleExercise): string {
+function buildExerciseGuideText(e: SimpleExercise, goal: SimpleGoal): string {
   const steps = e.steps.map((s, i) => `${i + 1}. ${esc(s)}`).join("\n");
   const mistakes = e.mistakes.map((m) => `${DOT} ${esc(m)}`).join("\n");
+  const harder = exerciseHarder(e);
   const videoHint = isDirectVideo(exerciseVideoUrl(e))
     ? "Кнопка ниже — короткое видео техники (2–3 мин)."
     : "Видео — поиск на YouTube.";
   return (
     `📖 <b>${esc(e.name.toUpperCase())}</b>\n` +
-    `<i>${esc(e.scheme)}</i>\n${HR}\n\n` +
+    `<i>${esc(schemeFor(e, goal))}</i>\n${HR}\n\n` +
     `<b>Как делать:</b>\n${steps}\n\n` +
     `⚠️ <b>Частые ошибки:</b>\n${mistakes}\n\n` +
     `🟢 <b>Если тяжело:</b> ${esc(e.easier)}\n\n` +
+    (harder ? `🔥 <b>Если легко:</b> ${esc(harder)}\n\n` : "") +
     `<i>${videoHint} После просмотра — «← К тренировке».</i>`
   );
 }
@@ -994,6 +1009,7 @@ function buildExerciseGuideKeyboard(idx: number, e: SimpleExercise): InlineKeybo
   const videoLabel = isDirectVideo(videoUrl) ? "▶️ Видео техники" : "▶️ Найти видео";
   kb.url(videoLabel, videoUrl).row();
   kb.text("🟢 Показать лёгкий вариант", `seas_${idx}`).row();
+  kb.text("🔥 Показать сложный вариант", `shar_${idx}`).row();
   kb.text("← К тренировке", "simple_back");
   return kb;
 }
@@ -1069,7 +1085,7 @@ bot.callbackQuery(/^sdet_(\d+)$/, async (ctx) => {
   const e = w.items[idx];
   if (!e) return;
   await ctx.editMessageText(
-    buildExerciseGuideText(e),
+    buildExerciseGuideText(e, simpleGoal(ctx.from.id)),
     { reply_markup: buildExerciseGuideKeyboard(idx, e), ...HTML }
   );
 });
@@ -1082,10 +1098,29 @@ bot.callbackQuery("simple_back", async (ctx) => {
 bot.callbackQuery("simple_weight", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { place } = currentSimpleWorkout(ctx.from.id);
-  const rule = place === "gym" ? WEIGHT_RULE : HOME_RULE;
+  const goal = simpleGoal(ctx.from.id);
+  const rule = progressionRule(place, goal);
   const kb = new InlineKeyboard().text("← К тренировке", "simple_back");
   await ctx.editMessageText(
-    `⚖️ <b>${place === "gym" ? "КАК ВЫБРАТЬ ВЕС" : "СТАЛО ЛЕГКО?"}</b>\n${HR}\n\n${esc(rule)}`,
+    `⚖️ <b>${place === "gym" ? "КАК ВЫБРАТЬ ВЕС" : "СТАЛО ЛЕГКО?"}</b>\n${HR}\n\n` +
+    `${esc(rule)}\n\n<i>${esc(enduranceNote(goal))}</i>\n\n<i>${esc(SEX_NOTE)}</i>`,
+    { reply_markup: kb, ...HTML }
+  );
+});
+
+bot.callbackQuery(/^shar_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const { w } = currentSimpleWorkout(ctx.from.id);
+  const idx = parseInt(ctx.match[1]);
+  const e = w.items[idx];
+  if (!e) return;
+  const harder = exerciseHarder(e);
+  const kb = new InlineKeyboard()
+    .text("📖 Как делать", `sdet_${idx}`).row()
+    .text("← К тренировке", "simple_back");
+  await ctx.editMessageText(
+    `🔥 <b>СЛОЖНЕЕ: ${esc(e.name.toUpperCase())}</b>\n${HR}\n\n${esc(harder || "Этот вариант уже стартовый.")}\n\n` +
+    `<i>Сделай этот вариант вместо основного, когда все подходы уходят чисто.</i>`,
     { reply_markup: kb, ...HTML }
   );
 });
@@ -1096,10 +1131,11 @@ bot.callbackQuery("simple_short", async (ctx) => {
   const userId = ctx.from.id;
   const { place, w } = currentSimpleWorkout(userId);
 
+  const goal = simpleGoal(userId);
   const shortItems = w.items.slice(0, 3);
   const items = shortItems
     .map((e, i) =>
-      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(e.scheme.replace(/^3 подхода/, "2 подхода"))}\n` +
+      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(schemeFor(e, goal, { sets: 2 }))}\n` +
       `<i>${esc(e.short)}</i>`
     )
     .join("\n\n");

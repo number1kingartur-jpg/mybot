@@ -2269,10 +2269,17 @@
 
   /* ── Экран: тренировка ──────────────────────────────────────────────────── */
 
+  /** Цель из анкеты: она задаёт дозировку плана, а не набор упражнений. */
+  function workoutGoal() {
+    var goal = state.profile && state.profile.goal;
+    return goal === "bulk" || goal === "cut" ? goal : "maint";
+  }
+
   function renderWorkout() {
     var wk = state.workout;
     var list = KM_PLANS.plans[wk.place];
     var plan = list[wk.plan] || list[0];
+    var goal = workoutGoal();
 
     return (
       chips("w_place", wk.place, [["home", "Дома"], ["gym", "В зале"]]) +
@@ -2291,7 +2298,12 @@
             plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
             ". Чередуй A и B через день отдыха. Нажми на упражнение, и откроется техника.",
           "План " + plan.label
-        ),
+        ) +
+          '<p class="note note--plain" style="margin-top:12px">Цель ' +
+          esc(KM_PLANS.doseLabel(goal)) +
+          ". Отдых между подходами " +
+          esc(KM_PLANS.rest(goal)) +
+          ".</p>",
         { gold: true }
       ) +
       noticeHtml() +
@@ -2307,17 +2319,24 @@
         : '<p class="note note--plain">Отметка тренировки пишется в дневник бота и работает только тогда, ' +
           "когда приложение открыто из Telegram.</p>") +
       '<p class="note">' +
-      esc(wk.place === "home" ? KM_PLANS.homeRule : KM_PLANS.weightRule) +
+      esc(KM_PLANS.rule(wk.place, goal)) +
+      "</p>" +
+      '<p class="note">' +
+      esc(KM_PLANS.endurance(goal)) +
+      "</p>" +
+      '<p class="note">' +
+      esc(KM_PLANS.sexNote) +
       "</p>"
     );
   }
 
   function exerciseHtml(e) {
+    var goal = workoutGoal();
     return (
       '<div class="acc"><button class="acc__head" data-acc><span><span class="acc__title">' +
       esc(e.name) +
       '</span><span class="acc__sub">' +
-      esc(e.scheme) +
+      esc(KM_PLANS.scheme(e, goal)) +
       " · " +
       esc(e.short) +
       '</span></span><span class="acc__sign">+</span></button><div class="acc__body">' +
@@ -2338,6 +2357,9 @@
       '<p class="note"><strong>Тяжело?</strong> ' +
       esc(e.easier) +
       "</p>" +
+      (KM_PLANS.harder(e)
+        ? '<p class="note"><strong>Легко?</strong> ' + esc(KM_PLANS.harder(e)) + "</p>"
+        : "") +
       '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--outline btn--slim" data-link="' +
       esc(e.video) +
       '">Техника на видео</button></div>' +
