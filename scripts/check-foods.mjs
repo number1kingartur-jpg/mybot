@@ -5,7 +5,8 @@
  * овсянки, 2 скупа протеина». Каждая ошибка здесь стоит человеку сотен
  * килокалорий в дневнике, поэтому разбор проверяется на сборке.
  */
-import { macrosFromText, macrosFromItems, matchFood } from "../dist/foods.js";
+import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug } from "../dist/foods.js";
+import { mealFromIdentify } from "../dist/meal.js";
 
 let failed = 0;
 
@@ -115,6 +116,80 @@ for (const [text, expect] of [
 ]) {
   check(`«${text}» → ${expect}`, items(text).includes(expect), items(text));
 }
+
+// ── Напитки: бутылка — это тоже приём ────────────────────────────────────────
+for (const [text, expect] of [
+  ["витаминный напиток c-vitt", "витаминный напиток"],
+  ["500 мл колы", "кола"],
+  ["банка энергетика", "энергетик"],
+  ["латте 300 мл", "латте"],
+  ["бутылка пива", "пиво"],
+  ["протеиновый батончик", "протеиновый батончик"],
+]) {
+  check(`«${text}» → ${expect}`, items(text).includes(expect), items(text));
+}
+
+const cvitt = macrosFromText("витаминный напиток c-vitt");
+near("бутылка C-vitt ≈ 45 ккал", cvitt?.kcal ?? 0, 45, 0.15);
+
+// «Песок» не должен приносить стакан сока
+const sugar = macrosFromText("2 ложки сахарного песка");
+check("сахарный песок — это сахар, а не сок", !/сок/.test(sugar?.name ?? "x"), sugar?.name);
+check("чайная ложка не приносит чай", !/чай/.test(items("1 чайная ложка сахара")), items("1 чайная ложка сахара"));
+check("коктейль из молока не приносит молочный коктейль", !/молочный коктейль/.test(items("коктейль: 300 мл молока, 2 скупа протеина")));
+
+// ── Продукт не из справочника: цифры с этикетки, а не отказ ──────────────────
+const label = macrosFromItems([
+  { name: "напиток yakult", grams: 100, kcal100: 65, p100: 1.2, f100: 0.1, c100: 15 },
+]);
+check("незнакомый продукт принят по этикетке", label !== null);
+check("этикетка: калории взяты", (label?.kcal ?? 0) === 65, String(label?.kcal));
+check("этикетка: сказано, откуда цифры", /упаковк/i.test(label?.note ?? ""), label?.note);
+
+const noNumbers = macrosFromItems([{ name: "напиток yakult", grams: 100 }]);
+check("без цифр на этикетке продукт не выдумывается", noNumbers === null);
+
+const mixed = macrosFromItems([
+  { name: "курица отварная", grams: 150 },
+  { name: "соус шрирача особый", grams: 20, kcal100: 100, p100: 2, f100: 1, c100: 20 },
+]);
+check("справочник и этикетка считаются вместе", (mixed?.kcal ?? 0) > 240, String(mixed?.kcal));
+
+// ── Картинка блюда ───────────────────────────────────────────────────────────
+check("слаг из названия", foodSlug("Котлета куриная жареная") === "kotleta-kurinaya-zharenaya", foodSlug("Котлета куриная жареная"));
+check("слаги не повторяются", new Set(FOODS.map((f) => foodSlug(f.name))).size === FOODS.length);
+const plate = macrosFromText("курица жареная 200 г, рис 150 г");
+check("картинка приёма — по главному продукту", plate?.slug === "kurica-zharenaya", plate?.slug);
+
+// ── Ответ модели по фото упаковки: раньше это был отказ ──────────────────────
+function fromModel(json) {
+  try {
+    return { meal: mealFromIdentify(json) };
+  } catch (e) {
+    return { error: e };
+  }
+}
+
+const bottle = fromModel('{"items":[{"name":"витаминный напиток C-vitt","grams":140}],"note":"тара пустая, посчитан полный объём"}');
+check("фото бутылки записывается", bottle.meal !== undefined, String(bottle.error?.message));
+near("бутылка C-vitt по фото ≈ 45 ккал", bottle.meal?.kcal ?? 0, 45, 0.15);
+check("замечание модели сохранено", /тара пустая/.test(bottle.meal?.note ?? ""), bottle.meal?.note);
+
+const unknownJar = fromModel('{"items":[{"name":"напиток yakult","grams":80,"kcal100":65,"p100":1.2,"f100":0.1,"c100":15}],"note":"по этикетке"}');
+check("незнакомая упаковка с этикеткой записывается", unknownJar.meal !== undefined, String(unknownJar.error?.message));
+near("этикетка: 80 мл × 65 ккал", unknownJar.meal?.kcal ?? 0, 52, 0.1);
+
+const unknownNoNumbers = fromModel('{"items":[{"name":"напиток yakult","grams":80}]}');
+check("без цифр отказ остаётся отказом", unknownNoNumbers.error !== undefined);
+check(
+  "в отказе видно, что модель разглядела",
+  /yakult/i.test(unknownNoNumbers.error?.seen ?? ""),
+  unknownNoNumbers.error?.seen
+);
+
+const notFood = fromModel('{"items":[],"note":"не еда: ноутбук"}');
+check("не еда остаётся не едой", notFood.error !== undefined);
+check("причина «не еда» доходит до человека", /ноутбук/.test(notFood.error?.seen ?? ""), notFood.error?.seen);
 
 // ── Справочник цел ───────────────────────────────────────────────────────────
 check("арахисовая паста не путается с пастой отварной", matchFood("арахисовая паста")?.name === "Арахисовая паста");

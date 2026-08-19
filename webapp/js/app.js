@@ -583,6 +583,12 @@
       text: (err && err.message) || "Не получилось. Попробуй ещё раз."
     };
     if (err && err.data && err.data.photo && state.day) state.day.photo = err.data.photo;
+    // Распознавание что-то увидело, но в КБЖУ не перевело: подставляем увиденное
+    // в поле ввода текстом. Иначе снимок упирается в тупик и человек бросает запись.
+    if (err && err.data && err.data.seen) {
+      state.mealText = err.data.seen;
+      state.addMode = "text";
+    }
     haptic("heavy");
     render();
   }

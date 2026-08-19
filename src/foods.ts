@@ -37,6 +37,8 @@ export interface FoodItem {
   spoonVariant?: string;
   /** Разумный минимум порции: у креатина и масла он граммы, а не 20 г. */
   minG?: number;
+  /** Позиция не из справочника, а с этикетки на фото: цифры дала модель. */
+  fromLabel?: boolean;
 }
 
 /**
@@ -155,13 +157,40 @@ export const FOODS: FoodItem[] = [
   { aliases: ["какао", "какао порошок", "cocoa"], name: "Какао порошок", kcal100: 230, p100: 20, f100: 14, c100: 58, defaultG: 10, category: "other", tbspG: 6, tspG: 2, minG: 2 },
   { aliases: ["coconut", "кокос", "coconut milk"], name: "Кокос", kcal100: 230, p100: 2.3, f100: 24, c100: 6, defaultG: 80, category: "fat" },
   // ── Сладкое ───────────────────────────────────────────────────────────────
-  { aliases: ["сахар", "sugar"], name: "Сахар", kcal100: 400, p100: 0, f100: 0, c100: 100, defaultG: 10, category: "other", tbspG: 15, tspG: 5, minG: 2 },
+  // «Сахарный песок» указан явно: иначе в слове «песок» находился «сок» и в приём
+  // приезжал стакан сока.
+  { aliases: ["сахарный песок", "песок сахарный", "сахар", "sugar"], name: "Сахар", kcal100: 400, p100: 0, f100: 0, c100: 100, defaultG: 10, category: "other", tbspG: 15, tspG: 5, minG: 2 },
   { aliases: ["мёд", "мед", "honey"], name: "Мёд", kcal100: 320, p100: 0.3, f100: 0, c100: 80, defaultG: 20, category: "other", tbspG: 21, tspG: 7, minG: 3 },
   { aliases: ["варенье", "джем", "jam", "сгущёнка", "сгущенка"], name: "Варенье", kcal100: 250, p100: 0.3, f100: 0, c100: 62, defaultG: 30, category: "other", tbspG: 20, tspG: 7, minG: 3 },
   { aliases: ["шоколад", "chocolate", "конфет"], name: "Шоколад", kcal100: 550, p100: 6, f100: 32, c100: 58, defaultG: 30, category: "other" },
   { aliases: ["печенье", "cookie", "вафли", "пряник"], name: "Печенье", kcal100: 450, p100: 6, f100: 17, c100: 68, defaultG: 50, category: "other" },
   { aliases: ["мороженое", "ice cream"], name: "Мороженое", kcal100: 210, p100: 3.5, f100: 11, c100: 25, defaultG: 100, category: "other" },
   { aliases: ["торт", "пирожное", "cake", "чизкейк"], name: "Торт", kcal100: 380, p100: 5, f100: 20, c100: 45, defaultG: 100, category: "other" },
+  // ── Напитки и магазинное ──────────────────────────────────────────────────
+  // Напиток — тоже приём: бутылка сока в жару даёт больше углеводов, чем гарнир.
+  // Раньше справочник знал из питья только молоко, кефир и воду, поэтому фото
+  // любой бутылки заканчивалось ответом «не разобрал, что на фото».
+  { aliases: ["витаминный напиток", "c vitt", "cvitt", "витамин с напиток", "vitamin drink"], name: "Витаминный напиток", kcal100: 32, p100: 0, f100: 0, c100: 8, defaultG: 140, category: "other", densityGml: 1.03, pieceG: 140, minG: 50 },
+  { aliases: ["сок", "сока", "соку", "соком", "juice", "нектар"], name: "Сок", kcal100: 45, p100: 0.5, f100: 0.1, c100: 11, defaultG: 250, category: "other", densityGml: 1.04, pieceG: 200, minG: 50 },
+  { aliases: ["кола без сахара", "кола зеро", "cola zero", "coca cola zero", "pepsi max", "напиток без сахара"], name: "Кола без сахара", kcal100: 0.4, p100: 0, f100: 0, c100: 0, defaultG: 330, category: "other", densityGml: 1, pieceG: 330, minG: 50 },
+  { aliases: ["кола", "колы", "колу", "колой", "coca cola", "кокакола", "пепси", "pepsi", "sprite", "спрайт", "фанта"], name: "Кола", kcal100: 42, p100: 0, f100: 0, c100: 10.6, defaultG: 330, category: "other", densityGml: 1.04, pieceG: 330, minG: 50 },
+  { aliases: ["энергетик", "red bull", "monster", "энергетический напиток"], name: "Энергетик", kcal100: 45, p100: 0, f100: 0, c100: 11, defaultG: 250, category: "other", densityGml: 1.04, pieceG: 250, minG: 50 },
+  { aliases: ["изотоник", "спортивный напиток", "gatorade", "powerade"], name: "Изотоник", kcal100: 25, p100: 0, f100: 0, c100: 6, defaultG: 500, category: "other", densityGml: 1.02, pieceG: 500, minG: 50 },
+  { aliases: ["лимонад", "морс", "компот", "квас"], name: "Лимонад", kcal100: 40, p100: 0, f100: 0, c100: 10, defaultG: 330, category: "other", densityGml: 1.04, pieceG: 330, minG: 50 },
+  { aliases: ["смузи", "smoothie"], name: "Смузи", kcal100: 60, p100: 1, f100: 0.5, c100: 13, defaultG: 250, category: "other", densityGml: 1.05, pieceG: 250, minG: 50 },
+  { aliases: ["молочный коктейль", "милкшейк", "milkshake"], name: "Молочный коктейль", kcal100: 90, p100: 3, f100: 3, c100: 13, defaultG: 300, category: "other", densityGml: 1.05, pieceG: 300, minG: 50 },
+  { aliases: ["кофе с молоком", "латте", "latte", "флэт уайт", "flat white"], name: "Латте", kcal100: 45, p100: 2.5, f100: 2, c100: 4, defaultG: 300, category: "other", densityGml: 1.02, pieceG: 300, minG: 50 },
+  { aliases: ["капучино", "cappuccino"], name: "Капучино", kcal100: 40, p100: 2.4, f100: 2, c100: 3, defaultG: 200, category: "other", densityGml: 1.02, pieceG: 200, minG: 50 },
+  { aliases: ["кофе", "американо", "эспрессо", "coffee", "espresso"], name: "Кофе чёрный", kcal100: 2, p100: 0.1, f100: 0, c100: 0.3, defaultG: 200, category: "other", densityGml: 1, pieceG: 200, minG: 50 },
+  { aliases: ["чай без сахара", "зеленый чай", "черный чай", "чай зеленый", "чай черный", "green tea"], name: "Чай без сахара", kcal100: 1, p100: 0, f100: 0, c100: 0.2, defaultG: 250, category: "other", densityGml: 1, pieceG: 250, minG: 50 },
+  { aliases: ["пиво", "пива", "пивом", "beer", "лагер"], name: "Пиво", kcal100: 43, p100: 0.5, f100: 0, c100: 3.6, defaultG: 500, category: "other", densityGml: 1.01, pieceG: 500, minG: 50 },
+  { aliases: ["вино", "вина", "вином", "wine", "шампанское"], name: "Вино", kcal100: 85, p100: 0.1, f100: 0, c100: 2.6, defaultG: 150, category: "other", densityGml: 0.99, pieceG: 150, minG: 50 },
+  { aliases: ["кокосовая вода", "coconut water"], name: "Кокосовая вода", kcal100: 20, p100: 0.7, f100: 0.2, c100: 3.7, defaultG: 330, category: "other", densityGml: 1.01, pieceG: 330, minG: 50 },
+  { aliases: ["йогурт питьевой", "питьевой йогурт", "актимель", "снежок"], name: "Йогурт питьевой", kcal100: 70, p100: 2.8, f100: 1.5, c100: 11, defaultG: 290, category: "other", densityGml: 1.04, pieceG: 290, minG: 50 },
+  { aliases: ["протеиновый батончик", "протеин батончик", "protein bar"], name: "Протеиновый батончик", kcal100: 380, p100: 30, f100: 12, c100: 40, defaultG: 60, category: "protein", pieceG: 60, minG: 15 },
+  { aliases: ["батончик", "сникерс", "snickers", "марс", "twix", "шоколадный батончик"], name: "Шоколадный батончик", kcal100: 490, p100: 5, f100: 24, c100: 62, defaultG: 50, category: "other", pieceG: 50, minG: 15 },
+  { aliases: ["чипсы", "chips", "сухарики", "снек"], name: "Чипсы", kcal100: 530, p100: 6, f100: 30, c100: 53, defaultG: 90, category: "other", pieceG: 90, minG: 15 },
+  { aliases: ["виноград", "grapes"], name: "Виноград", kcal100: 69, p100: 0.7, f100: 0.2, c100: 17, defaultG: 150, category: "carb", minG: 30 },
   // Тайская / ресторанная кухня
   { aliases: ["pad thai", "пад тай", "padthai"], name: "Пад Тай", kcal100: 180, p100: 8, f100: 7, c100: 22, defaultG: 300, category: "other" },
   { aliases: ["tom yum", "том ям", "tomyum"], name: "Том Ям", kcal100: 60, p100: 5, f100: 2, c100: 6, defaultG: 350, category: "other" },
@@ -177,6 +206,28 @@ export const FOODS: FoodItem[] = [
   { aliases: ["sushi", "суши", "ролл", "roll", "maki"], name: "Суши", kcal100: 150, p100: 6, f100: 3, c100: 24, defaultG: 200, category: "other" },
   { aliases: ["burrito", "боул", "bowl", "poke", "поке"], name: "Боул", kcal100: 140, p100: 10, f100: 5, c100: 15, defaultG: 350, category: "other" },
 ];
+
+const TRANSLIT: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ж: "zh", з: "z", и: "i", й: "y",
+  к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u",
+  ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e",
+  ю: "yu", я: "ya",
+};
+
+/**
+ * Имя файла картинки блюда.
+ *
+ * Считается из названия, а не хранится рядом с ним: сто с лишним позиций с
+ * ручными слагами разъехались бы с папкой при первой же правке названия.
+ */
+export function foodSlug(name: string): string {
+  return norm(name)
+    .split("")
+    .map((ch) => TRANSLIT[ch] ?? ch)
+    .join("")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 function norm(s: string): string {
   // Дефис — то же слово: «спринг-роллы» иначе не совпадали с «спринг ролл»
@@ -298,7 +349,8 @@ const UNIT_RE: [Unit, RegExp][] = [
   ["kg", new RegExp(String.raw`${NB}(?:кг|kg)${NA}`, "u")],
   ["g", new RegExp(String.raw`${NB}(?:г|гр|g|грам\p{L}*|gram\p{L}*)${NA}`, "u")],
   ["l", new RegExp(String.raw`${NB}(?:л|литр\p{L}*|liter\p{L}*)${NA}`, "u")],
-  ["piece", new RegExp(String.raw`${NB}(?:шт|штук\p{L}*|pcs)${NA}`, "u")],
+  // Тара — тоже штука: «бутылка пива», «банка энергетика», «бокал вина»
+  ["piece", new RegExp(String.raw`${NB}(?:шт|штук\p{L}*|pcs)${NA}|бутылк\p{L}*|банк\p{L}*|бокал\p{L}*|порци\p{L}*`, "u")],
 ];
 
 /**
@@ -473,6 +525,11 @@ function buildMeal(matched: { food: FoodItem; grams: number }[], note: string): 
   const shown = parts.slice(0, 4);
   const hidden = parts.length - shown.length;
   const title = hidden > 0 ? `${shown.join(", ")} и ещё ${hidden}` : shown.join(", ");
+
+  // Картинка приёма — по самой тяжёлой позиции: в тарелке «курица + рис + салат»
+  // человек узнаёт запись по мясу, а не по первому слову в строке.
+  const main = unique.reduce((a, b) => (b.food.kcal100 * b.grams > a.food.kcal100 * a.grams ? b : a));
+
   return {
     name: title.charAt(0).toUpperCase() + title.slice(1),
     kcal: Math.round(kcal),
@@ -480,13 +537,50 @@ function buildMeal(matched: { food: FoodItem; grams: number }[], note: string): 
     fatG: Math.round(fatG),
     carbsG: Math.round(carbsG),
     note,
+    slug: foodSlug(main.food.name),
   };
 }
 
-export function macrosFromItems(items: { name: string; grams: number }[]): MealAnalysis | null {
+/** Позиция от модели: имя, вес и — если продукта нет в справочнике — цифры с этикетки. */
+export interface IdentifiedFood {
+  name: string;
+  grams: number;
+  kcal100?: number;
+  p100?: number;
+  f100?: number;
+  c100?: number;
+}
+
+/**
+ * Продукт, которого нет в справочнике, — по цифрам с этикетки.
+ *
+ * Иначе выходил тупик: магазинный напиток или батончик модель узнаёт по упаковке,
+ * но в справочнике его нет, совпадение не находится, и приложение отвечало
+ * «не разобрал, что на фото» — при том, что разобрало.
+ */
+function labelFood(item: IdentifiedFood): FoodItem | null {
+  const kcal100 = item.kcal100;
+  if (kcal100 === undefined || kcal100 <= 0) return null;
+  const name = item.name.trim().slice(0, 60);
+  if (!name) return null;
+  return {
+    aliases: [],
+    name: name.charAt(0).toUpperCase() + name.slice(1),
+    kcal100,
+    p100: item.p100 ?? 0,
+    f100: item.f100 ?? 0,
+    c100: item.c100 ?? 0,
+    defaultG: 100,
+    category: "other",
+    minG: 5,
+    fromLabel: true,
+  };
+}
+
+export function macrosFromItems(items: IdentifiedFood[]): MealAnalysis | null {
   const matched: { food: FoodItem; grams: number }[] = [];
   for (const item of items) {
-    const food = matchFood(item.name);
+    const food = matchFood(item.name) ?? labelFood(item);
     if (!food) continue;
     matched.push({ food, grams: sane(food, item.grams) ?? food.defaultG });
   }
@@ -494,9 +588,12 @@ export function macrosFromItems(items: { name: string; grams: number }[]): MealA
   // Точность честнее прежних ±10–15%: на фото не видно, сколько масла впитало
   // блюдо, а это единственная цифра, которая может уехать вдвое
   const fried = matched.some((m) => m.food.fatIncluded);
-  const note = fried
+  let note = fried
     ? "Справочник RASCHET. Жарка учтена, масло на глаз: ±20%."
     : "Справочник RASCHET. Точность ±15%.";
+  if (matched.some((m) => m.food.fromLabel)) {
+    note = "Часть цифр — с упаковки, а не из справочника. Проверь этикетку.";
+  }
   return buildMeal(matched, note);
 }
 

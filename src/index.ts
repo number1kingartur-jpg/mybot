@@ -2897,10 +2897,14 @@ async function processMealPhoto(
         `<i>Для фото: новый <code>GEMINI_API_KEY</code> в AI Studio или <code>OPENROUTER_API_KEY</code> на <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> (бесплатно)</i>`;
     } else if (e instanceof MealPhotoUnreadableError || errMsg.includes("photo_unreadable:zero_macros") || errMsg.includes("photo_unreadable:no_foods") || errMsg.includes("photo_unreadable:no_match")) {
       getSession(userId).state = "awaiting_meal_text";
-      userMsg =
-        `⚠️ Не разобрал блюдо — не нашёл в справочнике или плохо видно.\n\n` +
-        `<b>Напиши текстом</b> (точнее):\n` +
-        `<code>лосось 150 г, рис 200 г, салат</code>`;
+      // Если модель что-то увидела, подставляем это в подсказку: человеку остаётся
+      // поправить вес, а не набирать состав с нуля.
+      const seen = e instanceof MealPhotoUnreadableError ? e.seen : "";
+      userMsg = seen
+        ? `⚠️ Вижу: ${seen}. В цифры не перевёл.\n\n<b>Поправь и пришли текстом:</b>\n<code>${seen}</code>`
+        : `⚠️ Не разобрал блюдо — не нашёл в справочнике или плохо видно.\n\n` +
+          `<b>Напиши текстом</b> (точнее):\n` +
+          `<code>лосось 150 г, рис 200 г, салат</code>`;
     } else if (errMsg.includes("GROQ_API_KEY not set") || errMsg.includes("OPENROUTER_API_KEY not set") || errMsg.includes("API_KEY")) {
       userMsg =
         `⚠️ <b>Нет рабочего ключа анализа еды.</b>\n\n` +

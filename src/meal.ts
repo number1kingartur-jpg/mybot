@@ -11,9 +11,12 @@ import { analyzeMealFromTextLocal } from "./meal-fallback";
  * отварную грудку — и жареная котлета получала 4 г жира вместо 14.
  */
 const IDENTIFY_PROMPT =
-  "Ты нутрициолог, оцениваешь домашнюю еду по фото или описанию.\n" +
+  "Ты нутрициолог, оцениваешь еду и напитки по фото или описанию: домашнее, ресторанное и магазинное.\n" +
   "Ответь ТОЛЬКО JSON без markdown:\n" +
-  '{"items":[{"name":"блюдо на русском","grams":число}],"note":"способ приготовления и что не видно"}\n' +
+  '{"items":[{"name":"продукт на русском","grams":число,"kcal100":число,"p100":число,"f100":число,"c100":число}],' +
+  '"note":"способ приготовления и что не видно"}\n' +
+  "Поля kcal100/p100/f100/c100 — на 100 г или 100 мл. Ставь их всегда, когда продукт магазинный, " +
+  "с этикеткой, фирменный или нетиповой: по обычной домашней еде цифры есть у меня, по такому — нет.\n" +
   "\n" +
   "Правила:\n" +
   "1. В названии обязателен способ приготовления: «котлета куриная жареная», " +
@@ -33,7 +36,17 @@ const IDENTIFY_PROMPT =
   "банан — 120 г, яйцо — 55 г, стакан — 250 мл. Добавки без калорий (креатин) — grams как есть.\n" +
   "8. В note укажи способ приготовления и главное допущение — например " +
   "«жарка на растительном масле, количество масла не видно».\n" +
-  '\nЕсли не еда: {"items":[],"note":"не еда"}';
+  "9. Напиток — это еда: сок, газировка, витаминный напиток, кофе с молоком, пиво, смузи. " +
+  "Для жидкости grams = объём в мл (бутылка 0,5 л → 500).\n" +
+  "10. Упаковка, бутылка, банка, батончик: прочитай этикетку и назови продукт как на ней " +
+  "(«витаминный напиток C-vitt», «кола», «протеиновый батончик»). Если на этикетке видны " +
+  "КБЖУ — верни именно их в kcal100/p100/f100/c100; если не видны — поставь по своему знанию " +
+  "этого продукта. Объём и вес возьми с упаковки, а не на глаз.\n" +
+  "11. Тара пустая или почти пустая — всё равно считай полную порцию упаковки, " +
+  "а в note напиши «тара пустая, посчитан полный объём».\n" +
+  "12. «не еда» — только если на кадре действительно нет еды и напитков (человек, техника, " +
+  "пейзаж). Незнакомая упаковка — это еда: назови, что видишь, и поставь свои цифры.\n" +
+  '\nЕсли не еда: {"items":[],"note":"не еда: что на кадре"}';
 
 const GEMINI_MODELS = [
   "gemini-flash-lite-latest",
@@ -83,12 +96,18 @@ export interface MealAnalysis {
   fatG: number;
   carbsG: number;
   note?: string;
+  /** Картинка главного продукта приёма: имя файла в `webapp/img/food`. */
+  slug?: string;
 }
 
 export class MealPhotoUnreadableError extends Error {
-  constructor(reason: string) {
+  /** Что модель всё-таки увидела: этим можно заполнить ввод текстом, а не упереться в отказ. */
+  readonly seen: string;
+
+  constructor(reason: string, seen = "") {
     super(`photo_unreadable:${reason}`);
     this.name = "MealPhotoUnreadableError";
+    this.seen = seen.slice(0, 120);
   }
 }
 
@@ -148,6 +167,18 @@ function setCached(buf: Buffer, meal: MealAnalysis): void {
 interface IdentifiedItem {
   name: string;
   grams: number;
+  /** КБЖУ на 100 г/мл с этикетки — для продуктов, которых нет в справочнике. */
+  kcal100?: number;
+  p100?: number;
+  f100?: number;
+  c100?: number;
+}
+
+/** Цифра с этикетки: за пределами диапазона — значит модель ошиблась, не берём. */
+function per100(value: unknown, max: number): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > max) return undefined;
+  return Math.round(n * 10) / 10;
 }
 
 function parseIdentifyJson(raw: string): { items: IdentifiedItem[]; note?: string } {
@@ -158,7 +189,14 @@ function parseIdentifyJson(raw: string): { items: IdentifiedItem[]; note?: strin
   const j = JSON.parse(slice) as { items?: IdentifiedItem[]; note?: string; name?: string; kcal?: number };
   if (Array.isArray(j.items)) {
     const items = j.items
-      .map((x) => ({ name: String(x.name ?? "").trim(), grams: Math.round(Number(x.grams) || 0) }))
+      .map((x) => ({
+        name: String(x.name ?? "").trim(),
+        grams: Math.round(Number(x.grams) || 0),
+        kcal100: per100(x.kcal100, 900),
+        p100: per100(x.p100, 100),
+        f100: per100(x.f100, 100),
+        c100: per100(x.c100, 100),
+      }))
       .filter((x) => x.name && x.grams > 0);
     return { items, note: j.note ? String(j.note).slice(0, 120) : undefined };
   }
@@ -172,7 +210,8 @@ function parseIdentifyJson(raw: string): { items: IdentifiedItem[]; note?: strin
   return { items: [], note: j.note };
 }
 
-function mealFromIdentify(raw: string): MealAnalysis {
+/** Ответ модели → запись в дневник. Экспортируется для проверок на сборке. */
+export function mealFromIdentify(raw: string): MealAnalysis {
   let parsed: { items: IdentifiedItem[]; note?: string };
   try {
     parsed = parseIdentifyJson(raw);
@@ -198,10 +237,12 @@ function mealFromIdentify(raw: string): MealAnalysis {
     }
   } catch { /* use items path */ }
 
-  if (!parsed.items.length) throw new MealPhotoUnreadableError("no_foods");
+  if (!parsed.items.length) throw new MealPhotoUnreadableError("no_foods", parsed.note ?? "");
 
+  // Что модель увидела — на случай отказа: человеку нужен путь дальше, а не тупик.
+  const seen = parsed.items.map((i) => `${i.name} ${i.grams} г`).join(", ");
   const fromDb = macrosFromItems(parsed.items);
-  if (!fromDb || fromDb.kcal === 0) throw new MealPhotoUnreadableError("no_match");
+  if (!fromDb || fromDb.kcal === 0) throw new MealPhotoUnreadableError("no_match", seen);
 
   if (parsed.note && parsed.note !== "legacy") {
     fromDb.note = `${fromDb.note} ${parsed.note}`.slice(0, 120);
@@ -212,7 +253,9 @@ function mealFromIdentify(raw: string): MealAnalysis {
 async function geminiRequest(apiKey: string, parts: object[], model: string): Promise<string> {
   const body = JSON.stringify({
     contents: [{ parts }],
-    generationConfig: { temperature: 0.15, maxOutputTokens: 512 },
+    // Запас на ответ: в позиции теперь до шести полей (КБЖУ с этикетки), и на
+    // тарелке из пяти составляющих обрезанный JSON стоил бы всего разбора.
+    generationConfig: { temperature: 0.15, maxOutputTokens: 900 },
   });
   const { status, raw } = await httpsJson(
     {

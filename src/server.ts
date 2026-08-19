@@ -13,7 +13,7 @@ import {
   type NutritionProfile, type Lift, type Program,
 } from "./db";
 import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, MealPhotoUnreadableError } from "./meal";
-import { FOODS, macrosFromItems } from "./foods";
+import { FOODS, foodSlug, macrosFromItems, matchFood } from "./foods";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { SIMPLE_PLANS, type Place } from "./simple";
@@ -67,6 +67,7 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".webmanifest": "application/manifest+json",
 };
@@ -207,6 +208,7 @@ function dayState(userId: number, date: string) {
       proteinG: m.proteinG,
       fatG: m.fatG,
       carbsG: m.carbsG,
+      slug: m.slug,
     })),
     totals: mealTotals(userId, date),
     // Серия и частые блюда считаются всегда от сегодняшнего дня, а не от
@@ -317,7 +319,11 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   }
 
   const ext = path.extname(full).toLowerCase();
-  const isAsset = ext === ".png" || ext === ".jpg" || ext === ".svg" || ext === ".ico";
+  const isAsset = ext === ".png" || ext === ".jpg" || ext === ".webp" || ext === ".svg" || ext === ".ico";
+  // Картинки блюд не меняются: имя файла считается из названия продукта. Неделя
+  // кэша важнее суток — в справочнике их сотня, и на мобильной сети каждый
+  // повторный заход иначе тянет их заново.
+  const maxAge = urlPath.startsWith("/img/food/") ? 604800 : 86400;
 
   // WebView Telegram держит старый js даже при no-cache — на iOS это проверено
   // на живом устройстве: правка была в сети, а на экране оставалась прошлая
@@ -341,7 +347,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
 
   res.writeHead(200, {
     "Content-Type": MIME[ext] ?? "application/octet-stream",
-    "Cache-Control": isAsset ? "public, max-age=86400" : "no-cache",
+    "Cache-Control": isAsset ? `public, max-age=${maxAge}` : "no-cache",
   });
   fs.createReadStream(full).pipe(res);
 }
@@ -530,6 +536,7 @@ async function handleApi(
         c100: f.c100,
         defaultG: f.defaultG,
         category: f.category,
+        slug: foodSlug(f.name),
       })),
     });
     return;
@@ -598,15 +605,21 @@ async function handleApi(
       // а без id пришлось бы искать запись по названию — их может быть две
       const row = addMeal({
         userId: user.id, date,
-        name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
+        name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
       });
       bumpPhotoCount(user.id, wk, date);
       json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, date) });
     } catch (e) {
       if (e instanceof MealPhotoUnreadableError) {
+        // Если модель что-то увидела, но в цифры это не перевелось — отдаём
+        // увиденное: приложение подставит текст в поле, и человеку останется
+        // поправить вес, а не начинать заново.
         json(res, 422, {
           error: "unreadable",
-          message: "Не разобрал, что на фото. Сними ближе и при свете или добавь текстом.",
+          seen: e.seen || undefined,
+          message: e.seen
+            ? `Вижу: ${e.seen}. В цифры не перевёл — проверь и запиши текстом.`
+            : "Не разобрал, что на фото. Сними ближе и при свете или добавь текстом.",
         });
         return;
       }
@@ -628,7 +641,7 @@ async function handleApi(
       const meal = await analyzeMealText(text);
       const row = addMeal({
         userId: user.id, date,
-        name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
+        name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
       });
       json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, date) });
     } catch (e) {
@@ -656,7 +669,7 @@ async function handleApi(
     }
     const row = addMeal({
       userId: user.id, date,
-      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
     });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
@@ -687,6 +700,7 @@ async function handleApi(
       proteinG: prev.proteinG,
       fatG: prev.fatG,
       carbsG: prev.carbsG,
+      slug: prev.slug,
     };
     const row = addMeal({ userId: user.id, date, ...meal });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
@@ -705,7 +719,10 @@ async function handleApi(
       json(res, 400, { error: "bad_kcal" });
       return;
     }
-    const meal = { name, kcal, proteinG, fatG, carbsG };
+    // Своё название тоже стоит попробовать узнать: «Творог с орехами» найдёт
+    // творог и получит картинку — иначе ручная запись выглядит безымянной.
+    const known = matchFood(name);
+    const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? foodSlug(known.name) : undefined };
     const row = addMeal({ userId: user.id, date, ...meal });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;

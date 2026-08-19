@@ -103,6 +103,8 @@ export interface MealEntry {
   proteinG: number;
   fatG: number;
   carbsG: number;
+  /** Картинка главного продукта: имя файла в `webapp/img/food`. */
+  slug?: string;
 }
 
 export interface Challenge {
