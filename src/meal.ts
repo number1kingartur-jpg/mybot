@@ -297,6 +297,18 @@ function isQuotaError(msg: string): boolean {
   return m.includes("429") || m.includes("quota") || m.includes("resource_exhausted") || m.includes("rate limit");
 }
 
+/** Один и тот же Gemini лежит: таймаут или 503. Следующие модели в списке — тот же сбой, только дольше. */
+function isCapacityError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("timeout") ||
+    m.includes("503") ||
+    m.includes("high demand") ||
+    m.includes("overloaded") ||
+    m.includes("unavailable")
+  );
+}
+
 function isModelMissing(msg: string): boolean {
   const m = msg.toLowerCase();
   return m.includes("404") || m.includes("not found") || m.includes("no longer available");
@@ -313,7 +325,7 @@ function extractApiError(raw: string): string {
 
 function httpsJson(opts: https.RequestOptions, body: string): Promise<{ status: number; raw: string }> {
   return new Promise((resolve, reject) => {
-    const req = https.request({ ...opts, timeout: 45_000 }, (res) => {
+    const req = https.request({ ...opts, timeout: 20_000 }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => resolve({ status: res.statusCode ?? 0, raw: Buffer.concat(chunks).toString("utf-8") }));
@@ -552,10 +564,15 @@ async function geminiMeal(parts: object[], what: string): Promise<MealAnalysis> 
         } catch (e) {
           lastErr = e instanceof Error ? e.message : String(e);
           console.error("gemini", model, `${what} attempt=${attempt}`, lastErr.slice(0, 100));
-          // Квота отпускает через пару секунд, остальное — сразу к другой модели.
+          // Квота отпускает через пару секунд.
           if (isQuotaError(lastErr) && !isModelMissing(lastErr) && attempt === 0) {
             await sleep(2500);
             continue;
+          }
+          // Таймаут и 503 — это не «другая модель спасёт»: тот же API перегружен.
+          // Дальше по списку человек ждёт ещё минуту, и Mini App на iPhone срывается.
+          if (isCapacityError(lastErr)) {
+            throw new Error(`service_unavailable: ${lastErr}`);
           }
           break;
         }

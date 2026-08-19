@@ -657,7 +657,10 @@ async function handleApi(
       }
       const msg = e instanceof Error ? e.message : String(e);
       console.error("api meal photo:", msg.slice(0, 160));
-      json(res, 502, { error: "vision_failed", message: "Сервис распознавания не ответил. Попробуй позже." });
+      json(res, 502, {
+        error: "vision_failed",
+        message: "Распознавание сейчас не отвечает. Напиши текстом, что на фото: например «виноград 200 г».",
+      });
     }
     return;
   }

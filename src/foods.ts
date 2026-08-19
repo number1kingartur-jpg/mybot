@@ -230,7 +230,7 @@ export const FOODS: FoodItem[] = [
   { aliases: ["twix", "твикс"], name: "Twix", kcal100: 495, p100: 4.6, f100: 24.4, c100: 64.8, defaultG: 50, category: "other", pieceG: 50, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
   { aliases: ["mars", "марс"], name: "Mars", kcal100: 449, p100: 3.8, f100: 17.4, c100: 69, defaultG: 51, category: "other", pieceG: 51, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
   { aliases: ["чипсы", "chips", "сухарики", "снек"], name: "Чипсы", kcal100: 530, p100: 6, f100: 30, c100: 53, defaultG: 90, category: "other", pieceG: 90, minG: 15 },
-  { aliases: ["виноград", "grapes"], name: "Виноград", kcal100: 69, p100: 0.7, f100: 0.2, c100: 17, defaultG: 150, category: "carb", minG: 30 },
+  { aliases: ["виноград", "grapes", "кишмиш", "красный виноград", "виноградинки"], name: "Виноград", kcal100: 69, p100: 0.7, f100: 0.2, c100: 17, defaultG: 200, category: "carb", minG: 30 },
   // Тайская / ресторанная кухня
   { aliases: ["pad thai", "пад тай", "padthai"], name: "Пад Тай", kcal100: 180, p100: 8, f100: 7, c100: 22, defaultG: 300, category: "other" },
   { aliases: ["tom yum", "том ям", "tomyum"], name: "Том Ям", kcal100: 60, p100: 5, f100: 2, c100: 6, defaultG: 350, category: "other" },
