@@ -3,6 +3,7 @@
 import { POST_CLOSINGS } from "./post-closings";
 import { finalizeChannelPosts } from "./validate-posts";
 import { CHANNEL_POSTS_WAVE5 } from "./posts-wave5";
+import { CHANNEL_POSTS_WAVE6 } from "./posts-wave6";
 
 export interface ChannelPost {
   id: string;
@@ -250,7 +251,21 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
  * стандарт текста сменился (Marketing/research/КОНТЕНТ-СИСТЕМА.md).
  * Разборы — в posts-analysis.ts, тоже не в очереди.
  */
-const CHANNEL_POSTS_RAW: ChannelPost[] = [...CHANNEL_POSTS_WAVE5];
+/**
+ * Волны чередуются, а не идут подряд. При трёх постах в день подряд идущая волна
+ * означает три поста про питание в один день — читателю это выглядит как рассылка.
+ * Чередование даёт в дне тренировку, питание и восстановление.
+ */
+function interleave(...waves: ChannelPost[][]): ChannelPost[] {
+  const out: ChannelPost[] = [];
+  const depth = Math.max(...waves.map((w) => w.length));
+  for (let i = 0; i < depth; i++) {
+    for (const wave of waves) if (wave[i]) out.push(wave[i]);
+  }
+  return out;
+}
+
+const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(CHANNEL_POSTS_WAVE5, CHANNEL_POSTS_WAVE6);
 
 /** Опубликованные базовые посты — для правки на месте, не для очереди. */
 export const CHANNEL_POSTS_PUBLISHED_BASE: ChannelPost[] = CHANNEL_POSTS_BASE;

@@ -62,5 +62,19 @@
     "w5_scale_lies":  "generated/akf-2026-08/prog-bg-1-cover.png",
     "w5_seven_hours":  "generated/akf-2026-08/sleep-bg-2-clock.png",
     "w5_grip":  "generated/broll/broll-kettlebell-hold.png",
-    "w5_bands":  "frames/band-stadium.jpg"
+    "w5_bands":  "frames/band-stadium.jpg",
+    "w6_casein":  "generated/nutrition/cottage-cheese-bowl.png",
+    "w6_animal":  "generated/nutrition/eggs-steak-meal.png",
+    "w6_plate":  "generated/nutrition/high-protein-meal.png",
+    "w6_whey_need":  "generated/nutrition/protein-tub-minimal.png",
+    "w6_label":  "generated/nutrition/protein-label-closeup.png",
+    "w6_brands":  "generated/nutrition/protein-brands-compare.png",
+    "w6_scoop":  "generated/nutrition/protein-powder-scoop.png",
+    "w6_shake_after":  "generated/nutrition/post-workout-shake-gym.png",
+    "w6_prep":  "generated/nutrition/meal-prep-containers.png",
+    "w6_water_day":  "generated/nutrition/hydration-water-dark.png",
+    "w6_sauna":  "generated/recovery/sauna-steam-dark.png",
+    "w6_bed":  "generated/recovery/sleep-recovery-bed.png",
+    "w6_hr":  "generated/broll/broll-heart-rate.png",
+    "w6_belt":  "generated/akf-2026-08/prog-bg-7-belt.png"
 }
