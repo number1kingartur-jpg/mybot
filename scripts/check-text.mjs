@@ -18,6 +18,10 @@ const FILES = [
   "webapp/js/app.js",
   "webapp/js/api.js",
   "webapp/js/engine.js",
+  // Планы тренировок и меню — такой же текст на экране, как остальное. Первая
+  // версия проверки их не читала, и в описаниях упражнений тире осталось.
+  "webapp/js/plans.js",
+  "webapp/js/menus.js",
   "webapp/index.html",
 ];
 
