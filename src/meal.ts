@@ -2,6 +2,7 @@ import crypto from "crypto";
 import https from "https";
 import { macrosFromItems, macrosFromText } from "./foods";
 import { analyzeMealFromTextLocal } from "./meal-fallback";
+import { factsByBarcode, productDbEnabled, validGtin } from "./product-db";
 
 /**
  * Модель не считает КБЖУ — она называет блюдо и граммы, числа берёт справочник.
@@ -42,6 +43,8 @@ export const IDENTIFY_PROMPT =
   "как написано на ней — «витаминный напиток C-vitt», «энергетик Sting», «йогурт Actimel», " +
   "«батончик Snickers». Марку не выбрасывай и не заменяй общим словом: по категории цифры " +
   "будут от другого продукта. Такой позиции добавь \"packaged\":true. " +
+  "Если на кадре видны цифры штрихкода, перепиши их в \"barcode\" — все, без пробелов, " +
+  "не угадывая нечитаемые. Именно по ним продукт находится точно.\n" +
   "Не разобрал надпись — так и напиши в note. Если на этикетке видны " +
   "КБЖУ — верни именно их в kcal100/p100/f100/c100; если не видны — поставь по своему знанию " +
   "этого продукта. Объём и вес возьми с упаковки, а не на глаз.\n" +
@@ -105,10 +108,11 @@ export interface MealPart {
   grams: number;
   kcal: number;
   /**
-   * Откуда цифра: `catalog` — из справочника, `label` — с упаковки по словам
-   * модели, `similar` — марки в справочнике нет, счёт по похожему продукту.
+   * Откуда цифра: `catalog` — из справочника, `barcode` — из открытой базы по
+   * штрихкоду, `label` — с упаковки по словам модели, `similar` — марки нет
+   * нигде, счёт по похожему продукту.
    */
-  source: "catalog" | "label" | "similar";
+  source: "catalog" | "barcode" | "label" | "similar";
 }
 
 export interface MealAnalysis {
@@ -157,11 +161,13 @@ export function mealPartLines(meal: MealAnalysis): string[] {
   if (!meal.parts || !meal.parts.length) return [];
   // Регистр названия решён при разборе: своё слово пришло строчным, марка — как
   // на упаковке. Здесь опускать нельзя, иначе `Snickers` станет опечаткой.
-  return meal.parts.map((p) => {
-    const from =
-      p.source === "label" ? " (цифры с упаковки)" : p.source === "similar" ? " (по похожему продукту)" : "";
-    return `${p.name}, ${p.grams} г, ${p.kcal} ккал${from}`;
-  });
+  const FROM: Record<MealPart["source"], string> = {
+    catalog: "",
+    barcode: " (найден по штрихкоду)",
+    label: " (цифры с упаковки)",
+    similar: " (по похожему продукту)",
+  };
+  return meal.parts.map((p) => `${p.name}, ${p.grams} г, ${p.kcal} ккал${FROM[p.source]}`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -227,6 +233,10 @@ interface IdentifiedItem {
   c100?: number;
   /** Продукт из упаковки, а не с кухни: цифры должны быть с этикетки. */
   packaged?: boolean;
+  /** Цифры штрихкода, как их прочитала модель: до проверки контрольной цифры. */
+  barcode?: string;
+  /** Цифры пришли из открытой базы по штрихкоду, а не с этикетки на глаз. */
+  fromDb?: boolean;
 }
 
 /** Цифра с этикетки: за пределами диапазона — значит модель ошиблась, не берём. */
@@ -252,6 +262,7 @@ function parseIdentifyJson(raw: string): { items: IdentifiedItem[]; note?: strin
         f100: per100(x.f100, 100),
         c100: per100(x.c100, 100),
         packaged: x.packaged === true,
+        barcode: x.barcode ? String(x.barcode).replace(/\D/g, "").slice(0, 14) : undefined,
       }))
       .filter((x) => x.name && x.grams > 0);
     return { items, note: j.note ? String(j.note).slice(0, 120) : undefined };
@@ -266,16 +277,8 @@ function parseIdentifyJson(raw: string): { items: IdentifiedItem[]; note?: strin
   return { items: [], note: j.note };
 }
 
-/** Ответ модели → запись в дневник. Экспортируется для проверок на сборке. */
-export function mealFromIdentify(raw: string): MealAnalysis {
-  let parsed: { items: IdentifiedItem[]; note?: string };
-  try {
-    parsed = parseIdentifyJson(raw);
-  } catch {
-    throw new MealPhotoUnreadableError("invalid_json");
-  }
-
-  // Legacy fallback: модель вернула старый формат с макросами
+/** Legacy: модель вернула старый формат с готовыми макросами. */
+function legacyMeal(raw: string): MealAnalysis | null {
   const cleaned = raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -292,7 +295,46 @@ export function mealFromIdentify(raw: string): MealAnalysis {
       };
     }
   } catch { /* use items path */ }
+  return null;
+}
 
+/**
+ * Штрихкод → цифры из открытой базы продуктов.
+ *
+ * Позиции правятся на месте: дальше их считает тот же справочник, что и всё
+ * остальное, и вся логика записи остаётся одна. Запросы идут только по кодам,
+ * прошедшим проверку контрольной цифры, и только для того, что модель отметила
+ * как упаковку — на домашнюю еду сеть не тревожим.
+ */
+async function fillFromBarcodes(items: IdentifiedItem[]): Promise<void> {
+  if (!productDbEnabled()) return;
+  await Promise.all(
+    items
+      .filter((i) => i.barcode && validGtin(i.barcode))
+      .map(async (item) => {
+        const facts = await factsByBarcode(item.barcode!);
+        if (!facts) return;
+        // Спор с цифрами модели решается в пользу базы, и это проверено на живом
+        // примере: по коду колы приходили честные 42 ккал/100, а модель прислала
+        // 300 — то есть 990 ккал за банку. Её поле kcal100 нередко не прочитано с
+        // упаковки, а взято «по своему знанию продукта», тогда как код прошёл
+        // проверку контрольной цифрой и нашёлся в базе. Расхождение всё равно
+        // пишем в лог: это единственный способ заметить кривую карточку в базе.
+        const seen = item.kcal100;
+        if (seen !== undefined && Math.max(seen, facts.kcal100) > Math.min(seen, facts.kcal100) * 2.5) {
+          console.error(`product-db: спор с моделью (${seen} против ${facts.kcal100}), взята база`);
+        }
+        item.name = facts.name;
+        item.kcal100 = facts.kcal100;
+        item.p100 = facts.p100;
+        item.f100 = facts.f100;
+        item.c100 = facts.c100;
+        item.fromDb = true;
+      })
+  );
+}
+
+function buildFromParsed(parsed: { items: IdentifiedItem[]; note?: string }): MealAnalysis {
   if (!parsed.items.length) {
     // Заметка модели — это комментарий, а не состав: в поле ввода она не идёт.
     // «не еда» отделяем от «еда есть, но не разобрал»: это разные советы человеку.
@@ -304,17 +346,40 @@ export function mealFromIdentify(raw: string): MealAnalysis {
 
   // Что модель увидела — на случай отказа: человеку нужен путь дальше, а не тупик.
   const seen = parsed.items.map((i) => `${i.name} ${i.grams} г`).join(", ");
-  const fromDb = macrosFromItems(parsed.items);
-  if (!fromDb || fromDb.kcal === 0) throw new MealPhotoUnreadableError("no_match", seen);
+  const meal = macrosFromItems(parsed.items);
+  if (!meal || meal.kcal === 0) throw new MealPhotoUnreadableError("no_match", seen);
 
   // Слова модели держим отдельно от нашей строки про точность: в объяснении это
   // разные вещи — «что решила модель» человек может оспорить, «±15%» нет.
   // Раньше они склеивались в одно поле и обрезались по 120 символов, из-за чего
   // способ приготовления часто отрезался на середине слова.
   if (parsed.note && parsed.note !== "legacy") {
-    fromDb.said = parsed.note.slice(0, 160);
+    meal.said = parsed.note.slice(0, 160);
   }
-  return fromDb;
+  return meal;
+}
+
+function parsedOrThrow(raw: string): { items: IdentifiedItem[]; note?: string } {
+  try {
+    return parseIdentifyJson(raw);
+  } catch {
+    throw new MealPhotoUnreadableError("invalid_json");
+  }
+}
+
+/** Ответ модели → запись в дневник, без обращений к сети. Для проверок на сборке. */
+export function mealFromIdentify(raw: string): MealAnalysis {
+  const parsed = parsedOrThrow(raw);
+  return legacyMeal(raw) ?? buildFromParsed(parsed);
+}
+
+/** То же, но со штрихкодом: по нему продукт находится точно, а не по смыслу. */
+export async function mealFromIdentifyOnline(raw: string): Promise<MealAnalysis> {
+  const parsed = parsedOrThrow(raw);
+  const legacy = legacyMeal(raw);
+  if (legacy) return legacy;
+  await fillFromBarcodes(parsed.items);
+  return buildFromParsed(parsed);
 }
 
 async function geminiRequest(apiKey: string, parts: object[], model: string): Promise<string> {
@@ -377,7 +442,7 @@ async function geminiMeal(parts: object[], what: string): Promise<MealAnalysis> 
           break;
         }
         try {
-          return mealFromIdentify(raw);
+          return await mealFromIdentifyOnline(raw);
         } catch (e) {
           if (!(e instanceof MealPhotoUnreadableError)) throw e;
           // Отказ, где модель назвала продукты, полезнее «не еда»: если сильные

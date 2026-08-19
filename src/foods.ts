@@ -39,6 +39,8 @@ export interface FoodItem {
   minG?: number;
   /** Позиция не из справочника, а с этикетки на фото: цифры дала модель. */
   fromLabel?: boolean;
+  /** Цифры пришли из открытой базы продуктов по штрихкоду: точный ключ, не догадка. */
+  fromBarcode?: boolean;
   /**
    * Позиция про конкретную марку, а не про полку: `C-vitt`, а не «витаминный напиток».
    *
@@ -586,7 +588,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
       name: displayName(food),
       grams: Math.round(grams),
       kcal: Math.round(food.kcal100 * mul),
-      source: similar ? "similar" : food.fromLabel ? "label" : "catalog",
+      source: similar ? "similar" : food.fromBarcode ? "barcode" : food.fromLabel ? "label" : "catalog",
     });
   }
 
@@ -626,6 +628,8 @@ export interface IdentifiedFood {
   c100?: number;
   /** Продукт из упаковки: цифры категории для него — догадка, и это надо сказать. */
   packaged?: boolean;
+  /** Цифры взяты из открытой базы по штрихкоду: спорить с ними справочнику нечем. */
+  fromDb?: boolean;
 }
 
 /**
@@ -637,7 +641,10 @@ export interface IdentifiedFood {
  */
 function labelFood(item: IdentifiedFood): FoodItem | null {
   const kcal100 = item.kcal100;
-  if (kcal100 === undefined || kcal100 <= 0) return null;
+  if (kcal100 === undefined) return null;
+  // Ноль от модели — это незаполненное поле, ноль из базы — настоящая цифра
+  // диетического напитка. Поэтому у них разное право на ноль.
+  if (kcal100 < 0 || (kcal100 === 0 && !item.fromDb)) return null;
   const name = item.name.trim().slice(0, 60);
   if (!name) return null;
   return {
@@ -651,6 +658,7 @@ function labelFood(item: IdentifiedFood): FoodItem | null {
     category: "other",
     minG: 5,
     fromLabel: true,
+    fromBarcode: item.fromDb,
   };
 }
 
@@ -695,6 +703,9 @@ function brandLeft(name: string, alias: string): boolean {
 function resolveItem(item: IdentifiedFood): { food: FoodItem; similar?: boolean } | null {
   const m = matchFoodBy(item.name);
   const label = labelFood(item);
+  // Штрихкод — точный ключ к конкретной упаковке, включая местный рецепт: с ним
+  // не спорит даже проверенная позиция справочника, у которой цифры средние.
+  if (item.fromDb && label) return { food: label };
   if (!m) return label ? { food: label } : null;
   // Марка в справочнике проверена и повторяема: одно фото даёт одно число.
   if (m.food.brand) return { food: m.food };
@@ -729,6 +740,9 @@ export function macrosFromItems(items: IdentifiedFood[]): MealAnalysis | null {
     : "Справочник RASCHET. Точность ±15%.";
   if (matched.some((m) => m.food.fromLabel)) {
     note = "Часть цифр — с упаковки, а не из справочника. Проверь этикетку.";
+  }
+  if (matched.some((m) => m.food.fromBarcode)) {
+    note = "Продукт найден по штрихкоду в открытой базе, цифры его собственные.";
   }
   if (matched.some((m) => m.similar)) {
     note = "Точной марки я не знаю, счёт по похожему продукту. Сверь с этикеткой.";

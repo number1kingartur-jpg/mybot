@@ -8,6 +8,7 @@
 import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug } from "../dist/foods.js";
 import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
+import { factsFromOffJson, validGtin } from "../dist/product-db.js";
 
 let failed = 0;
 
@@ -149,6 +150,41 @@ check("этикетка: сказано, откуда цифры", /упаков
 
 const noNumbers = macrosFromItems([{ name: "напиток yakult", grams: 100 }]);
 check("без цифр на этикетке продукт не выдумывается", noNumbers === null);
+
+// ── Штрихкод: точный ключ вместо похожего по смыслу ──────────────────────────
+// Контрольная цифра — единственная защита от кривого чтения цифр под полосами:
+// одна перевранная цифра дала бы существующий, но чужой продукт.
+check("штрихкод колы проходит проверку", validGtin("5449000000996") === "5449000000996");
+check("перевранная цифра отсекается", validGtin("5449000000997") === null);
+check("пробелы и дефисы в коде не мешают", validGtin("5449-0000 00996") === "5449000000996");
+check("обрывок кода не проходит", validGtin("54490009") === null, String(validGtin("54490009")));
+
+// Ответ базы разбирается без сети, поэтому проверяется на сборке.
+const off = factsFromOffJson(
+  '{"status":1,"product":{"product_name":"coca-cola","brands":"Coca-Cola","nutriments":{"energy-kcal_100g":42,"proteins_100g":0,"fat_100g":0,"carbohydrates_100g":10.6}}}'
+);
+check("ответ базы разобран", off !== null);
+check("имя продукта берёт написание марки", off?.name === "Coca-Cola", off?.name);
+check("калории из базы", off?.kcal100 === 42, String(off?.kcal100));
+check("продукт не найден — не запись", factsFromOffJson('{"status":0}') === null);
+check(
+  "пустая карточка без углеводов отвергается",
+  factsFromOffJson('{"status":1,"product":{"product_name":"x","nutriments":{"energy-kcal_100g":42}}}') === null
+);
+// Ноль калорий — настоящая цифра диетического напитка, а не пустое поле.
+const zero = factsFromOffJson(
+  '{"status":1,"product":{"product_name":"cola zero","brands":"Coca-Cola","nutriments":{"energy-kcal_100g":0,"proteins_100g":0,"fat_100g":0,"carbohydrates_100g":0}}}'
+);
+check("ноль калорий из базы принимается", zero !== null && zero.kcal100 === 0, String(zero?.kcal100));
+
+// Цифры из базы сильнее проверенной позиции справочника: у неё они средние, а
+// по коду известен конкретный рецепт этой упаковки.
+const byCode = macrosFromItems([
+  { name: "Fanta Orange Thailand", grams: 330, kcal100: 52, p100: 0, f100: 0, c100: 13, fromDb: true },
+]);
+check("цифры из базы помечены штрихкодом", byCode?.parts?.[0]?.source === "barcode", byCode?.parts?.[0]?.source);
+near("цифры из базы применены", byCode?.kcal ?? 0, 172, 0.05);
+check("человеку сказано про штрихкод", /штрихкод/.test(byCode?.note ?? ""), byCode?.note);
 
 // ── Марка вместо категории ───────────────────────────────────────────────────
 // Главный разбор: раньше «витаминный напиток C-vitt» уходил в общую позицию
