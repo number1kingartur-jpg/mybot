@@ -29,7 +29,9 @@
     goalWeightKg: "", // цель по весу; из неё считается прогноз на «Сегодня»
     calcTab: "orm",
     nutTab: "eaten",
-    menu: { id: "ru" },
+    // meal — какой приём раскрыт, pick — какая позиция открыта на выбор замены,
+    // swaps — выбранные замены вида { "ru:breakfast:0": "Гречка отварная" }
+    menu: { id: "ru", meal: null, pick: null, swaps: {} },
     manual: { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" },
     mealText: "",
     addMode: null, // null | "text" | "manual" — какая форма добавления раскрыта
@@ -1132,9 +1134,13 @@
 
   /* ── Питание: готовое меню на день ──────────────────────────────────────── */
 
-  function renderMenu() {
+  function menuDay() {
     var target = macros();
-    var d = KM_MENUS.day(state.menu.id, state.profile.goal, target ? target.kcal : 0);
+    return KM_MENUS.day(state.menu.id, state.profile.goal, target ? target.kcal : 0, state.menu.swaps || {});
+  }
+
+  function renderMenu() {
+    var d = menuDay();
     var logged = mealsToday().map(function (m) {
       return m.name;
     });
@@ -1169,8 +1175,9 @@
       }).join("") +
       '<p class="note"><strong>' +
       esc(d.hint) +
-      "</strong> Меню это рабочий шаблон, а не догма: меняй продукты на такие же по КБЖУ. " +
-      "Кнопка «Съел» пишет приём в дневник, и дальше видно, сколько осталось на день.</p>"
+      "</strong> Нажми на позицию, и откроются три замены такой же калорийности: " +
+      "цифры приёма и дня пересчитаются под выбранное. Кнопка «Съел» пишет приём в дневник, " +
+      "и дальше видно, сколько осталось на день.</p>"
     );
   }
 
@@ -1178,9 +1185,21 @@
     return m.label + " · " + KM_MENUS.titles[state.menu.id];
   }
 
+  /**
+   * Приём меню.
+   *
+   * Раскрытие живёт в состоянии, а не в классе на элементе, как у остальных
+   * гармошек: выбор замены перерисовывает экран, и от класса на элементе не
+   * осталось бы ничего — приём закрывался бы сам после каждого нажатия.
+   */
   function menuMealHtml(m, alreadyLogged) {
+    var open = state.menu.meal === m.key;
     return (
-      '<div class="acc"><button class="acc__head" data-acc><span><span class="acc__title">' +
+      '<div class="acc' +
+      (open ? " is-open" : "") +
+      '"><button class="acc__head" data-action="menu-meal" data-mealkey="' +
+      esc(m.key) +
+      '"><span><span class="acc__title">' +
       esc(m.label) +
       '</span><span class="acc__sub">' +
       m.kcal +
@@ -1190,13 +1209,11 @@
       m.fatG +
       " / У " +
       m.carbsG +
-      '</span></span><span class="acc__sign">+</span></button><div class="acc__body">' +
-      '<ul class="bullets">' +
-      m.items
-        .map(function (i) {
-          return "<li>" + esc(i) + "</li>";
-        })
-        .join("") +
+      '</span></span><span class="acc__sign">' +
+      (open ? "–" : "+") +
+      '</span></button><div class="acc__body">' +
+      '<ul class="pick">' +
+      m.items.map(menuItemHtml).join("") +
       "</ul>" +
       '<div class="btn-stack" style="margin-top:12px"><button class="btn ' +
       (alreadyLogged ? "btn--outline" : "btn--primary") +
@@ -1208,10 +1225,107 @@
     );
   }
 
+  /**
+   * Позиция приёма: картинка продукта, вес, её КБЖУ.
+   *
+   * Замены рисуются только у раскрытой позиции. Иначе на экране сразу сотня
+   * картинок вместо десятка, и меню открывается заметно дольше.
+   */
+  function menuItemHtml(i) {
+    var open = state.menu.pick === i.id;
+    return (
+      '<li class="pick__item' +
+      (open ? " is-open" : "") +
+      '"><button class="pick__row" data-action="menu-pick" data-itemid="' +
+      esc(i.id) +
+      '">' +
+      thumb(i.slug, i.food) +
+      '<span class="meal__name">' +
+      esc(i.food) +
+      " " +
+      esc(i.amount) +
+      (i.swapped ? '<span class="pick__tag">замена</span>' : "") +
+      '<span class="meal__macro">' +
+      i.kcal +
+      " ккал · Б " +
+      i.proteinG +
+      " / Ж " +
+      i.fatG +
+      " / У " +
+      i.carbsG +
+      '</span></span><span class="pick__sign">' +
+      (open ? "–" : "+") +
+      "</span></button>" +
+      (open
+        ? '<div class="pick__alts"><p class="pick__label">Заменить на</p>' +
+          i.options
+            .filter(function (o) {
+              // Выбранное не показываем: оно и так в строке выше, а на выбор
+              // остаются ровно три варианта, включая базовый продукт меню
+              return !o.current;
+            })
+            .map(function (o) {
+              return menuOptionHtml(i, o);
+            })
+            .join("") +
+          "</div>"
+        : "") +
+      "</li>"
+    );
+  }
+
+  function menuOptionHtml(i, o) {
+    return (
+      '<button class="pick__alt" data-action="menu-swap" data-itemid="' +
+      esc(i.id) +
+      '" data-food="' +
+      esc(o.food) +
+      '">' +
+      thumb(o.slug, o.food) +
+      '<span class="meal__name">' +
+      esc(o.food) +
+      " " +
+      esc(o.amount) +
+      '<span class="meal__macro">' +
+      o.kcal +
+      " ккал · Б " +
+      o.proteinG +
+      " / Ж " +
+      o.fatG +
+      " / У " +
+      o.carbsG +
+      "</span></span></button>"
+    );
+  }
+
+  function toggleMenuMeal(key) {
+    state.menu.meal = state.menu.meal === key ? null : key;
+    state.menu.pick = null;
+    state.notice = null;
+    haptic("light");
+    persist();
+    render();
+  }
+
+  function toggleMenuPick(id) {
+    state.menu.pick = state.menu.pick === id ? null : id;
+    haptic("light");
+    persist();
+    render();
+  }
+
+  /** Выбранная замена. Базовый продукт меню тоже приходит сюда — он снимает замену. */
+  function swapMenuItem(id, food) {
+    if (!state.menu.swaps) state.menu.swaps = {};
+    state.menu.swaps[id] = food;
+    state.menu.pick = null;
+    haptic("light");
+    persist();
+    render();
+  }
+
   function logMenuMeal(key) {
-    var target = macros();
-    var d = KM_MENUS.day(state.menu.id, state.profile.goal, target ? target.kcal : 0);
-    var m = d.meals.filter(function (x) {
+    var m = menuDay().meals.filter(function (x) {
       return x.key === key;
     })[0];
     if (!m) return;
@@ -2891,6 +3005,12 @@
         return addMealManual();
       case "log-menu":
         return logMenuMeal(action.getAttribute("data-mealkey"));
+      case "menu-meal":
+        return toggleMenuMeal(action.getAttribute("data-mealkey"));
+      case "menu-pick":
+        return toggleMenuPick(action.getAttribute("data-itemid"));
+      case "menu-swap":
+        return swapMenuItem(action.getAttribute("data-itemid"), action.getAttribute("data-food"));
       case "setup-done":
         return finishSetup();
       case "setup-skip":

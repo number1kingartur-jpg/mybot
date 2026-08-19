@@ -802,6 +802,94 @@ select.input {
   display: block;
 }
 
+/* ── Позиции меню и замены ──────────────────────────────────────────────── */
+
+.pick {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pick__item + .pick__item {
+  margin-top: 8px;
+}
+
+.pick__row,
+.pick__alt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pick__item.is-open .pick__row {
+  border-color: var(--line-gold);
+}
+
+.pick__sign {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--line-gold);
+  color: var(--gold);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Метка на позиции, где выбран не базовый продукт меню. */
+.pick__tag {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-gold);
+  color: var(--gold);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+/* Отступ слева: замены явно принадлежат позиции, а не соседствуют с ней. */
+.pick__alts {
+  margin: 8px 0 4px 14px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pick__label {
+  margin: 0 0 2px;
+  color: var(--dim);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pick__alt {
+  background: transparent;
+  padding: 8px 10px;
+}
+
+.pick__alt .thumb {
+  width: 36px;
+  height: 36px;
+  font-size: 15px;
+}
+
 /* ── Сессия программы ───────────────────────────────────────────────────── */
 
 .sess {
