@@ -205,7 +205,7 @@ window.KM_API = (function () {
   function raw(file) {
     return new Promise(function (resolve, reject) {
       if (file.size > 6 * 1024 * 1024) {
-        reject({ code: "too_big", message: "Снимок больше 6 МБ — сними ещё раз или добавь текстом." });
+        reject({ code: "too_big", message: "Снимок больше 6 МБ. Сними ещё раз или добавь текстом." });
         return;
       }
       var fr = new FileReader();
@@ -252,6 +252,13 @@ window.KM_API = (function () {
     },
     text: function (text) {
       return request("POST", "/api/meal/text", { text: text });
+    },
+    /* «Да, это оно»: наружу уходит токен, цифры сервер держит у себя. */
+    confirmMeal: function (token) {
+      return request("POST", "/api/meal/confirm", { token: token });
+    },
+    rejectMeal: function (token) {
+      return request("POST", "/api/meal/reject", { token: token });
     },
     food: function (name, grams) {
       return request("POST", "/api/meal/food", { name: name, grams: grams });

@@ -89,6 +89,22 @@ export function mealVisionProvider(): string {
   return n ? `Gemini×${n} → справочник RASCHET` : "OFF (no GEMINI_API_KEY)";
 }
 
+/**
+ * Одна позиция расчёта: из чего сложилась итоговая цифра.
+ *
+ * Нужна для объяснения. Пока приём был одной строкой «Курица ~90 г, Паста ~70 г
+ * — 240 ккал», проверить его было нечем: непонятно, что модель приняла за
+ * курицу, сколько весит каждая позиция и откуда взяты калории. Ошибку в такой
+ * записи видно только по итогу, а итог человек как раз и не знает.
+ */
+export interface MealPart {
+  name: string;
+  grams: number;
+  kcal: number;
+  /** `catalog` — цифры из справочника, `label` — с упаковки, по словам модели. */
+  source: "catalog" | "label";
+}
+
 export interface MealAnalysis {
   name: string;
   kcal: number;
@@ -98,6 +114,10 @@ export interface MealAnalysis {
   note?: string;
   /** Картинка главного продукта приёма: имя файла в `webapp/img/food`. */
   slug?: string;
+  /** Состав расчёта — для объяснения человеку перед записью. */
+  parts?: MealPart[];
+  /** Своими словами модели: способ приготовления и допущения. */
+  said?: string;
 }
 
 export class MealPhotoUnreadableError extends Error {
@@ -119,6 +139,20 @@ export class MealPhotoUnreadableError extends Error {
     this.seen = seen.slice(0, 120);
     this.saw = saw.slice(0, 120);
   }
+}
+
+/**
+ * Состав расчёта строками: «котлета куриная жареная — 150 г, 320 ккал».
+ *
+ * Один форматтер на бота и приложение: две копии текста разошлись бы после
+ * первой правки, а человек читает их как один ответ одной программы.
+ */
+export function mealPartLines(meal: MealAnalysis): string[] {
+  if (!meal.parts || !meal.parts.length) return [];
+  return meal.parts.map((p) => {
+    const from = p.source === "label" ? " (с упаковки)" : "";
+    return `${p.name.toLowerCase()} — ${p.grams} г, ${p.kcal} ккал${from}`;
+  });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -261,8 +295,12 @@ export function mealFromIdentify(raw: string): MealAnalysis {
   const fromDb = macrosFromItems(parsed.items);
   if (!fromDb || fromDb.kcal === 0) throw new MealPhotoUnreadableError("no_match", seen);
 
+  // Слова модели держим отдельно от нашей строки про точность: в объяснении это
+  // разные вещи — «что решила модель» человек может оспорить, «±15%» нет.
+  // Раньше они склеивались в одно поле и обрезались по 120 символов, из-за чего
+  // способ приготовления часто отрезался на середине слова.
   if (parsed.note && parsed.note !== "legacy") {
-    fromDb.note = `${fromDb.note} ${parsed.note}`.slice(0, 120);
+    fromDb.said = parsed.note.slice(0, 160);
   }
   return fromDb;
 }

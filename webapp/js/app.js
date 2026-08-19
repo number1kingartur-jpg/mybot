@@ -25,6 +25,7 @@
     theme: "night", // night | graphite | ivory — оформление, выбор человека
     profTab: "day", // day | progress | look — подразделы личного профиля
     lastMeal: null, // последняя запись еды: по ней предлагается уточнить порцию
+    pending: null, // разобранный, но не записанный приём: ждёт ответа «это оно»
     goalWeightKg: "", // цель по весу; из неё считается прогноз на «Сегодня»
     calcTab: "orm",
     nutTab: "eaten",
@@ -505,6 +506,128 @@
     render();
   }
 
+  /**
+   * Разбор пришёл, но в дневник не записан: показываем, что распознано, и ждём
+   * ответа. Раньше запись появлялась молча — неверную догадку человек находил
+   * уже в дневнике и удалял, вместо того чтобы просто не согласиться.
+   */
+  function applyPendingResult(data) {
+    state.day = data;
+    state.busy = null;
+    state.notice = null;
+    state.addMode = null;
+    state.pending = data && data.pending ? data.pending : null;
+    haptic("light");
+    render();
+  }
+
+  /** «Да, это оно» → запись в дневник по токену. Цифры считает сервер. */
+  function confirmPending() {
+    var p = state.pending;
+    if (!p || !online) return;
+    state.busy = "food";
+    render();
+    KM_API.confirmMeal(p.token)
+      .then(function (data) {
+        state.pending = null;
+        applyMealResult(data, "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
+      })
+      .catch(function (err) {
+        state.pending = null;
+        mealError(err);
+      });
+  }
+
+  /**
+   * «Не то» → разбор выбрасывается, а состав подставляется в поле ввода:
+   * поправить одну позицию быстрее, чем набирать тарелку заново.
+   */
+  function rejectPending() {
+    var p = state.pending;
+    if (!p) return;
+    var parts = (p.meal && p.meal.parts) || [];
+    state.mealText = parts.length
+      ? parts
+          .map(function (x) {
+            return x.name.toLowerCase() + " " + x.grams + " г";
+          })
+          .join(", ")
+      : String((p.meal && p.meal.name) || "");
+    state.addMode = "text";
+    state.notice = null;
+    if (online) KM_API.rejectMeal(p.token).catch(function () {});
+    state.pending = null;
+    haptic("light");
+    render();
+  }
+
+  /**
+   * Что распознано и на каких допущениях — до записи, а не после.
+   *
+   * Цифра без объяснения непроверяема: по «240 ккал» нельзя понять, что модель
+   * приняла за курицу и сколько насчитала масла. Поэтому здесь состав по
+   * позициям, источник цифр (справочник или упаковка) и слова модели.
+   */
+  function pendingCard() {
+    var p = state.pending;
+    if (!p || !p.meal) return "";
+    var m = p.meal;
+    var parts = m.parts || [];
+    var fromLabel = parts.some(function (x) {
+      return x.source === "label";
+    });
+
+    return card(
+      '<div class="confirm__head">' +
+        thumb(m.slug, m.name) +
+        '<span class="confirm__title">' +
+        esc(m.name) +
+        '<span class="confirm__kcal">' +
+        m.kcal +
+        " ккал · Б " +
+        m.proteinG +
+        " / Ж " +
+        m.fatG +
+        " / У " +
+        m.carbsG +
+        " г</span></span>" +
+        "</div>" +
+        '<p class="lead">Это оно? В дневник запишу только после твоего «да».</p>' +
+        (parts.length
+          ? '<ul class="log log--tight">' +
+            parts
+              .map(function (x) {
+                return (
+                  '<li><span class="meal__name">' +
+                  esc(x.name) +
+                  '<span class="meal__macro">' +
+                  x.grams +
+                  " г" +
+                  // Помечаем только исключение. Слово «справочник» у каждой строки
+                  // ничего не сообщало — оно там всегда, — но глушило тот случай,
+                  // ради которого пометка и нужна: цифры прочитаны с упаковки.
+                  (x.source === "label" ? " · цифры с упаковки" : "") +
+                  '</span></span><span class="log__value">' +
+                  x.kcal +
+                  " ккал</span></li>"
+                );
+              })
+              .join("") +
+            "</ul>"
+          : "") +
+        (m.said ? '<p class="note note--plain">Вижу так: ' + esc(m.said) + "</p>" : "") +
+        (m.note ? '<p class="note note--plain">' + esc(m.note) + "</p>" : "") +
+        (fromLabel
+          ? '<p class="note note--plain">Часть цифр прочитана с упаковки, поэтому сверь ' +
+            "с этикеткой, если что-то не сходится.</p>"
+          : "") +
+        '<div class="btn-stack" style="margin-top:14px">' +
+        '<button class="btn btn--primary" data-action="meal-confirm">Да, записать</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="meal-reject">Нет, поправлю сам</button>' +
+        "</div>"
+    );
+  }
+
   /** Пересчёт порции у последней записи: множитель, а не четыре числа заново. */
   function scaleLastMeal(factor) {
     var last = state.lastMeal;
@@ -548,13 +671,13 @@
       cardHead(
         "Столько и съел?",
         esc(last.name) +
-          " — " +
+          ", " +
           last.kcal +
           " ккал" +
           (last.factor !== 1 ? " (порция ×" + (Math.round(last.factor * 100) / 100).toString().replace(".", ",") + ")" : "")
       ) +
-        '<p class="lead">Состав блюда модель видит, вес — нет. Если порция была другой, ' +
-        "поправь множителем: КБЖУ пересчитаются в той же пропорции.</p>" +
+        '<p class="lead">Состав блюда модель видит, а вес только предполагает. Если порция ' +
+        "была другой, поправь множителем: КБЖУ пересчитаются в той же пропорции.</p>" +
         '<div class="chips chips--wrap">' +
         steps
           .map(function (s) {
@@ -601,7 +724,7 @@
     var p = state.profile;
     return (
       card(
-        cardHead("Шесть полей — и всё считается", "Данные остаются на устройстве и в твоём чате с ботом") +
+        cardHead("Шесть полей, и всё считается", "Данные остаются на устройстве и в твоём чате с ботом") +
           '<p class="lead">Норма калорий, порции в меню, план тренировок и тренд веса ' +
           "берутся из этих цифр. Позже поменяешь их в «Питании» и «Тренировке».</p>"
       ) +
@@ -619,7 +742,8 @@
               ["mid", "Средняя"],
               ["high", "Высокая"]
             ]),
-            "Низкая — 1–3 тренировки и сидячая работа. Средняя — 3–5. Высокая — 6+ или физическая работа."
+            "Низкая: 1–3 тренировки в неделю и сидячая работа. Средняя: 3–5 тренировок. " +
+              "Высокая: 6 и больше или физический труд."
           ) +
           field(
             "Цель",
@@ -749,7 +873,7 @@
       .join("");
     var text = s.days
       ? s.days + " " + plural(s.days, "день", "дня", "дней") + " подряд с дневником"
-      : "Серия прервана — запиши любой приём, и она начнётся заново";
+      : "Серия прервана. Запиши любой приём, и она начнётся заново";
     return (
       '<div class="streak"><div class="streak__dots">' +
       dots +
@@ -799,7 +923,7 @@
     if (!last || !(goal >= 30 && goal <= 250)) return "";
     var delta = goal - last.weightKg;
     if (Math.abs(delta) < 0.3) {
-      return '<p class="note"><strong>Цель по весу достигнута.</strong> ' + goal + " кг — держи норму и наблюдай.</p>";
+      return '<p class="note"><strong>Цель по весу достигнута.</strong> ' + goal + " кг. Держи норму и наблюдай.</p>";
     }
     var rate = advice.rateKgWeek;
     if (!rate || delta * rate <= 0) {
@@ -827,9 +951,11 @@
       ": " +
       (rate > 0 ? "+" : "") +
       rate +
-      " кг/нед по " +
+      " кг/нед по взвешиваниям за " +
       advice.days +
-      " дням взвешиваний.</p>"
+      " " +
+      plural(advice.days, "день", "дня", "дней") +
+      ".</p>"
     );
   }
 
@@ -867,7 +993,7 @@
           { gold: true, tap: "nutrition" }
         )
       : card(
-          cardHead("Норма не задана", "Шесть полей — и появится цифра дня") +
+          cardHead("Норма не задана", "Шесть полей, и появится цифра дня") +
             '<div class="btn-stack"><button class="btn btn--primary" data-action="edit-profile">Задать норму</button></div>'
         );
 
@@ -877,9 +1003,12 @@
       '<div class="tiles">' +
       // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
       // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
+      // На месте фото стоит попытка связаться заново: это действие, которое чинит
+      // ситуацию. Плитки с вопросом здесь быть не должно — она обещает кнопку,
+      // а приводит к тексту, и человек нажимает её впустую.
       (online
         ? tile("pick-photo", "photo", "Фото еды", true) + tile("add-text-form", "text", "Текстом")
-        : tile("add-manual-form", "text", "Ввести вручную", true) + tile("nutrition-tab", "photo", "Почему без фото")) +
+        : tile("add-manual-form", "text", "Ввести вручную", true) + tile("reload-day", "repeat", "Связь с ботом")) +
       tile("water-250", "water", "+250 мл") +
       "</div>" +
       (state.addMode === "text" ? card(textForm()) : "") +
@@ -902,12 +1031,12 @@
       ) +
       metric(
         "Вес",
-        last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "—",
+        last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "нет",
         last
           ? advice
             ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + " кг/нед"
             : "запись " + formatDate(last.date)
-          : "нет записей"
+          : "ещё не взвешивался"
       ) +
       "</div>" +
       programCard() +
@@ -915,7 +1044,7 @@
         cardHead(
           "Тренировка · план " + esc(plan.label),
           place === "home" ? "Дома, без инвентаря" : "В зале, гантели и блок",
-          plan.items.length + " упр."
+          plan.items.length + " " + plural(plan.items.length, "упражнение", "упражнения", "упражнений")
         ) +
           '<p class="lead">' +
           plan.items
@@ -955,7 +1084,7 @@
           ? sessionHtml(s, p.model) +
             (state.busy === "program"
               ? '<p class="muted" style="margin-top:12px">Записываю…</p>'
-              : '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--primary" data-action="program-done">Выполнено — записать</button></div>')
+              : '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--primary" data-action="program-done">Выполнил, записать</button></div>')
           : '<p class="lead">Цикл пройден. Построй новый в разделе «Расчёты».</p>')
     );
   }
@@ -1012,7 +1141,7 @@
           d.title,
           d.personal
             ? "Порции пересчитаны под твою норму " + d.basedOn + " ккал"
-            : "Порции под " + d.basedOn + " ккал — задай свои данные в «Норме», пересчитаю точнее",
+            : "Порции под " + d.basedOn + " ккал. Задай свои данные в «Норме», и пересчитаю точнее",
           GOAL_WORD[state.profile.goal]
         ) +
           figure(d.total.kcal, " ккал", "за день по всем приёмам") +
@@ -1029,8 +1158,8 @@
       }).join("") +
       '<p class="note"><strong>' +
       esc(d.hint) +
-      "</strong> Меню — рабочий шаблон, а не догма: меняй продукты на такие же по КБЖУ. " +
-      "Кнопка «Съел» пишет приём в дневник — дальше видно, сколько осталось на день.</p>"
+      "</strong> Меню это рабочий шаблон, а не догма: меняй продукты на такие же по КБЖУ. " +
+      "Кнопка «Съел» пишет приём в дневник, и дальше видно, сколько осталось на день.</p>"
     );
   }
 
@@ -1063,7 +1192,7 @@
       ' btn--slim" data-action="log-menu" data-mealkey="' +
       esc(m.key) +
       '">' +
-      (alreadyLogged ? "Записать ещё раз" : "Съел — записать в дневник") +
+      (alreadyLogged ? "Записать ещё раз" : "Съел, записать в дневник") +
       "</button></div></div></div>"
     );
   }
@@ -1133,7 +1262,7 @@
           { gold: true }
         )
       : card(
-          cardHead("Норма не задана", "Заполни данные — покажу, сколько осталось на день") +
+          cardHead("Норма не задана", "Заполни данные, и покажу, сколько осталось на день") +
             '<div class="btn-stack"><button class="btn btn--primary" data-action="go-norm">Задать норму</button></div>'
         );
 
@@ -1144,12 +1273,12 @@
       // по заголовку, и «Записал» появлялось там, где ничего не записывалось
       noticeHtml() +
       (!isToday
-        ? '<p class="note note--plain">Открыт прошлый день — только просмотр. Новые приёмы ' +
+        ? '<p class="note note--plain">Открыт прошлый день, здесь только просмотр. Новые приёмы ' +
           "пишутся в сегодняшний.</p>"
         : addOrBusy(quota)) +
       mealsListCard(meals, isToday) +
-      '<p class="note note--plain">Оценка по фото — компоненты определяет модель, ' +
-      "калории берутся из справочника продуктов. Ошибка порции легко даёт ±15–20%, " +
+      '<p class="note note--plain">В оценке по фото продукты определяет модель, а ' +
+      "калории берутся из справочника. Ошибка порции легко даёт ±15–20%, " +
       "особенно с маслом и соусами. Итог сверяй по тренду веса в дневнике, а не по одному дню.</p>"
     );
   }
@@ -1158,12 +1287,19 @@
      экрана: две копии разошлись бы при первой же правке форм. */
 
   function addOrBusy(quota) {
-    if (!state.busy) return portionCard() + addBlock(quota);
-    return card(
-      '<p class="lead">' +
-        (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
-        '</p><p class="muted">Обычно 3–10 секунд.</p>'
-    );
+    if (state.busy) {
+      return card(
+        '<p class="lead">' +
+          (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
+          '</p><p class="muted">Обычно 3–10 секунд.</p>'
+      );
+    }
+    // Вопрос «это оно» заменяет формы добавления, а не встаёт над ними: иначе
+    // рядом с неотвеченным вопросом стоят четыре кнопки нового ввода, и человек
+    // добавляет второй приём вместо подтверждения первого. Выход из вопроса —
+    // кнопка «Не то», она же открывает ввод текстом.
+    if (state.pending) return pendingCard();
+    return portionCard() + addBlock(quota);
   }
 
   /**
@@ -1303,11 +1439,11 @@
         '<input class="input" type="text" data-path="foodQuery" placeholder="курица, рис, творог" value="' +
           esc(state.foodQuery) +
           '" />',
-        "КБЖУ берутся из справочника бота — без модели и без догадок."
+        "КБЖУ берутся из справочника бота, без модели и без догадок."
       ) +
       field(
         "Граммы",
-        numInput("foodGrams", { min: 1, max: 3000, step: 10, placeholder: "пусто = обычная порция" })
+        numInput("foodGrams", { min: 1, max: 3000, step: 10, placeholder: "оставь пустым, возьму обычную порцию" })
       ) +
       '<div id="foodList">' +
       foodListHtml() +
@@ -1326,8 +1462,8 @@
           inside ? "Подпись Telegram не прочиталась" : "Фото доступно только из Telegram",
           inside ? "Нажми «Проверить связь»" : "Открой приложение кнопкой в боте"
         ) +
-          '<p class="lead">Распознавание идёт через сервер бота: ключ модели нельзя ' +
-          "держать в приложении. Здесь работает ручной ввод — если КБЖУ написаны на упаковке.</p>" +
+          '<p class="lead">Распознавание идёт через сервер бота, потому что ключ модели нельзя ' +
+          "держать в приложении. Здесь работает ручной ввод, если КБЖУ написаны на упаковке.</p>" +
           (d
             ? '<p class="note" style="margin-top:10px">SDK: ' +
               (d.sdk ? "есть" : "не загрузился") +
@@ -1336,11 +1472,13 @@
               " " +
               esc(d.version) +
               " · подпись: " +
-              (d.initLen ? d.initLen + " симв. (" + esc(d.source) + ")" : "нет") +
+              (d.initLen
+                ? d.initLen + " " + plural(d.initLen, "знак", "знака", "знаков") + " (" + esc(d.source) + ")"
+                : "нет") +
               "<br />адрес: " +
               (d.keys && d.keys.length ? esc(d.keys.join(", ")) : "пусто") +
               " · память сеанса: " +
-              esc(d.stored || "—") +
+              esc(d.stored || "пусто") +
               "</p>"
             : "") +
           '<div class="btn-stack" style="margin-top:14px">' +
@@ -1360,7 +1498,7 @@
           state.linkError ? "Нет связи с ботом" : "Связываюсь с ботом…",
           state.linkError
             ? "Фото и справочник продуктов работают через сервер бота"
-            : "Секунду — подгружаю дневник"
+            : "Секунду, подгружаю дневник"
         ) +
           (state.linkError ? '<p class="lead">' + esc(state.linkError) + "</p>" : "") +
           '<div class="btn-stack" style="margin-top:14px">' +
@@ -1373,7 +1511,7 @@
 
     if (!photoAllowed()) {
       return card(
-        cardHead("Анализ фото не подключён", "Нужен GEMINI_API_KEY в переменных бота") +
+        cardHead("Распознавание фото выключено", "У бота не задан ключ модели") +
           '<div class="btn-stack">' +
           '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
           '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
@@ -1387,14 +1525,9 @@
 
     var limitLine =
       quota && !quota.unlimited
-        ? "Осталось " +
-          quota.left +
-          " " +
-          plural(quota.left, "фото", "фото", "фото") +
-          " на этой неделе из " +
-          quota.limit
+        ? "На этой неделе осталось " + quota.left + " фото из " + quota.limit
         : quota && quota.trial
-        ? "Пробный период — фото без ограничений"
+        ? "Пробный период, фото без ограничений"
         : "Фото без ограничений";
 
     return card(
@@ -1411,9 +1544,9 @@
         (state.addMode === "food" ? foodForm() : "") +
         (state.addMode === "text" ? textForm() : "") +
         (state.addMode === "manual" ? manualForm() : "") +
-        '<p class="note note--plain">Фото даёт оценку, а не взвешивание: жарку и масло ' +
-        "модель почти всегда считает скромнее, чем есть. Цифры можно поправить кнопкой " +
-        "«Ввести вручную».</p>"
+        '<p class="note note--plain">Фото и текст я сначала показываю разбором: что за ' +
+        "продукт, сколько весит, откуда взяты цифры. В дневник запись идёт только после " +
+        "твоего «да». Не согласишься, ничего не запишется.</p>"
     );
   }
 
@@ -1425,7 +1558,9 @@
         '<textarea class="input" rows="3" data-path="mealText" placeholder="250 мл жидкого белка, 3 банана, 8 ложек овсянки, 2 скупа протеина, 1 ложка арахисовой пасты">' +
           esc(state.mealText) +
           "</textarea>",
-        "Меры считаю любые: граммы, миллилитры, ложки, скупы, стаканы, штуки — «пол ложки креатина» тоже. Сначала справочник, если продукта в нём нет — модель."
+        "Меры понимаю любые: граммы, миллилитры, ложки, скупы, стаканы, штуки. " +
+          "«Пол ложки креатина» тоже посчитаю. Сначала смотрю в справочник, а если " +
+          "продукта там нет, спрашиваю модель."
       ) +
       '<button class="btn btn--primary" data-action="add-text">Посчитать и записать</button></div>'
     );
@@ -1468,7 +1603,8 @@
               ["mid", "Средняя"],
               ["high", "Высокая"]
             ]),
-            "Низкая — 1–3 тренировки и сидячая работа. Средняя — 3–5. Высокая — 6+ или физическая работа."
+            "Низкая: 1–3 тренировки в неделю и сидячая работа. Средняя: 3–5 тренировок. " +
+              "Высокая: 6 и больше или физический труд."
           ) +
           field(
             "Цель",
@@ -1492,7 +1628,7 @@
    */
   function weightHint() {
     var last = sortedEntries().slice(-1)[0];
-    if (!last) return "Взвешивания пиши в «Дневник» — из них считается тренд.";
+    if (!last) return "Взвешивания пиши в «Дневник», из них считается тренд.";
     var same = Math.abs(last.weightKg - num(state.profile.weightKg)) < 0.05;
     return (
       "Последняя запись в дневнике: " +
@@ -1561,7 +1697,7 @@
             .join("") +
           "</tbody></table>"
       ) +
-      '<p class="note"><strong>Формула — стартовая точка.</strong> Через 2–3 недели сверь ' +
+      '<p class="note"><strong>Формула даёт только стартовую точку.</strong> Через 2–3 недели сверь ' +
       "фактический тренд веса в дневнике: он покажет, надо ли двигать калории вверх или вниз.</p>" +
       '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--outline" data-go="diary">Открыть дневник веса</button></div>' +
       "</div>"
@@ -1579,9 +1715,9 @@
   ];
 
   var MODEL_NOTES = {
-    "531": "Вендлер: рабочий максимум — 90% от 1ПМ, цикл 4 недели, последний подход на максимум повторений. Между циклами максимум растёт на 2.5%.",
-    gzclp: "Чередование тяжёлого дня (5×3) и объёмного (3×10) с ростом процентов по неделям. Последняя неделя — разгрузка.",
-    dup: "Ежедневная волна: у каждого дня своя задача — сила, мощность, объём.",
+    "531": "Вендлер. Рабочий максимум это 90% от 1ПМ, цикл идёт 4 недели, последний подход делается на максимум повторений. Между циклами максимум растёт на 2.5%.",
+    gzclp: "Чередование тяжёлого дня (5×3) и объёмного (3×10) с ростом процентов по неделям. Последняя неделя разгрузочная.",
+    dup: "Ежедневная волна: у каждого дня своя задача, то сила, то мощность, то объём.",
     linear: "Проценты растут, повторы падают от недели к неделе. Классика базового периода.",
     wave: "Лёгкий / средний / тяжёлый день с волной по неделям. Держит свежесть на длинных циклах."
   };
@@ -1618,7 +1754,7 @@
         field("Вес штанги, кг", numInput("orm.weightKg", { min: 1, max: 500, step: 2.5 })) +
         field("Повторений", numInput("orm.reps", { min: 1, max: 20, step: 1 })) +
         "</div>" +
-        '<p class="field__hint">Формулы работают до 15 повторений. Чем больше повторов — тем грубее оценка.</p>' +
+        '<p class="field__hint">Формулы работают до 15 повторений. Чем больше повторов, тем грубее оценка.</p>' +
         '<div class="btn-stack" style="margin-top:16px"><button class="btn btn--primary" data-action="calc-orm">Рассчитать</button></div>'
     );
   }
@@ -1639,7 +1775,9 @@
       (r > 15
         ? '<p class="note">Указано ' +
           Math.round(r) +
-          " повторений — расчёт сделан по 15, дальше формулы врут. Точнее всего подход на 3–8 повторений.</p>"
+          " " +
+          plural(Math.round(r), "повторение", "повторения", "повторений") +
+          ", но расчёт сделан по 15: дальше формулы врут. Точнее всего работает подход на 3–8 повторений.</p>"
         : "") +
       card(
         cardHead("Рабочие веса", "Округлено до 2.5 кг") +
@@ -1689,8 +1827,8 @@
           "Недель",
           chips("p_weeks", pr.weeks, [[4, "4"], [6, "6"], [8, "8"], [12, "12"]]),
           pr.model === "531"
-            ? "5/3/1 считается циклами по 4 недели — срок округлится до целых циклов."
-            : "Последняя неделя — разгрузка."
+            ? "5/3/1 считается циклами по 4 недели, поэтому срок округлится до целых циклов."
+            : "Последняя неделя разгрузочная."
         ) +
         field(
           "Тренировок в неделю",
@@ -1789,18 +1927,18 @@
         .join("") +
       '<p class="note">' +
       (pr.model === "531"
-        ? "<strong>РМ — рабочий максимум, 90% от 1ПМ:</strong> " +
+        ? "<strong>РМ это рабочий максимум, 90% от 1ПМ:</strong> " +
           lifts
             .map(function (l) {
               // Без округления: проценты считаются от точного РМ, округляется только вес на штанге
               return esc(l.name) + " " + Math.round(l.oneRmKg * 0.9 * 10) / 10 + " кг";
             })
             .join(", ") +
-          ". «+» у последнего подхода — максимум повторений с этим весом. "
+          ". Знак «+» у последнего подхода означает максимум повторений с этим весом. "
         : pr.model === "gzclp"
-        ? "«+» у последнего подхода — максимум повторений с этим весом. "
-        : "Вес считается от 1ПМ с поправкой на этап цикла, поэтому в первых неделях он ниже номинальной интенсивности — это запас на разгон. ") +
-      "Разгрузочная неделя — не пропуск, а часть плана: снимает накопленную усталость перед новым циклом.</p>" +
+        ? "Знак «+» у последнего подхода означает максимум повторений с этим весом. "
+        : "Вес считается от 1ПМ с поправкой на этап цикла, поэтому в первых неделях он ниже номинальной интенсивности: это запас на разгон. ") +
+      "Разгрузочная неделя это не пропуск, а часть плана: она снимает накопленную усталость перед новым циклом.</p>" +
       (state.day
         ? (state.busy === "program"
             ? '<p class="muted">Сохраняю программу…</p>'
@@ -1827,7 +1965,7 @@
         state.notice = {
           kind: "ok",
           text:
-            "Программа активна: неделя 1, день 1. Дальше её ведёт бот — отмечай тренировки на «Сегодня»."
+            "Программа активна: неделя 1, день 1. Дальше её ведёт бот, а ты отмечай тренировки на «Сегодня»."
         };
         haptic("medium");
         render();
@@ -1889,9 +2027,9 @@
           text:
             "Тренировка " +
             data.done +
-            " записана — всего " +
+            " записана, всего их " +
             data.workoutsTotal +
-            ". Следующая: план " +
+            ". Следующая по плану " +
             data.next +
             "."
         };
@@ -1956,7 +2094,7 @@
           plan.items.length +
             " " +
             plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
-            ". Чередуй A и B через день отдыха. Тапни упражнение — откроется техника.",
+            ". Чередуй A и B через день отдыха. Нажми на упражнение, и откроется техника.",
           "План " + plan.label
         ),
         { gold: true }
@@ -1966,12 +2104,12 @@
       (state.day
         ? state.busy === "workout"
           ? card('<p class="lead">Записываю тренировку…</p>')
-          : '<div class="btn-stack"><button class="btn btn--primary" data-action="workout-done">Выполнил — записать</button></div>' +
-            '<p class="note note--plain">Запись идёт в тот же дневник, что кнопка в чате: ' +
-            "всего тренировок — " +
+          : '<div class="btn-stack"><button class="btn btn--primary" data-action="workout-done">Выполнил, записать</button></div>' +
+            '<p class="note note--plain">Запись идёт в тот же дневник, что и кнопка в чате. ' +
+            "Всего тренировок " +
             (state.day.workoutsTotal || 0) +
-            ". Очередь планов A/B бот ведёт сам.</p>"
-        : '<p class="note note--plain">Отметка тренировки пишется в дневник бота — работает, ' +
+            ". Очередь планов A и B бот ведёт сам.</p>"
+        : '<p class="note note--plain">Отметка тренировки пишется в дневник бота и работает только тогда, ' +
           "когда приложение открыто из Telegram.</p>") +
       '<p class="note">' +
       esc(wk.place === "home" ? KM_PLANS.homeRule : KM_PLANS.weightRule) +
@@ -2039,7 +2177,11 @@
       ) +
       (advice
         ? card(
-            cardHead("Тренд", "Цель: " + GOAL_WORD[state.profile.goal], advice.days + " дн.") +
+            cardHead(
+              "Тренд",
+              "Цель: " + GOAL_WORD[state.profile.goal],
+              "за " + advice.days + " " + plural(advice.days, "день", "дня", "дней")
+            ) +
               figure(
                 (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek,
                 " кг/нед",
@@ -2052,11 +2194,20 @@
           )
         : card(
             cardHead("Тренд пока не считается", "Нужно 4 взвешивания за 28 дней с разбросом от 10 дней") +
-              '<p class="lead">Дневные колебания воды дают ±1 кг — по одному взвешиванию решение ' +
-              "принимать нельзя. Наберётся история — покажу скорость и скажу, что делать с калориями.</p>"
+              '<p class="lead">Дневные колебания воды дают ±1 кг, поэтому по одному взвешиванию ' +
+              "решение принимать нельзя. Наберётся история, и я покажу скорость и скажу, " +
+              "что делать с калориями.</p>"
           )) +
       (entries.length >= 2
-        ? card(cardHead("Динамика", "Последние " + Math.min(entries.length, 16) + " записей") + weightChart(entries))
+        ? card(
+            cardHead(
+              "Динамика",
+              "Последние " +
+                Math.min(entries.length, 16) +
+                " " +
+                plural(Math.min(entries.length, 16), "запись", "записи", "записей")
+            ) + weightChart(entries)
+          )
         : "") +
       (entries.length
         ? card(
@@ -2115,8 +2266,8 @@
       cardHead(
         left > 0 ? "Вода: осталось " + fmtWater(left) : "Вода: норма закрыта",
         w.basedOnKg
-          ? "Ориентир " + fmtWater(w.targetMl) + " — 35 мл на кг при весе " + w.basedOnKg + " кг"
-          : "Ориентир " + fmtWater(w.targetMl) + " — задай вес, посчитаю точнее",
+          ? "Ориентир " + fmtWater(w.targetMl) + ": 35 мл на кг при весе " + w.basedOnKg + " кг"
+          : "Ориентир " + fmtWater(w.targetMl) + ". Задай вес, и посчитаю точнее",
         w.local ? "на устройстве" : null
       ) +
         figure(fmtWater(w.ml).replace(/ (мл|л)$/, ""), w.ml >= 1000 ? " л" : " мл", "выпито сегодня") +
@@ -2144,7 +2295,7 @@
           .join("") +
         (w.ml > 0 ? '<button type="button" class="chip" data-water="-250">−250 мл</button>' : "") +
         "</div>" +
-        '<p class="note note--plain">Цифра — ориентир для тренирующегося человека, а не ' +
+        '<p class="note note--plain">Это ориентир для тренирующегося человека, а не ' +
         "медицинская норма. В жару и в тяжёлый день добавляй 500–700 мл сверху: Таиланд " +
         "и час работы со штангой стоят литра пота.</p>"
     );
@@ -2230,23 +2381,36 @@
       card(
         cardHead(
           name ? esc(name) : "Личный профиль",
-          SEX_WORD[p.sex] + " · " + num(p.age) + " лет · " + num(p.heightCm) + " см",
+          SEX_WORD[p.sex] +
+            " · " +
+            num(p.age) +
+            " " +
+            plural(num(p.age), "год", "года", "лет") +
+            " · " +
+            num(p.heightCm) +
+            " см",
           GOAL_WORD[p.goal]
         ) +
           '<div class="grid-2">' +
-          metric("Вес", last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "—", last ? "запись " + formatDate(last.date) : "нет записей") +
+          metric(
+            "Вес",
+            last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "нет",
+            last ? "запись " + formatDate(last.date) : "ещё не взвешивался"
+          ) +
           metric(
             "Тренд",
-            advice ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + ' <span class="figure__unit">кг/нед</span>' : "—",
-            advice ? "за " + advice.days + " дн." : "нужно 4 взвешивания"
+            advice ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + ' <span class="figure__unit">кг/нед</span>' : "нет",
+            advice
+              ? "за " + advice.days + " " + plural(advice.days, "день", "дня", "дней")
+              : "нужно 4 взвешивания"
           ) +
           "</div>" +
           '<div class="grid-2">' +
           metric("Активность", ACTIVITY_WORD[p.activity], "коэффициент в норме калорий") +
           metric(
             "Тренировок",
-            workouts === null ? "—" : String(workouts),
-            workouts === null ? "считается в чате" : "записано всего"
+            workouts === null ? "нет" : String(workouts),
+            workouts === null ? "счёт ведёт бот в чате" : "записано всего"
           ) +
           "</div>" +
           '<div class="btn-stack" style="margin-top:16px">' +
@@ -2292,8 +2456,8 @@
         online ? "Дневник общий с ботом: записи видны и в чате" : "Только на этом устройстве: приложение открыто вне Telegram"
       ) +
         '<ul class="bullets">' +
-        "<li>Еда, вода, вес и тренировки — в базе бота, привязаны к твоему Telegram.</li>" +
-        "<li>Тема оформления и цель по весу — на устройстве, они ни на что не влияют.</li>" +
+        "<li>Еда, вода, вес и тренировки лежат в базе бота и привязаны к твоему Telegram.</li>" +
+        "<li>Тема оформления и цель по весу хранятся на устройстве и ни на что не влияют.</li>" +
         "<li>Фото уходит на сервер бота для распознавания и не сохраняется.</li>" +
         "</ul>" +
         '<p class="note note--plain">Версия приложения: ' +
@@ -2499,6 +2663,9 @@
     // Вопрос про порцию задаётся один раз, сразу после записи: на другом экране
     // он превращается в непонятную карточку без повода
     state.lastMeal = null;
+    // Неотвеченный разбор уходит вместе с экраном: уход с экрана — это и есть
+    // «нет». В дневник он не попал, а на сервере протухнет сам.
+    state.pending = null;
     haptic("light");
     // Уходя из «Съедено», возвращаемся к сегодняшнему дню: иначе «Сегодня»
     // покажет итоги вчерашнего
@@ -2666,6 +2833,10 @@
       }
       case "water-250":
         return addWater(250);
+      case "meal-confirm":
+        return confirmPending();
+      case "meal-reject":
+        return rejectPending();
       case "portion-done":
         state.lastMeal = null;
         state.notice = null;
@@ -2862,11 +3033,7 @@
     state.busy = "text";
     state.notice = null;
     render();
-    KM_API.text(text)
-      .then(function (data) {
-        applyMealResult(data, data.meal.name + " — " + data.meal.kcal + " ккал.");
-      })
-      .catch(mealError);
+    KM_API.text(text).then(applyPendingResult).catch(mealError);
   }
 
   function addMealManual() {
@@ -2895,7 +3062,7 @@
       render();
       KM_API.manual(meal)
         .then(function (data) {
-          applyMealResult(data, meal.name + " — " + meal.kcal + " ккал.");
+          applyMealResult(data, "Записал: " + meal.name + ", " + meal.kcal + " ккал.");
         })
         .catch(mealError);
       return;
@@ -2906,7 +3073,7 @@
     );
     state.addMode = null;
     state.manual = { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" };
-    state.notice = { kind: "ok", text: meal.name + " — " + meal.kcal + " ккал." };
+    state.notice = { kind: "ok", text: "Записал: " + meal.name + ", " + meal.kcal + " ккал." };
     persist();
     haptic("medium");
     render();
@@ -2920,7 +3087,7 @@
     render();
     KM_API.repeat(name)
       .then(function (data) {
-        applyMealResult(data, data.meal.name + " — " + data.meal.kcal + " ккал.");
+        applyMealResult(data, "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
       })
       .catch(mealError);
   }
@@ -2934,7 +3101,7 @@
       .then(function (data) {
         state.foodQuery = "";
         state.foodGrams = "";
-        applyMealResult(data, data.meal.name + " — " + data.meal.kcal + " ккал.");
+        applyMealResult(data, "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
       })
       .catch(mealError);
   }
@@ -2954,14 +3121,7 @@
     state.busy = "photo";
     state.notice = null;
     render();
-    KM_API.photo(file)
-      .then(function (data) {
-        applyMealResult(
-          data,
-          data.meal.name + " — " + data.meal.kcal + " ккал" + (data.note ? ". " + data.note : ".")
-        );
-      })
-      .catch(mealError);
+    KM_API.photo(file).then(applyPendingResult).catch(mealError);
   }
 
   function addWeight() {
@@ -3041,7 +3201,7 @@
           String(when.getHours()).padStart(2, "0") +
           ":" +
           String(when.getMinutes()).padStart(2, "0")
-        : "Сборка — версия не определена";
+        : "Версия сборки не определилась";
     }
   } catch (e) {
     /* метка не критична */

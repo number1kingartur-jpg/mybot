@@ -1,4 +1,4 @@
-import type { MealAnalysis } from "./meal";
+import type { MealAnalysis, MealPart } from "./meal";
 
 export interface FoodItem {
   aliases: string[];
@@ -508,6 +508,9 @@ function buildMeal(matched: { food: FoodItem; grams: number }[], note: string): 
   let fatG = 0;
   let carbsG = 0;
   const parts: string[] = [];
+  // Состав уходит наружу вместе с итогом: по нему человек проверяет расчёт до
+  // записи. Без него ошибку видно только по одной цифре, которую сверить не с чем.
+  const detail: MealPart[] = [];
 
   for (const { food, grams } of unique) {
     const mul = grams / 100;
@@ -516,6 +519,12 @@ function buildMeal(matched: { food: FoodItem; grams: number }[], note: string): 
     fatG += food.f100 * mul;
     carbsG += food.c100 * mul;
     parts.push(`${food.name.toLowerCase()} ~${Math.round(grams)} г`);
+    detail.push({
+      name: food.name,
+      grams: Math.round(grams),
+      kcal: Math.round(food.kcal100 * mul),
+      source: food.fromLabel ? "label" : "catalog",
+    });
   }
 
   // Заглавная только первая буква: прежний вариант поднимал каждое слово и
@@ -538,6 +547,7 @@ function buildMeal(matched: { food: FoodItem; grams: number }[], note: string): 
     carbsG: Math.round(carbsG),
     note,
     slug: foodSlug(main.food.name),
+    parts: detail,
   };
 }
 

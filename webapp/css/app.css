@@ -994,6 +994,42 @@ select.input {
   gap: 12px;
 }
 
+/* Карточка «это оно?»: снимок распознан, но в дневник ещё не записан. */
+.confirm__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.confirm__head .thumb {
+  width: 56px;
+  height: 56px;
+  font-size: 22px;
+}
+
+.confirm__title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  line-height: 1.25;
+  color: var(--paper);
+}
+
+.confirm__kcal {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Состав расчёта плотнее дневника: это пояснение, а не основной список. */
+.log--tight li {
+  padding: 9px 0;
+  font-size: 13px;
+}
+
 .meal__macro {
   display: block;
   color: var(--dim);

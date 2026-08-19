@@ -6,7 +6,8 @@
  * килокалорий в дневнике, поэтому разбор проверяется на сборке.
  */
 import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug } from "../dist/foods.js";
-import { mealFromIdentify } from "../dist/meal.js";
+import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
+import { dropPending, putPending, takePending } from "../dist/pending.js";
 
 let failed = 0;
 
@@ -173,7 +174,47 @@ function fromModel(json) {
 const bottle = fromModel('{"items":[{"name":"витаминный напиток C-vitt","grams":140}],"note":"тара пустая, посчитан полный объём"}');
 check("фото бутылки записывается", bottle.meal !== undefined, String(bottle.error?.message));
 near("бутылка C-vitt по фото ≈ 45 ккал", bottle.meal?.kcal ?? 0, 45, 0.15);
-check("замечание модели сохранено", /тара пустая/.test(bottle.meal?.note ?? ""), bottle.meal?.note);
+// Слова модели и наша строка про точность — разные поля: в объяснении человек
+// может оспорить первое и не может второе. Склеенные, они обрезались по 120
+// символов, и способ приготовления часто отрезало на середине слова.
+check("замечание модели сохранено отдельно", /тара пустая/.test(bottle.meal?.said ?? ""), bottle.meal?.said);
+check("наша строка про точность не затёрта", /RASCHET/.test(bottle.meal?.note ?? ""), bottle.meal?.note);
+
+// ── Состав расчёта: объяснение перед записью ─────────────────────────────────
+// Одна цифра непроверяема: по «240 ккал» нельзя понять, что принято за курицу и
+// сколько насчитано масла. Поэтому у приёма есть позиции, и они должны сходиться
+// с итогом — иначе объяснение будет расходиться с записью в дневнике.
+const explained = macrosFromText("курица жареная 200 г, рис 150 г");
+check("у приёма есть состав", (explained?.parts ?? []).length === 2, String(explained?.parts?.length));
+if (explained?.parts?.length === 2) {
+  const sum = explained.parts.reduce((a, p) => a + p.kcal, 0);
+  near("состав сходится с итогом", sum, explained.kcal, 0.03);
+  check(
+    "в составе указан вес каждой позиции",
+    explained.parts.every((p) => p.grams > 0),
+    JSON.stringify(explained.parts)
+  );
+  check(
+    "цифры из справочника помечены источником",
+    explained.parts.every((p) => p.source === "catalog"),
+    JSON.stringify(explained.parts.map((p) => p.source))
+  );
+}
+
+const labelParts = macrosFromItems([
+  { name: "курица отварная", grams: 150 },
+  { name: "напиток yakult", grams: 80, kcal100: 65, p100: 1.2, f100: 0.1, c100: 15 },
+]);
+check(
+  "цифры с упаковки честно помечены",
+  (labelParts?.parts ?? []).some((p) => p.source === "label"),
+  JSON.stringify(labelParts?.parts?.map((p) => p.source))
+);
+check(
+  "справочник и этикетка в одном составе не смешиваются по источнику",
+  (labelParts?.parts ?? []).filter((p) => p.source === "catalog").length === 1,
+  JSON.stringify(labelParts?.parts?.map((p) => p.source))
+);
 
 const unknownJar = fromModel('{"items":[{"name":"напиток yakult","grams":80,"kcal100":65,"p100":1.2,"f100":0.1,"c100":15}],"note":"по этикетке"}');
 check("незнакомая упаковка с этикеткой записывается", unknownJar.meal !== undefined, String(unknownJar.error?.message));
@@ -198,6 +239,43 @@ check("описание кадра не подставляется в ввод",
 const emptyWithNote = fromModel('{"items":[],"note":"снято слишком близко, тарелка не видна"}');
 check("пустой список без «не еда» — другая причина", emptyWithNote.error?.reason === "no_foods", emptyWithNote.error?.reason);
 check("заметка модели не идёт в ввод", !emptyWithNote.error?.seen, emptyWithNote.error?.seen);
+
+// ── Подтверждение разбора ────────────────────────────────────────────────────
+// Токен одноразовый: двойной тап по «Да, записать» или повтор запроса не должны
+// давать две записи об одной тарелке. Это дешёвая ошибка по коду и дорогая по
+// последствиям — день выходит вдвое калорийнее, чем был.
+const sample = macrosFromText("курица жареная 200 г");
+const tok = putPending(1001, sample, "2026-08-19", "photo");
+const first = takePending(1001, tok);
+const second = takePending(1001, tok);
+check("подтверждение возвращает разбор", first?.meal?.kcal === sample.kcal, String(first?.meal?.kcal));
+check("день подтверждения сохранён", first?.date === "2026-08-19", first?.date);
+check("повторное подтверждение ничего не пишет", second === null, JSON.stringify(second));
+
+const tok2 = putPending(1002, sample, "2026-08-19", "text");
+check("чужой токен не принимается", takePending(1003, tok2) === null);
+check("свой токен после этого цел", takePending(1002, tok2) !== null);
+
+const tok3 = putPending(1004, sample, "2026-08-19", "text");
+dropPending(1004, tok3);
+check("отказ выбрасывает разбор", takePending(1004, tok3) === null);
+
+// ── Состав строками: один текст в боте и приложении ──────────────────────────
+const lines = mealPartLines(explained);
+check("строки состава по позиции", lines.length === 2, JSON.stringify(lines));
+check("в строке есть граммы и калории", /\d+ г, \d+ ккал/.test(lines[0] ?? ""), lines[0]);
+check(
+  "источник с упаковки виден в строке",
+  mealPartLines(labelParts).some((l) => /с упаковки/.test(l)),
+  JSON.stringify(mealPartLines(labelParts))
+);
+// Пометка только у исключения: если подписывать и справочник, пометка перестаёт
+// что-либо значить — она будет у каждой строки.
+check(
+  "справочник не подписывается в каждой строке",
+  lines.every((l) => !/справочник/.test(l)),
+  JSON.stringify(lines)
+);
 
 // ── Справочник цел ───────────────────────────────────────────────────────────
 check("арахисовая паста не путается с пастой отварной", matchFood("арахисовая паста")?.name === "Арахисовая паста");

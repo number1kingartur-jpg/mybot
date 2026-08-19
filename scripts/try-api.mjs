@@ -82,6 +82,38 @@ if (textIdx > 0) {
 }
 
 console.log(`HTTP ${out.status}`);
-console.log(JSON.stringify(out.body, null, 1));
+
+// Разбор теперь не пишет в дневник сам: проверять надо обе ступени, иначе тест
+// показывает «распознал» там, где запись до дневника не дошла.
+const pending = out.body?.pending;
+if (!pending) {
+  console.log(JSON.stringify(out.body, null, 1));
+  server?.close();
+  process.exit(0);
+}
+
+console.log(`\nРАЗБОР: ${pending.meal.name} — ${pending.meal.kcal} ккал`);
+console.log(`  Б ${pending.meal.proteinG} / Ж ${pending.meal.fatG} / У ${pending.meal.carbsG} г`);
+for (const line of pending.parts ?? []) console.log(`  · ${line}`);
+if (pending.meal.said) console.log(`  вижу так: ${pending.meal.said}`);
+if (pending.meal.note) console.log(`  ${pending.meal.note}`);
+
+if (process.argv.includes("--no-confirm")) {
+  const rej = await post("/api/meal/reject", { token: pending.token });
+  console.log(`\nОТКАЗ: HTTP ${rej.status}`);
+  server?.close();
+  process.exit(0);
+}
+
+const ok = await post("/api/meal/confirm", { token: pending.token });
+console.log(`\nПОДТВЕРЖДЕНИЕ: HTTP ${ok.status}`);
+console.log(`  в дневнике: ${ok.body?.meal?.name} — ${ok.body?.meal?.kcal} ккал, id ${ok.body?.mealId}`);
+console.log(`  за день: ${ok.body?.totals?.kcal ?? "?"} ккал, приёмов ${ok.body?.meals?.length ?? "?"}`);
+
+// Второе подтверждение тем же токеном должно быть отбито: двойной тап по кнопке
+// не должен превращать одну тарелку в две записи.
+const again = await post("/api/meal/confirm", { token: pending.token });
+console.log(`  повтор тем же токеном: HTTP ${again.status} (ожидается 410)`);
+
 server?.close();
 process.exit(0);

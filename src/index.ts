@@ -14,7 +14,8 @@ import {
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { startWebappServer } from "./server";
-import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError } from "./meal";
+import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError, type MealAnalysis } from "./meal";
+import { putPending, takePending } from "./pending";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
 import { SIMPLE_PLANS, WEIGHT_RULE, HOME_RULE, type Place, type SimpleExercise, exerciseVideoUrl, isDirectVideo } from "./simple";
@@ -2712,6 +2713,36 @@ function mealReplyMarkup(mealId: string) {
   };
 }
 
+/**
+ * Разбор с объяснением и вопросом «это оно» — вместо готовой записи.
+ *
+ * Раньше ответом на фото была галочка и цифра: проверить её было нечем, потому
+ * что непонятно, что модель приняла за еду и откуда взяты калории. Неверная
+ * догадка при этом уже лежала в дневнике, и человеку оставалось её удалять.
+ */
+function mealConfirmText(meal: MealAnalysis): string {
+  const lines = mealPartLines(meal);
+  return (
+    `🔍 <b>${esc(meal.name)}</b>\n${HR}\n\n` +
+    `<code>Ккал ${meal.kcal}  Б ${meal.proteinG}  Ж ${meal.fatG}  У ${meal.carbsG}</code>\n\n` +
+    (lines.length ? lines.map((l) => `▪️ ${esc(l)}`).join("\n") + "\n\n" : "") +
+    (meal.said ? `<i>Вижу так: ${esc(meal.said)}</i>\n` : "") +
+    (meal.note ? `<i>${esc(meal.note)}</i>\n` : "") +
+    `\n<b>Это оно?</b> В дневник запишу после твоего «да».`
+  );
+}
+
+function mealConfirmMarkup(token: string) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Да, записать", callback_data: `meal_ok_${token}` },
+        { text: "✏️ Не то", callback_data: `meal_no_${token}` },
+      ],
+    ],
+  };
+}
+
 function mealDiaryText(userId: number): string {
   const meals = getMealsForDays(userId, 7);
   if (!meals.length) {
@@ -2746,12 +2777,12 @@ async function processMealText(ctx: { from?: { id: number; first_name?: string }
   const status = await ctx.reply(`🔍 <i>Считаю…</i>`, HTML);
   try {
     const meal = await analyzeMealText(text);
-    const row = await saveMealFromAnalysis(userId, meal, false);
+    const token = putPending(userId, meal, today(), "text");
     await ctx.api.editMessageText(
       ctx.chat.id,
       status.message_id,
-      formatMealReply(meal, mealGoalLine(userId)),
-      { parse_mode: "HTML", reply_markup: mealReplyMarkup(row.id) }
+      mealConfirmText(meal),
+      { parse_mode: "HTML", reply_markup: mealConfirmMarkup(token) }
     );
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -2763,20 +2794,6 @@ async function processMealText(ctx: { from?: { id: number; first_name?: string }
     );
     getSession(userId).state = "awaiting_meal_text";
   }
-}
-
-async function saveMealFromAnalysis(userId: number, meal: { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; note?: string }, countPhoto = true) {
-  const row = addMeal({
-    userId,
-    date: today(),
-    name: meal.name,
-    kcal: meal.kcal,
-    proteinG: meal.proteinG,
-    fatG: meal.fatG,
-    carbsG: meal.carbsG,
-  });
-  if (countPhoto) bumpPhotoCount(userId, weekKey(today()), today());
-  return row;
 }
 
 async function processMealPhoto(
@@ -2830,13 +2847,16 @@ async function processMealPhoto(
     const buf = await fetchImageBuffer(url);
     const mime = file.file_path.endsWith(".png") ? "image/png" : "image/jpeg";
     const meal = await analyzeMealPhoto(buf, mime);
-    const row = await saveMealFromAnalysis(userId, meal, true);
+    // Снимок в квоту идёт здесь, а не при записи: запрос к модели уже оплачен,
+    // согласится человек с разбором или нет.
+    bumpPhotoCount(userId, wk, today());
+    const token = putPending(userId, meal, today(), "photo");
 
     await ctx.api.editMessageText(
       ctx.chat.id,
       status.message_id,
-      formatMealReply(meal, mealGoalLine(userId)),
-      { parse_mode: "HTML", reply_markup: mealReplyMarkup(row.id) }
+      mealConfirmText(meal),
+      { parse_mode: "HTML", reply_markup: mealConfirmMarkup(token) }
     );
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -2928,6 +2948,58 @@ async function processMealPhoto(
     }
   }
 }
+
+// ── Подтверждение разбора ─────────────────────────────────────────────────
+
+bot.callbackQuery(/^meal_ok_([a-f0-9]+)$/, async (ctx) => {
+  const userId = ctx.from!.id;
+  const found = takePending(userId, ctx.match![1]);
+  if (!found) {
+    // Токен одноразовый и живёт полчаса: сюда попадают двойной тап и старые
+    // сообщения. Молча записать второй раз нельзя — в дневнике будет две тарелки.
+    await ctx.answerCallbackQuery({ text: "Разбор устарел — пришли заново" });
+    return;
+  }
+  const meal = found.meal;
+  const row = addMeal({
+    userId,
+    date: found.date,
+    name: meal.name,
+    kcal: meal.kcal,
+    proteinG: meal.proteinG,
+    fatG: meal.fatG,
+    carbsG: meal.carbsG,
+  });
+  await ctx.answerCallbackQuery({ text: "Записал ✓" });
+  const text = formatMealReply(meal, mealGoalLine(userId));
+  try {
+    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: mealReplyMarkup(row.id) });
+  } catch {
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: mealReplyMarkup(row.id) });
+  }
+});
+
+bot.callbackQuery(/^meal_no_([a-f0-9]+)$/, async (ctx) => {
+  const userId = ctx.from!.id;
+  const found = takePending(userId, ctx.match![1]);
+  await ctx.answerCallbackQuery();
+  // Состав отдаём строкой для правки: поправить одну позицию быстрее, чем
+  // набирать тарелку заново. Пустой ответ «ок, не записал» оставлял бы человека
+  // ни с чем — а еда всё равно съедена и её надо учесть.
+  const parts = found?.meal.parts ?? [];
+  const draft = parts.length
+    ? parts.map((p) => `${p.name.toLowerCase()} ${p.grams} г`).join(", ")
+    : "лосось 150 г, рис 200 г";
+  getSession(userId).state = "awaiting_meal_text";
+  const text =
+    `Не записал.\n${HR}\n\n<b>Поправь и пришли текстом:</b>\n<code>${esc(draft)}</code>\n\n` +
+    `<i>Нажми на строку — она скопируется.</i>`;
+  try {
+    await ctx.editMessageText(text, HTML);
+  } catch {
+    await ctx.reply(text, HTML);
+  }
+});
 
 // ── Дневник еды ───────────────────────────────────────────────────────────
 bot.callbackQuery(/^meal_del_(.+)$/, async (ctx) => {

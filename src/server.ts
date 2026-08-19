@@ -12,7 +12,8 @@ import {
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium,
   type NutritionProfile, type Lift, type Program,
 } from "./db";
-import { analyzeMealPhoto, analyzeMealText, mealVisionEnabled, MealPhotoUnreadableError } from "./meal";
+import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError } from "./meal";
+import { dropPending, putPending, takePending } from "./pending";
 import { FOODS, foodSlug, macrosFromItems, matchFood } from "./foods";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
@@ -621,14 +622,13 @@ async function handleApi(
 
     try {
       const meal = await analyzeMealPhoto(buf, mime);
-      // id записи уходит клиенту: сразу после распознавания человек правит порцию,
-      // а без id пришлось бы искать запись по названию — их может быть две
-      const row = addMeal({
-        userId: user.id, date,
-        name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
-      });
+      // В дневник не пишем: сначала человек смотрит, что распознано, и отвечает
+      // «это оно». Раньше запись появлялась молча, и неверную догадку
+      // приходилось удалять вместо того, чтобы просто не соглашаться.
+      // Снимок в квоту идёт здесь: запрос к модели уже оплачен независимо от ответа.
       bumpPhotoCount(user.id, wk, date);
-      json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, date) });
+      const token = putPending(user.id, meal, date, "photo");
+      json(res, 200, { pending: { token, meal, parts: mealPartLines(meal) }, ...dayState(user.id, date) });
     } catch (e) {
       if (e instanceof MealPhotoUnreadableError) {
         // Если модель что-то увидела, но в цифры это не перевелось — отдаём
@@ -657,11 +657,10 @@ async function handleApi(
     }
     try {
       const meal = await analyzeMealText(text);
-      const row = addMeal({
-        userId: user.id, date,
-        name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
-      });
-      json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, date) });
+      // Текст тоже догадка: «8 ложек овсянки» превращаются в граммы правилами,
+      // а «салат» — в порцию по умолчанию. Показываем разбор до записи.
+      const token = putPending(user.id, meal, date, "text");
+      json(res, 200, { pending: { token, meal, parts: mealPartLines(meal) }, ...dayState(user.id, date) });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       json(res, 422, {
@@ -669,6 +668,41 @@ async function handleApi(
         message: msg.slice(0, 120) || "Не смог посчитать. Укажи продукты и граммы.",
       });
     }
+    return;
+  }
+
+  /**
+   * «Да, это оно» — запись разобранного приёма в дневник.
+   *
+   * Цифры берутся из серверного хранилища по токену, а не из тела запроса:
+   * иначе подтверждение стало бы способом записать любые калории, и дневник
+   * перестал бы быть расчётом.
+   */
+  if (req.method === "POST" && urlPath === "/api/meal/confirm") {
+    const body = JSON.parse(await readBody(req)) as { token?: string };
+    const found = takePending(user.id, String(body.token ?? ""));
+    if (!found) {
+      json(res, 410, {
+        error: "pending_gone",
+        message: "Разбор устарел — сфотографируй или напиши заново.",
+      });
+      return;
+    }
+    const meal = found.meal;
+    const row = addMeal({
+      userId: user.id, date: found.date,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
+    });
+    console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
+    json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, found.date) });
+    return;
+  }
+
+  /** «Не то» — разбор выбрасывается, в дневнике не остаётся следа. */
+  if (req.method === "POST" && urlPath === "/api/meal/reject") {
+    const body = JSON.parse(await readBody(req)) as { token?: string };
+    dropPending(user.id, String(body.token ?? ""));
+    json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;
   }
 
