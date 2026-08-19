@@ -474,6 +474,11 @@ export function setNutrition(chatId: number, profile: NutritionProfile) {
   if (!u) return;
   u.nutrition = profile;
   save(db);
+  // Вес в анкете и вес в дневнике жили в разных таблицах: человек писал 80 кг
+  // в норме, а карточка «Вес» смотрела дневник и писала «нет».
+  if (getBodyweight(chatId, 1).length === 0 && profile.weightKg >= 30) {
+    addBodyweight(chatId, profile.weightKg);
+  }
 }
 
 export function updateUser(chatId: number, patch: Partial<UserRecord>) {

@@ -345,6 +345,21 @@
     });
   }
 
+  /**
+   * Последний вес для карточек. Дневник взвешиваний главный; если его ещё нет,
+   * берём цифру из анкеты — иначе после «Изменить данные» на профиле висит «нет».
+   */
+  function lastWeighIn() {
+    var entries = sortedEntries();
+    if (entries.length) {
+      var e = entries[entries.length - 1];
+      return { weightKg: e.weightKg, date: e.date, fromDiary: true };
+    }
+    var kg = num(state.profile.weightKg);
+    if (kg >= 30 && kg <= 250) return { weightKg: kg, date: null, fromDiary: false };
+    return null;
+  }
+
   function serverToday() {
     return state.day && state.day.today ? state.day.today : today();
   }
@@ -415,6 +430,7 @@
           state.workout.plan = data.simple.idx % planList().length;
         }
         migrateWeights();
+        seedWeightFromProfile();
         // Обратный случай: анкета заполнена в приложении, а в базе бота её нет.
         // Так было всё время, пока подпись не проходила проверку: ответы жили
         // только на устройстве, поэтому бот и норма воды считали по ориентиру
@@ -438,7 +454,7 @@
           persist();
         }
         if (!silent) render();
-        else if (state.screen === "home" || state.screen === "nutrition") render();
+        else if (state.screen === "home" || state.screen === "nutrition" || state.screen === "profile") render();
       })
       .catch(function (err) {
         // 401 — приложение открыто вне Telegram или подпись устарела: уходим
@@ -492,6 +508,18 @@
       .catch(function () {
         /* перенос повторится при следующем открытии — данные на устройстве целы */
       });
+  }
+
+  function seedWeightFromProfile() {
+    if (!state.day || (state.day.bodyweight && state.day.bodyweight.length)) return;
+    var kg = num((state.day.nutrition && state.day.nutrition.weightKg) || state.profile.weightKg);
+    if (!(kg >= 30 && kg <= 250)) return;
+    KM_API.saveWeight(kg)
+      .then(function (data) {
+        state.day = data;
+        render();
+      })
+      .catch(function () {});
   }
 
   function applyMealResult(data, okText) {
@@ -873,6 +901,9 @@
     if (!state.entries.length) state.entries.push({ date: today(), weightKg: Math.round(w * 10) / 10 });
     persist();
     syncProfile();
+    if (online) {
+      KM_API.saveWeight(Math.round(w * 10) / 10).catch(function () {});
+    }
     // Место и ступень иначе останутся только на устройстве: loadDay потом
     // перетрёт их значением бота по умолчанию.
     workoutTouched = true;
@@ -894,9 +925,11 @@
       activity: state.profile.activity
     })
       .then(function (fresh) {
-        // Ответ — свежее состояние дня: норма воды считается от веса, поэтому
-        // после переноса анкеты цифры на экране должны обновиться сразу
-        if (onSaved && fresh && fresh.water) onSaved(fresh);
+        // Ответ — свежее состояние дня: норма воды и карточка веса считаются
+        // отсюда. Раньше ответ выбрасывали, и профиль оставался с «нет».
+        if (fresh) state.day = fresh;
+        if (onSaved && fresh) onSaved(fresh);
+        else if (fresh) render();
       })
       .catch(function () {
         /* норма всё равно посчитана локально — молчим */
@@ -1062,7 +1095,7 @@
     var m = macros();
     var entries = sortedEntries();
     var advice = KM.weightTrendAdvice(entries, state.profile.goal);
-    var last = entries.length ? entries[entries.length - 1] : null;
+    var last = lastWeighIn();
     var place = state.workout.place;
     var plan = planList()[state.workout.plan] || planList()[0];
     var eaten = eatenTotals();
@@ -1131,7 +1164,9 @@
         last
           ? advice
             ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + " кг/нед"
-            : "запись " + formatDate(last.date)
+            : last.fromDiary
+              ? "запись " + formatDate(last.date)
+              : "из анкеты"
           : "ещё не взвешивался"
       ) +
       "</div>" +
@@ -2672,7 +2707,7 @@
     var eaten = eatenTotals();
     var entries = sortedEntries();
     var advice = KM.weightTrendAdvice(entries, p.goal);
-    var last = entries.length ? entries[entries.length - 1] : null;
+    var last = lastWeighIn();
     var name = state.day && state.day.firstName ? state.day.firstName : "";
     var workouts = state.day ? state.day.workoutsTotal : null;
 
@@ -2760,7 +2795,11 @@
           metric(
             "Вес",
             last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "нет",
-            last ? "запись " + formatDate(last.date) : "ещё не взвешивался"
+            last
+              ? last.fromDiary
+                ? "запись " + formatDate(last.date)
+                : "из анкеты"
+              : "ещё не взвешивался"
           ) +
           metric(
             "Тренд",
