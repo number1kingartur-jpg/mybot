@@ -791,12 +791,22 @@
       noticeHtml() +
       heroCard +
       '<div class="tiles">' +
-      tile("pick-photo", "photo", "Фото еды", true) +
-      tile("add-text-form", "text", "Текстом") +
+      // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
+      // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
+      (online
+        ? tile("pick-photo", "photo", "Фото еды", true) + tile("add-text-form", "text", "Текстом")
+        : tile("add-manual-form", "text", "Ввести вручную", true) + tile("nutrition-tab", "photo", "Почему без фото")) +
       tile("water-250", "water", "+250 мл") +
       "</div>" +
       (state.addMode === "text" ? card(textForm()) : "") +
-      (state.busy ? card('<p class="lead">Считаю… обычно 3–10 секунд.</p>') : "") +
+      (state.addMode === "manual" ? card(manualForm()) : "") +
+      (state.busy
+        ? card(
+            '<p class="lead">' +
+              (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
+              '</p><p class="muted">Обычно 3–10 секунд.</p>'
+          )
+        : "") +
       frequentRow() +
       streakStrip() +
       '<div class="grid-2">' +
@@ -2547,6 +2557,11 @@
       }
       case "water-250":
         return addWater(250);
+      case "nutrition-tab":
+        // Объяснение, почему фото недоступно, живёт в «Питании»: там же кнопка
+        // «Проверить связь» и вся диагностика
+        state.nutTab = "eaten";
+        return go("nutrition");
       case "save-goal-weight":
         persist();
         state.notice = { kind: "ok", text: "Цель сохранена." };
