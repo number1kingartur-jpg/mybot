@@ -43,20 +43,20 @@ export function channelPostSlots(): number[] {
   return [10];
 }
 
-/** Дни недели (cron: 0=вс, 1=пн …). По умолчанию пн/ср/пт. Пусто = каждый день. */
+/** Дни недели (cron: 0=вс, 1=пн …). По умолчанию каждый день. */
 export function channelPostDays(): string | undefined {
   const raw = process.env.CHANNEL_POST_DAYS?.trim();
   if (raw === "*" || raw === "daily") return undefined;
   if (raw) return raw;
-  return "1,3,5";
+  return undefined;
 }
 
 const POST_SLOTS = channelPostSlots();
 
-/** Постов в день. По умолчанию 1 (один слот). */
+/** Постов в день. По умолчанию 3 — по одному в каждый слот. */
 const POSTS_PER_DAY = Math.max(
   1,
-  parseInt(process.env.CHANNEL_POSTS_PER_DAY ?? "1", 10) || 1
+  parseInt(process.env.CHANNEL_POSTS_PER_DAY ?? "3", 10) || 3
 );
 
 /** Для статуса / логов */
