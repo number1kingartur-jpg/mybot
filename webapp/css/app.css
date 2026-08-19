@@ -216,10 +216,16 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-display);
-  font-size: 15px;
   color: var(--gold);
   flex-shrink: 0;
+}
+
+/* Крупнее самого viewBox: фигура короны занимает по высоте 12,5 клетки из 24, и при
+   размере «как у иконок» знак выходил заметно мельче квадрата, в котором стоит.
+   Проверено снимком в обеих темах при обычной и удвоенной плотности экрана. */
+.appbar__mark svg {
+  width: 26px;
+  height: 26px;
 }
 
 .appbar__titles {
