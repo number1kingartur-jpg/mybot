@@ -1266,6 +1266,7 @@
 
   function renderMenu() {
     var d = menuDay();
+    var target = macros();
     var logged = mealsToday().map(function (m) {
       return m.name;
     });
@@ -1281,16 +1282,43 @@
       card(
         cardHead(
           d.title,
-          d.personal
-            ? "Порции пересчитаны под твою норму " + d.basedOn + " ккал"
+          d.personal && target
+            ? "Меню " +
+              d.total.kcal +
+              " ккал при норме " +
+              target.kcal +
+              ". БЖУ от состава блюд, норма от веса"
             : "Порции под " + d.basedOn + " ккал. Задай свои данные в «Норме», и пересчитаю точнее",
           GOAL_WORD[state.profile.goal]
         ) +
-          figure(d.total.kcal, " ккал", "за день по всем приёмам") +
+          figure(
+            d.total.kcal,
+            " ккал",
+            target ? "меню · норма " + target.kcal : "за день по всем приёмам"
+          ) +
           '<div class="bars">' +
-          bar("Белок", "#cba968", d.total.proteinG + " г", (d.total.proteinG * 4 * 100) / d.total.kcal) +
-          bar("Жиры", "#b08d45", d.total.fatG + " г", (d.total.fatG * 9 * 100) / d.total.kcal) +
-          bar("Углеводы", "#8a7a52", d.total.carbsG + " г", (d.total.carbsG * 4 * 100) / d.total.kcal) +
+          (target
+            ? bar(
+                "Белок",
+                "#cba968",
+                d.total.proteinG + " / " + target.proteinG + " г",
+                (d.total.proteinG * 100) / target.proteinG
+              ) +
+              bar(
+                "Жиры",
+                "#b08d45",
+                d.total.fatG + " / " + target.fatG + " г",
+                (d.total.fatG * 100) / target.fatG
+              ) +
+              bar(
+                "Углеводы",
+                "#8a7a52",
+                d.total.carbsG + " / " + target.carbsG + " г",
+                (d.total.carbsG * 100) / target.carbsG
+              )
+            : bar("Белок", "#cba968", d.total.proteinG + " г", (d.total.proteinG * 4 * 100) / d.total.kcal) +
+              bar("Жиры", "#b08d45", d.total.fatG + " г", (d.total.fatG * 9 * 100) / d.total.kcal) +
+              bar("Углеводы", "#8a7a52", d.total.carbsG + " г", (d.total.carbsG * 4 * 100) / d.total.kcal)) +
           "</div>",
         { gold: true }
       ) +
@@ -1300,9 +1328,16 @@
       }).join("") +
       '<p class="note"><strong>' +
       esc(d.hint) +
-      "</strong> Нажми на позицию, и откроются три замены такой же калорийности: " +
-      "цифры приёма и дня пересчитаются под выбранное. Кнопка «Съел» пишет приём в дневник, " +
-      "и дальше видно, сколько осталось на день.</p>"
+      "</strong> «Сегодня» показывает, что уже съел. Меню это план: калории подогнаны " +
+      "под норму, белок и углеводы идут из блюд, не из формулы." +
+      (target
+        ? " Сейчас в меню " +
+          d.total.proteinG +
+          " г белка при норме " +
+          target.proteinG +
+          " г: это состав курицы и творога, не вторая норма."
+        : "") +
+      " Кнопка «Съел» пишет приём в дневник, и остаток смотри на «Сегодня».</p>"
     );
   }
 
