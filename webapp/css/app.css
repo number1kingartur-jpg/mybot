@@ -1211,6 +1211,84 @@ select.input {
   white-space: nowrap;
 }
 
+/* Маршрут дня: четыре пункта, которые надо закрыть до вечера. */
+.route {
+  margin: 0;
+  padding: 0;
+}
+
+.route__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.route__item:first-child {
+  padding-top: 2px;
+}
+
+.route__item:last-child {
+  border-bottom: 0;
+  padding-bottom: 2px;
+}
+
+.route__tick {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.route__item.is-on .route__tick {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.route__item.is-on .route__tick::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--ink);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+
+.route__text {
+  min-width: 0;
+}
+
+.route__name {
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.route__hint {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.route__item.is-on .route__name {
+  color: var(--text-soft);
+}
+
 .meal__name {
   min-width: 0;
   flex: 1;

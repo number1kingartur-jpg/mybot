@@ -53,7 +53,8 @@
     diary: { date: today(), weightKg: "" },
     entries: [],
     lastOrm: null,
-    result: null
+    result: null,
+    restDays: {}
   };
 
   /**
@@ -114,7 +115,8 @@
           setupDone: state.setupDone,
           migrated: state.migrated,
           theme: state.theme,
-          goalWeightKg: state.goalWeightKg
+          goalWeightKg: state.goalWeightKg,
+          restDays: state.restDays
         })
       );
     } catch (e) {
@@ -136,6 +138,7 @@
       if (saved.lastOrm) state.lastOrm = saved.lastOrm;
       if (THEMES[saved.theme]) state.theme = saved.theme;
       if (saved.goalWeightKg) state.goalWeightKg = saved.goalWeightKg;
+      if (saved.restDays && typeof saved.restDays === "object") state.restDays = saved.restDays;
       state.setupDone = Boolean(saved.setupDone);
       state.migrated = Boolean(saved.migrated);
       hadSavedProfile = Boolean(saved.profile);
@@ -1132,6 +1135,7 @@
     return (
       noticeHtml() +
       heroCard +
+      routeCard() +
       '<div class="tiles">' +
       // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
       // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
@@ -1202,6 +1206,172 @@
           " Правь норму в «Питании» и держи новую цифру две недели.</p>"
         : "")
     );
+  }
+
+  function daysBetween(from, to) {
+    var a = new Date(from + "T00:00:00");
+    var b = new Date(to + "T00:00:00");
+    return Math.round((b.getTime() - a.getTime()) / 86400000);
+  }
+
+  function workoutLoggedToday() {
+    var d = serverToday();
+    var list = state.day && state.day.workoutsRecent ? state.day.workoutsRecent : [];
+    var i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i].date === d) return list[i];
+    }
+    return null;
+  }
+
+  function isRestToday() {
+    return Boolean(state.restDays && state.restDays[serverToday()]);
+  }
+
+  /**
+   * Вес в маршруте дня: не каждый день, 3–4 раза в неделю, как на карточке дневника.
+   * Открыт, если записи в дневнике нет или она старше двух дней.
+   */
+  function weightDue() {
+    var last = lastWeighIn();
+    if (!last || !last.fromDiary || !last.date) return true;
+    return daysBetween(last.date, serverToday()) > 2;
+  }
+
+  function dayRoute() {
+    var eaten = eatenTotals();
+    var w = water();
+    var last = lastWeighIn();
+    var trained = workoutLoggedToday();
+    var rest = isRestToday();
+    var foodOn = eaten.count >= 1;
+    var waterOn = w.ml >= w.targetMl && w.targetMl > 0;
+    var moveOn = Boolean(trained) || rest;
+    var massOn = !weightDue();
+
+    return [
+      {
+        id: "food",
+        name: "Еда",
+        hint: foodOn
+          ? eaten.count +
+            " " +
+            plural(eaten.count, "приём", "приёма", "приёмов") +
+            ", " +
+            eaten.kcal +
+            " ккал"
+          : "ещё нет записей",
+        on: foodOn,
+        action: "route-food",
+        cta: "Записать еду"
+      },
+      {
+        id: "water",
+        name: "Вода",
+        hint: waterOn ? "норма закрыта" : fmtWater(w.ml) + " из " + fmtWater(w.targetMl),
+        on: waterOn,
+        action: "route-water",
+        cta: "+250 мл"
+      },
+      {
+        id: "move",
+        name: "Тренировка",
+        hint: trained ? trained.name : rest ? "сегодня отдых" : "ещё не отмечена",
+        on: moveOn,
+        action: "route-workout",
+        cta: "Открыть план"
+      },
+      {
+        id: "weight",
+        name: "Вес",
+        hint: last && last.fromDiary
+          ? last.weightKg + " кг" + (last.date === serverToday() ? ", сегодня" : ", " + formatDate(last.date))
+          : "из анкеты, запиши утром",
+        on: massOn,
+        action: "route-weight",
+        cta: "Записать вес"
+      }
+    ];
+  }
+
+  function routeCard() {
+    var items = dayRoute();
+    var done = items.filter(function (x) {
+      return x.on;
+    }).length;
+    var next = items.filter(function (x) {
+      return !x.on;
+    })[0];
+    var closed = done === items.length;
+
+    return card(
+      cardHead(
+        closed ? "День закрыт" : "Маршрут дня",
+        closed
+          ? "Еда, вода, движение и вес на месте."
+          : "Следующее: " + next.name.toLowerCase() + ".",
+        done + " из " + items.length
+      ) +
+        '<div class="route">' +
+        items
+          .map(function (x) {
+            return (
+              '<button type="button" class="route__item' +
+              (x.on ? " is-on" : "") +
+              '" data-action="' +
+              x.action +
+              '"><span class="route__tick" aria-hidden="true"></span><span class="route__text"><span class="route__name">' +
+              esc(x.name) +
+              '</span><span class="route__hint">' +
+              esc(x.hint) +
+              "</span></span></button>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        (closed
+          ? ""
+          : '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--primary" data-action="' +
+            next.action +
+            '">' +
+            esc(next.cta) +
+            "</button>" +
+            (next.id === "move"
+              ? '<button class="btn btn--outline btn--slim" data-action="route-rest">Сегодня отдых</button>'
+              : "") +
+            "</div>")
+    );
+  }
+
+  function markRestDay() {
+    var d = serverToday();
+    if (!state.restDays) state.restDays = {};
+    if (state.restDays[d]) delete state.restDays[d];
+    else state.restDays[d] = true;
+    persist();
+    haptic("light");
+    render();
+  }
+
+  function openRouteFood() {
+    var eaten = eatenTotals();
+    if (eaten.count) {
+      state.nutTab = "eaten";
+      return go("nutrition");
+    }
+    if (online) {
+      var pick = document.getElementById("photoInput");
+      if (pick) {
+        pick.value = "";
+        haptic("light");
+        pick.click();
+        return;
+      }
+    }
+    state.addMode = "text";
+    state.notice = null;
+    haptic("light");
+    render();
   }
 
   /** Активная программа из базы бота: тот же план, по которому он ведёт в чате. */
@@ -3357,6 +3527,18 @@
         return openDay(shiftDate(viewDate(), -1));
       case "day-next":
         return openDay(shiftDate(viewDate(), 1));
+      case "route-food":
+        return openRouteFood();
+      case "route-water":
+        return addWater(250);
+      case "route-workout":
+        if (isRestToday() && !workoutLoggedToday()) return markRestDay();
+        return go("workout");
+      case "route-rest":
+        return markRestDay();
+      case "route-weight":
+        state.profTab = "progress";
+        return go("profile");
       case "workout-done":
         return markWorkoutDone();
       case "program-activate":
