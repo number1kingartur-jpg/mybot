@@ -588,6 +588,10 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
       name: displayName(food),
       grams: Math.round(grams),
       kcal: Math.round(food.kcal100 * mul),
+      proteinG: Math.round(food.p100 * mul * 10) / 10,
+      fatG: Math.round(food.f100 * mul * 10) / 10,
+      carbsG: Math.round(food.c100 * mul * 10) / 10,
+      slug: foodSlug(food.variantOf ?? food.name),
       source: similar ? "similar" : food.fromBarcode ? "barcode" : food.fromLabel ? "label" : "catalog",
     });
   }

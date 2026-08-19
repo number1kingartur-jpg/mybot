@@ -12,8 +12,10 @@ import {
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium,
   type NutritionProfile, type Lift, type Program,
 } from "./db";
-import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError } from "./meal";
-import { dropPending, putPending, takePending } from "./pending";
+import {
+  analyzeMealPhoto, analyzeMealText, editMeal, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError,
+} from "./meal";
+import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, foodSlug, macrosFromItems, matchFood } from "./foods";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
@@ -695,6 +697,45 @@ async function handleApi(
     });
     console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
     json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, found.date) });
+    return;
+  }
+
+  /**
+   * Правка разбора до записи: убрать позицию или поправить вес.
+   *
+   * Без неё выбор был между «согласиться с выдумкой» и «начать заново»: модель
+   * приписала к одному яблоку салат, которого на кадре нет, и снять только его
+   * человек не мог. Считает по-прежнему сервер — клиент присылает номер позиции
+   * и вес, но не калории.
+   */
+  if (req.method === "POST" && urlPath === "/api/meal/pending") {
+    const body = JSON.parse(await readBody(req)) as {
+      token?: string;
+      drop?: number;
+      index?: number;
+      grams?: number;
+    };
+    const token = String(body.token ?? "");
+    const found = peekPending(user.id, token);
+    if (!found) {
+      json(res, 410, { error: "pending_gone", message: "Разбор устарел — сфотографируй или напиши заново." });
+      return;
+    }
+    const edit =
+      body.drop !== undefined
+        ? { drop: Number(body.drop) }
+        : { grams: { index: Number(body.index), value: Number(body.grams) } };
+    const meal = editMeal(found.meal, edit);
+    if (!meal) {
+      json(res, 400, { error: "bad_edit", message: "Так поправить нельзя." });
+      return;
+    }
+    updatePending(user.id, token, meal);
+    console.log(
+      `api meal edit: ${body.drop !== undefined ? `убрана позиция ${body.drop}` : `вес ${body.grams} г`}` +
+        `, стало ${meal.kcal} ккал, user=${user.id}`
+    );
+    json(res, 200, { pending: { token, meal, parts: mealPartLines(meal) }, ...dayState(user.id, found.date) });
     return;
   }
 

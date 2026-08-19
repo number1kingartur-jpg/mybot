@@ -67,6 +67,23 @@ export function takePending(userId: number, token: string): PendingMeal | null {
   return found;
 }
 
+/**
+ * Посмотреть разбор, не забирая его: нужно для правки состава до записи.
+ * Токен остаётся живым, потому что после правки человек ещё скажет «да».
+ */
+export function peekPending(userId: number, token: string): PendingMeal | null {
+  sweep();
+  return store.get(key(userId, token)) ?? null;
+}
+
+/** Заменить разбор поправленным. Токен и срок те же: это та же тарелка. */
+export function updatePending(userId: number, token: string, meal: MealAnalysis): boolean {
+  const found = store.get(key(userId, token));
+  if (!found) return false;
+  found.meal = meal;
+  return true;
+}
+
 export function dropPending(userId: number, token: string): void {
   store.delete(key(userId, token));
 }

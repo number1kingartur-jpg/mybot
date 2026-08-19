@@ -32,6 +32,10 @@ export const IDENTIFY_PROMPT =
   "6. Если блюдо составное и нетиповое — разложи на компоненты с граммами " +
   "(мясо, крупа или хлеб, яйцо, масло).\n" +
   "7. grams — вес готового на тарелке, 20–800 г на компонент. " +
+  "Вес оценивай по опоре в кадре, а не по «типичной порции»: ладонь без пальцев 9–11 см, " +
+  "ладонь с пальцами 18–19 см, вилка 20 см, чайная ложка 14 см, обычная тарелка 26 см, " +
+  "кружка 9 см. Целый фрукт, лежащий в ладони и не шире её, мелкий или средний: " +
+  "яблоко 100–150 г, а не 200. " +
   "Бытовые меры из описания переводи в граммы: столовая ложка — 15 г (масло 14, мёд 21, " +
   "сухие хлопья 12), чайная — 5 г, мерная ложка (скуп) протеина — 30 г, креатина — 5 г, " +
   "банан — 120 г, яйцо — 55 г, стакан — 250 мл. Добавки без калорий (креатин) — grams как есть.\n" +
@@ -52,6 +56,11 @@ export const IDENTIFY_PROMPT =
   "а в note напиши «тара пустая, посчитан полный объём».\n" +
   "12. «не еда» — только если на кадре действительно нет еды и напитков (человек, техника, " +
   "пейзаж). Незнакомая упаковка — это еда: назови, что видишь, и поставь свои цифры.\n" +
+  "13. Перечисляй только то, что видно на кадре, и ничего не добавляй «для полноты картины». " +
+  "Гарнир, салат, зелень, хлеб, соус, напиток идут в состав лишь тогда, когда они на снимке. " +
+  "Одно яблоко в руке — это одна позиция, а не яблоко с салатом. Стол, скатерть, салфетка, " +
+  "посуда, приборы, ткань, растения и декор — не еда. Сомневаешься, еда это или фон — не добавляй: " +
+  "лишняя позиция портит расчёт сильнее, чем недостающая.\n" +
   '\nЕсли не еда: {"items":[],"note":"не еда: что на кадре"}';
 
 const GEMINI_MODELS = [
@@ -107,6 +116,17 @@ export interface MealPart {
   name: string;
   grams: number;
   kcal: number;
+  /**
+   * БЖУ позиции. Держим у каждой строки, а не только в итоге: человек правит
+   * состав до записи (убирает лишнее, меняет вес), и без разбивки по позициям
+   * пересчёт итога пришлось бы делать заново через справочник — а часть цифр
+   * приходит с упаковки и в справочнике их нет.
+   */
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  /** Картинка позиции: нужна, чтобы после правки состава сменить миниатюру приёма. */
+  slug?: string;
   /**
    * Откуда цифра: `catalog` — из справочника, `barcode` — из открытой базы по
    * штрихкоду, `label` — с упаковки по словам модели, `similar` — марки нет
@@ -168,6 +188,104 @@ export function mealPartLines(meal: MealAnalysis): string[] {
     similar: " (по похожему продукту)",
   };
   return meal.parts.map((p) => `${p.name}, ${p.grams} г, ${p.kcal} ккал${FROM[p.source]}`);
+}
+
+/** Правка разбора до записи: убрать позицию или поправить её вес. */
+export interface MealEdit {
+  /** Номер позиции на выброс. */
+  drop?: number;
+  /** Новый вес позиции: `{ index, value }`. */
+  grams?: { index: number; value: number };
+}
+
+/** Заголовок приёма из состава: те же правила, что при разборе. */
+function titleFromParts(parts: MealPart[]): string {
+  const lines = parts.map((p) => `${p.name} ~${p.grams} г`);
+  const shown = lines.slice(0, 4);
+  const hidden = lines.length - shown.length;
+  const title = hidden > 0 ? `${shown.join(", ")} и ещё ${hidden}` : shown.join(", ");
+  return title.charAt(0).toUpperCase() + title.slice(1);
+}
+
+/**
+ * Состав из справочника, но пометка «часть цифр с упаковки» может стать ложной
+ * после выброса той самой позиции — примечание пересобирается по остатку.
+ */
+function noteFromParts(parts: MealPart[], was: string | undefined): string {
+  if (parts.some((p) => p.source === "similar")) {
+    return "Точной марки я не знаю, счёт по похожему продукту. Сверь с этикеткой.";
+  }
+  if (parts.some((p) => p.source === "barcode")) {
+    return "Продукт найден по штрихкоду в открытой базе, цифры его собственные.";
+  }
+  if (parts.some((p) => p.source === "label")) {
+    return "Часть цифр — с упаковки, а не из справочника. Проверь этикетку.";
+  }
+  // Осталась только домашняя еда: прежний текст про жарку и масло всё ещё верен.
+  return was && was.startsWith("Справочник RASCHET") ? was : "Справочник RASCHET. Точность ±15%.";
+}
+
+/**
+ * Правка разобранного приёма перед записью в дневник.
+ *
+ * Зачем: распознавание — догадка, и ошибается она двумя способами. Может
+ * приписать вес «типичной порции» вместо того, что в кадре, а может назвать
+ * продукт, которого на снимке нет вообще: на фото одного яблока в руке пришло
+ * «яблоко 180 г, салат 180 г». До этой правки человеку оставалось согласиться с
+ * выдумкой или отказаться от всего разбора и набрать состав руками.
+ *
+ * Пересчёт идёт по позициям, а не через справочник заново: часть цифр приходит
+ * с упаковки или из базы по штрихкоду, и второй раз их взять негде. Вес меняет
+ * КБЖУ позиции пропорционально — то же самое сделал бы справочник.
+ *
+ * Возвращает `null` на недопустимой правке: пустой приём записывать нечего.
+ */
+export function editMeal(meal: MealAnalysis, edit: MealEdit): MealAnalysis | null {
+  const parts = (meal.parts ?? []).map((p) => ({ ...p }));
+  if (!parts.length) return null;
+
+  if (edit.drop !== undefined) {
+    const i = Math.trunc(edit.drop);
+    if (!Number.isInteger(i) || i < 0 || i >= parts.length) return null;
+    // Последнюю позицию не выбрасываем: это отказ от разбора целиком, и для него
+    // есть своя кнопка — иначе в дневник ушёл бы приём на ноль калорий.
+    if (parts.length === 1) return null;
+    parts.splice(i, 1);
+  } else if (edit.grams) {
+    const i = Math.trunc(edit.grams.index);
+    const value = Math.round(edit.grams.value);
+    if (!Number.isInteger(i) || i < 0 || i >= parts.length) return null;
+    if (!(value >= 1 && value <= 3000)) return null;
+    const part = parts[i];
+    const ratio = value / (part.grams || value);
+    parts[i] = {
+      ...part,
+      grams: value,
+      kcal: Math.round(part.kcal * ratio),
+      proteinG: Math.round(part.proteinG * ratio * 10) / 10,
+      fatG: Math.round(part.fatG * ratio * 10) / 10,
+      carbsG: Math.round(part.carbsG * ratio * 10) / 10,
+    };
+  } else {
+    return null;
+  }
+
+  const sum = (pick: (p: MealPart) => number) => parts.reduce((acc, p) => acc + pick(p), 0);
+  // Миниатюра — по самой калорийной позиции: убрали лишнее, и картинка приёма
+  // должна стать картинкой того, что осталось.
+  const main = parts.reduce((a, b) => (b.kcal > a.kcal ? b : a));
+
+  return {
+    ...meal,
+    name: titleFromParts(parts),
+    kcal: Math.round(sum((p) => p.kcal)),
+    proteinG: Math.round(sum((p) => p.proteinG)),
+    fatG: Math.round(sum((p) => p.fatG)),
+    carbsG: Math.round(sum((p) => p.carbsG)),
+    note: noteFromParts(parts, meal.note),
+    slug: main.slug ?? meal.slug,
+    parts,
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -442,7 +560,16 @@ async function geminiMeal(parts: object[], what: string): Promise<MealAnalysis> 
           break;
         }
         try {
-          return await mealFromIdentifyOnline(raw);
+          const meal = await mealFromIdentifyOnline(raw);
+          // Состав в лог обязателен. Без него на вопрос «откуда в приёме салат,
+          // которого не было на снимке» ответить нечем: в логе оставались только
+          // калории после подтверждения, и разбор случая шёл догадками.
+          console.log(
+            `gemini ok ${model} ${what}: ` +
+              (meal.parts ?? []).map((p) => `${p.name} ${p.grams} г`).join(" + ") +
+              ` = ${meal.kcal} ккал`
+          );
+          return meal;
         } catch (e) {
           if (!(e instanceof MealPhotoUnreadableError)) throw e;
           // Отказ, где модель назвала продукты, полезнее «не еда»: если сильные

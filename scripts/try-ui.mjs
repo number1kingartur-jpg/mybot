@@ -48,6 +48,23 @@ if (!server) {
   process.exit(1);
 }
 
-const url = `http://127.0.0.1:${process.env.PORT}/#tgWebAppData=${encodeURIComponent(initData(USER_ID))}`;
+const signed = encodeURIComponent(initData(USER_ID));
+const url = `http://127.0.0.1:${process.env.PORT}/#tgWebAppData=${signed}`;
 console.log("ОТКРОЙ:");
 console.log(url);
+
+/**
+ * Файл-переход для headless-снимков.
+ *
+ * Подпись сессии остаётся внутри скрипта и не уезжает в команды оболочки:
+ * браузеру достаточно открыть локальный файл, дальше он сам попадёт в приложение
+ * с готовой подписью. Шаг проверки задаётся параметром `step`.
+ */
+const step = process.env.TRY_STEP ?? "";
+fs.writeFileSync(
+  path.join(tmp, "open.html"),
+  `<!DOCTYPE html><meta charset="utf-8">` +
+    `<meta http-equiv="refresh" content="0;url=http://127.0.0.1:${process.env.PORT}` +
+    `/_probe.html?data=${signed}${step}">`
+);
+console.log(`снимок: .tmp-try/open.html (step=${step || "нет"})`);

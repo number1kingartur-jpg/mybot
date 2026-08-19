@@ -260,6 +260,13 @@ window.KM_API = (function () {
     rejectMeal: function (token) {
       return request("POST", "/api/meal/reject", { token: token });
     },
+    /* Правка разбора до записи: убрать позицию или поправить её вес. */
+    dropPart: function (token, index) {
+      return request("POST", "/api/meal/pending", { token: token, drop: index });
+    },
+    partGrams: function (token, index, grams) {
+      return request("POST", "/api/meal/pending", { token: token, index: index, grams: grams });
+    },
     food: function (name, grams) {
       return request("POST", "/api/meal/food", { name: name, grams: grams });
     },

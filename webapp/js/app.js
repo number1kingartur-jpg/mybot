@@ -541,6 +541,46 @@
   }
 
   /**
+   * Правка разбора: убрать позицию или поправить вес.
+   *
+   * Считает сервер и возвращает поправленный разбор целиком — клиент не трогает
+   * калории даже у себя на экране, иначе цифра в карточке и цифра в записи
+   * разошлись бы на округлении.
+   */
+  function editPendingPart(call) {
+    var p = state.pending;
+    if (!p || !online) return;
+    state.busy = "food";
+    state.notice = null;
+    render();
+    call(p.token)
+      .then(function (data) {
+        state.day = data;
+        state.busy = null;
+        state.pending = data && data.pending ? data.pending : null;
+        haptic("light");
+        render();
+      })
+      .catch(function (err) {
+        state.pending = null;
+        mealError(err);
+      });
+  }
+
+  function dropPendingPart(index) {
+    editPendingPart(function (token) {
+      return KM_API.dropPart(token, index);
+    });
+  }
+
+  function setPendingPartGrams(index, grams) {
+    if (!(grams >= 1 && grams <= 3000)) return render();
+    editPendingPart(function (token) {
+      return KM_API.partGrams(token, index, grams);
+    });
+  }
+
+  /**
    * «Не то» → разбор выбрасывается, а состав подставляется в поле ввода:
    * поправить одну позицию быстрее, чем набирать тарелку заново.
    */
@@ -561,6 +601,43 @@
     state.pending = null;
     haptic("light");
     render();
+  }
+
+  /**
+   * Строка состава: правится на месте, а не «принять или отказаться».
+   *
+   * Вес модель угадывает по виду, поэтому это поле ввода, а не текст. Крестик
+   * нужен для другой ошибки — придуманной позиции: на снимке одного яблока
+   * приходило «яблоко 180 г, салат 180 г», и убрать только салат было нельзя.
+   * У последней позиции крестика нет: отказ от всего разбора — это кнопка ниже.
+   */
+  function partRowHtml(x, i, total) {
+    return (
+      '<li class="edit__row"><span class="edit__name">' +
+      esc(x.name) +
+      // Помечаем только исключение. Слово «справочник» у каждой строки ничего не
+      // сообщало — оно там всегда, — но глушило тот случай, ради которого
+      // пометка и нужна: цифры прочитаны с упаковки.
+      (x.source === "label" ? '<span class="edit__from">цифры с упаковки</span>' : "") +
+      (x.source === "barcode" ? '<span class="edit__from">найден по штрихкоду</span>' : "") +
+      (x.source === "similar" ? '<span class="edit__from">по похожему продукту</span>' : "") +
+      "</span>" +
+      '<span class="edit__g"><input class="edit__input" type="number" inputmode="numeric" ' +
+      'min="1" max="3000" step="5" value="' +
+      x.grams +
+      '" data-part-g="' +
+      i +
+      '" aria-label="Вес в граммах" /> г</span>' +
+      '<span class="edit__kcal">' +
+      x.kcal +
+      " ккал</span>" +
+      (total > 1
+        ? '<button type="button" class="edit__del" data-part-drop="' +
+          i +
+          '" aria-label="Убрать позицию">×</button>'
+        : '<span class="edit__del edit__del--off" aria-hidden="true"></span>') +
+      "</li>"
+    );
   }
 
   /**
@@ -597,27 +674,13 @@
         m.carbsG +
         " г</span></span>" +
         "</div>" +
-        '<p class="lead">Это оно? В дневник запишу только после твоего «да».</p>' +
+        '<p class="lead">Это оно? В дневник запишу только после твоего «да». ' +
+        "Вес поправь прямо в строке, лишнее убери крестиком.</p>" +
         (parts.length
-          ? '<ul class="log log--tight">' +
+          ? '<ul class="edit">' +
             parts
-              .map(function (x) {
-                return (
-                  '<li><span class="meal__name">' +
-                  esc(x.name) +
-                  '<span class="meal__macro">' +
-                  x.grams +
-                  " г" +
-                  // Помечаем только исключение. Слово «справочник» у каждой строки
-                  // ничего не сообщало — оно там всегда, — но глушило тот случай,
-                  // ради которого пометка и нужна: цифры прочитаны с упаковки.
-                  (x.source === "label" ? " · цифры с упаковки" : "") +
-                  (x.source === "barcode" ? " · найден по штрихкоду" : "") +
-                  (x.source === "similar" ? " · по похожему продукту" : "") +
-                  '</span></span><span class="log__value">' +
-                  x.kcal +
-                  " ккал</span></li>"
-                );
+              .map(function (x, i) {
+                return partRowHtml(x, i, parts.length);
               })
               .join("") +
             "</ul>"
@@ -2847,6 +2910,10 @@
     var portion = t.closest("[data-portion]");
     if (portion) return scaleLastMeal(Number(portion.getAttribute("data-portion")));
 
+    // Крестик у позиции разбора: убрать то, чего на снимке не было
+    var partDrop = t.closest("[data-part-drop]");
+    if (partDrop) return dropPendingPart(Number(partDrop.getAttribute("data-part-drop")));
+
     var chip = t.closest(".chip");
     if (chip) return onSeg(chip);
 
@@ -3066,9 +3133,19 @@
   // Слушаем на document, а не на #view: событие change от файлового поля в некоторых
   // WebView не всплывает до промежуточного контейнера
   document.addEventListener("change", function (ev) {
-    if (!ev.target || ev.target.id !== "photoInput") return;
-    var file = ev.target.files && ev.target.files[0];
-    ev.target.value = ""; // чтобы повторный выбор того же файла снова дал событие
+    var t = ev.target;
+    if (!t) return;
+
+    // Вес позиции в разборе. Слушаем change, а не input: пересчёт идёт на сервере,
+    // и запрос на каждую набранную цифру означал бы три запроса вместо одного.
+    if (t.hasAttribute && t.hasAttribute("data-part-g")) {
+      setPendingPartGrams(Number(t.getAttribute("data-part-g")), Number(t.value));
+      return;
+    }
+
+    if (t.id !== "photoInput") return;
+    var file = t.files && t.files[0];
+    t.value = ""; // чтобы повторный выбор того же файла снова дал событие
     if (file) addMealPhoto(file);
   });
 

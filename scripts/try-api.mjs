@@ -105,6 +105,30 @@ if (process.argv.includes("--no-confirm")) {
   process.exit(0);
 }
 
+// Правка состава до записи. Проверяется именно этот путь: модель приписала к
+// одному яблоку салат, и человек должен снять лишнюю позицию, а не весь разбор.
+let live = pending;
+const dropIdx = process.argv.indexOf("--drop");
+if (dropIdx > 0) {
+  const res = await post("/api/meal/pending", { token: pending.token, drop: Number(process.argv[dropIdx + 1]) });
+  console.log(`\nСНЯТА ПОЗИЦИЯ: HTTP ${res.status}`);
+  live = res.body?.pending ?? live;
+  console.log(`  стало: ${live.meal.name} — ${live.meal.kcal} ккал`);
+  for (const line of live.parts ?? []) console.log(`  · ${line}`);
+}
+const gramsIdx = process.argv.indexOf("--grams");
+if (gramsIdx > 0) {
+  const res = await post("/api/meal/pending", {
+    token: pending.token,
+    index: Number(process.argv[gramsIdx + 1]),
+    grams: Number(process.argv[gramsIdx + 2]),
+  });
+  console.log(`\nПОПРАВЛЕН ВЕС: HTTP ${res.status}`);
+  live = res.body?.pending ?? live;
+  console.log(`  стало: ${live.meal.name} — ${live.meal.kcal} ккал`);
+  for (const line of live.parts ?? []) console.log(`  · ${line}`);
+}
+
 const ok = await post("/api/meal/confirm", { token: pending.token });
 console.log(`\nПОДТВЕРЖДЕНИЕ: HTTP ${ok.status}`);
 console.log(`  в дневнике: ${ok.body?.meal?.name} — ${ok.body?.meal?.kcal} ккал, id ${ok.body?.mealId}`);
