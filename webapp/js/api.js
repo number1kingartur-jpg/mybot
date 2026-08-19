@@ -236,7 +236,10 @@ window.KM_API = (function () {
       return request("GET", "/api/foods");
     },
     photo: function (file) {
-      return compress(file, 1024, 0.72)
+      // 1400 px и 0,82 вместо 1024 и 0,72: у домашней тарелки хватало и меньшего,
+      // но на упаковке нужно прочитать состав и КБЖУ мелким шрифтом — там кадр
+      // терял именно те цифры, за которыми пришли. Вес растёт до ~300 КБ, лимит 12 МБ.
+      return compress(file, 1400, 0.82)
         .then(function (b64) {
           return { b64: b64, mime: "image/jpeg" };
         })

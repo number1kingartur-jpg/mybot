@@ -189,7 +189,15 @@ check(
 
 const notFood = fromModel('{"items":[],"note":"не еда: ноутбук"}');
 check("не еда остаётся не едой", notFood.error !== undefined);
-check("причина «не еда» доходит до человека", /ноутбук/.test(notFood.error?.seen ?? ""), notFood.error?.seen);
+check("причина «не еда» доходит до человека", /ноутбук/.test(notFood.error?.saw ?? ""), notFood.error?.saw);
+check("«не еда» помечена причиной", notFood.error?.reason === "not_food", notFood.error?.reason);
+// В поле ввода уходит только состав. Иначе человек правит «не еда: ноутбук»
+// вместо того, чтобы написать блюдо, — это дольше, чем набрать с нуля.
+check("описание кадра не подставляется в ввод", !notFood.error?.seen, notFood.error?.seen);
+
+const emptyWithNote = fromModel('{"items":[],"note":"снято слишком близко, тарелка не видна"}');
+check("пустой список без «не еда» — другая причина", emptyWithNote.error?.reason === "no_foods", emptyWithNote.error?.reason);
+check("заметка модели не идёт в ввод", !emptyWithNote.error?.seen, emptyWithNote.error?.seen);
 
 // ── Справочник цел ───────────────────────────────────────────────────────────
 check("арахисовая паста не путается с пастой отварной", matchFood("арахисовая паста")?.name === "Арахисовая паста");

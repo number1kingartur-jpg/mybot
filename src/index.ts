@@ -2900,11 +2900,14 @@ async function processMealPhoto(
       // Если модель что-то увидела, подставляем это в подсказку: человеку остаётся
       // поправить вес, а не набирать состав с нуля.
       const seen = e instanceof MealPhotoUnreadableError ? e.seen : "";
+      const saw = e instanceof MealPhotoUnreadableError && e.reason === "not_food" ? e.saw : "";
       userMsg = seen
         ? `⚠️ Вижу: ${seen}. В цифры не перевёл.\n\n<b>Поправь и пришли текстом:</b>\n<code>${seen}</code>`
-        : `⚠️ Не разобрал блюдо — не нашёл в справочнике или плохо видно.\n\n` +
-          `<b>Напиши текстом</b> (точнее):\n` +
-          `<code>лосось 150 г, рис 200 г, салат</code>`;
+        : saw
+          ? `⚠️ На кадре еды не вижу: ${saw}.\n\nСфотографируй тарелку или упаковку — либо напиши текстом:\n<code>лосось 150 г, рис 200 г</code>`
+          : `⚠️ Не разобрал блюдо — не нашёл в справочнике или плохо видно.\n\n` +
+            `<b>Напиши текстом</b> (точнее):\n` +
+            `<code>лосось 150 г, рис 200 г, салат</code>`;
     } else if (errMsg.includes("GROQ_API_KEY not set") || errMsg.includes("OPENROUTER_API_KEY not set") || errMsg.includes("API_KEY")) {
       userMsg =
         `⚠️ <b>Нет рабочего ключа анализа еды.</b>\n\n` +

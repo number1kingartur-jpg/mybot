@@ -83,6 +83,21 @@ function weekKey(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Отказ распознавания в текст для человека. Разные причины — разные действия:
+ * «еду вижу, цифры не собрал» решается правкой текста, «еды на кадре нет» —
+ * новым снимком. Один общий совет «сними ближе» на второе не работает.
+ */
+function photoFailMessage(e: MealPhotoUnreadableError): string {
+  if (e.seen) return `Вижу: ${e.seen}. В цифры не перевёл — проверь и запиши текстом.`;
+  if (e.reason === "not_food") {
+    return e.saw
+      ? `На кадре еды не вижу: ${e.saw}. Сфотографируй тарелку или упаковку.`
+      : "На кадре еды не вижу. Сфотографируй тарелку или упаковку.";
+  }
+  return "Не разобрал, что на фото. Сними ближе и при свете или добавь текстом.";
+}
+
 function json(res: http.ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -617,9 +632,7 @@ async function handleApi(
         json(res, 422, {
           error: "unreadable",
           seen: e.seen || undefined,
-          message: e.seen
-            ? `Вижу: ${e.seen}. В цифры не перевёл — проверь и запиши текстом.`
-            : "Не разобрал, что на фото. Сними ближе и при свете или добавь текстом.",
+          message: photoFailMessage(e),
         });
         return;
       }

@@ -101,13 +101,23 @@ export interface MealAnalysis {
 }
 
 export class MealPhotoUnreadableError extends Error {
-  /** Что модель всё-таки увидела: этим можно заполнить ввод текстом, а не упереться в отказ. */
+  /** Почему не вышло: `not_food`, `no_match`, `no_foods`, `invalid_json`. */
+  readonly reason: string;
+  /**
+   * Список продуктов, годный для подстановки в поле ввода текстом: человеку
+   * остаётся поправить вес. Пусто, если подставлять нечего — иначе в поле
+   * попадёт комментарий модели, и правка станет дольше, чем набор с нуля.
+   */
   readonly seen: string;
+  /** Свободное описание кадра — только для текста ошибки, не для ввода. */
+  readonly saw: string;
 
-  constructor(reason: string, seen = "") {
+  constructor(reason: string, seen = "", saw = "") {
     super(`photo_unreadable:${reason}`);
     this.name = "MealPhotoUnreadableError";
+    this.reason = reason;
     this.seen = seen.slice(0, 120);
+    this.saw = saw.slice(0, 120);
   }
 }
 
@@ -237,7 +247,14 @@ export function mealFromIdentify(raw: string): MealAnalysis {
     }
   } catch { /* use items path */ }
 
-  if (!parsed.items.length) throw new MealPhotoUnreadableError("no_foods", parsed.note ?? "");
+  if (!parsed.items.length) {
+    // Заметка модели — это комментарий, а не состав: в поле ввода она не идёт.
+    // «не еда» отделяем от «еда есть, но не разобрал»: это разные советы человеку.
+    const note = (parsed.note ?? "").trim();
+    const notFood = /^не\s*еда/i.test(note);
+    const saw = notFood ? note.replace(/^не\s*еда\s*:?\s*/i, "") : note;
+    throw new MealPhotoUnreadableError(notFood ? "not_food" : "no_foods", "", saw);
+  }
 
   // Что модель увидела — на случай отказа: человеку нужен путь дальше, а не тупик.
   const seen = parsed.items.map((i) => `${i.name} ${i.grams} г`).join(", ");
