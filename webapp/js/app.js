@@ -1522,13 +1522,15 @@
    * по картинке нужно в списке, но пустой квадрат хуже монограммы, а грузить
    * сотню файлов ради проверки существования нельзя.
    */
-  function thumb(slug, title) {
+  function thumb(slug, title, folder) {
     var letter = esc(String(title || "?").trim().charAt(0).toUpperCase());
     return (
       '<span class="thumb" aria-hidden="true">' +
       letter +
       (slug
-        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="img/food/' +
+        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="img/' +
+          esc(folder || "food") +
+          "/" +
           esc(slug) +
           '.webp" onerror="this.remove()" />'
         : "") +
@@ -2379,14 +2381,22 @@
 
   function exerciseHtml(e) {
     var goal = workoutGoal();
+    var slug = KM_PLANS.slug(e);
     return (
-      '<div class="acc"><button class="acc__head" data-acc><span><span class="acc__title">' +
+      '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
+      thumb(slug, e.name, "ex") +
+      '<span class="acc__text"><span class="acc__title">' +
       esc(e.name) +
       '</span><span class="acc__sub">' +
       esc(KM_PLANS.scheme(e, goal)) +
       " · " +
       esc(e.short) +
       '</span></span><span class="acc__sign">+</span></button><div class="acc__body">' +
+      (slug
+        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="img/ex/' +
+          esc(slug) +
+          '.webp" onerror="this.parentNode.remove()" /></div>'
+        : "") +
       '<span class="eyebrow section__label">Как делать</span><ol class="steps-list">' +
       e.steps
         .map(function (s) {

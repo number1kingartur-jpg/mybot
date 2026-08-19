@@ -352,7 +352,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   // Картинки блюд не меняются: имя файла считается из названия продукта. Неделя
   // кэша важнее суток — в справочнике их сотня, и на мобильной сети каждый
   // повторный заход иначе тянет их заново.
-  const maxAge = urlPath.startsWith("/img/food/") ? 604800 : 86400;
+  const maxAge = urlPath.startsWith("/img/food/") || urlPath.startsWith("/img/ex/") ? 604800 : 86400;
 
   // WebView Telegram держит старый js даже при no-cache — на iOS это проверено
   // на живом устройстве: правка была в сети, а на экране оставалась прошлая

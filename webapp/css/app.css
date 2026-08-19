@@ -751,6 +751,35 @@ select.input {
   background: var(--fill-1);
 }
 
+.acc--ex .acc__head {
+  align-items: flex-start;
+}
+
+.acc--ex .thumb {
+  margin-top: 2px;
+}
+
+.acc__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.shot {
+  margin: 0 0 14px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--fill-2);
+  aspect-ratio: 1;
+}
+
+.shot__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .acc__head {
   display: flex;
   align-items: center;

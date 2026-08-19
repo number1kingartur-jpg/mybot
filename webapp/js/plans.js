@@ -430,6 +430,29 @@ var KM_PLANS = (function () {
     return DOSE[e.name] || { sets: 3, reps: 10 };
   }
 
+  var TRANSLIT = {
+    а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ж: "zh", з: "z", и: "i", й: "y",
+    к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u",
+    ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e",
+    ю: "yu", я: "ya"
+  };
+
+  function slug(e) {
+    return String(e.name || "")
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/[-–—]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split("")
+      .map(function (ch) {
+        return TRANSLIT[ch] != null ? TRANSLIT[ch] : ch;
+      })
+      .join("")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
   /*
    * Схема подходов под цель.
    *
@@ -517,6 +540,7 @@ var KM_PLANS = (function () {
       if (level === "train" && place === "home") return [HOME_TRAIN_A, HOME_TRAIN_B];
       return place === "gym" ? [GYM_A, GYM_B] : [HOME_A, HOME_B];
     },
+    slug: slug,
     scheme: scheme,
     harder: function (e) {
       return HARDER[e.name] || "";

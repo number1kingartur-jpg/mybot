@@ -19,6 +19,7 @@ import {
   enduranceNote,
   SEX_NOTE,
   exerciseHarder,
+  exerciseSlug,
 } from "../dist/simple.js";
 
 let failed = 0;
@@ -125,6 +126,22 @@ check(
   progressionRule("gym", "cut").includes("вес на снаряде держи"),
   progressionRule("gym", "cut")
 );
+
+const EX_DIR = path.join("webapp", "img", "ex");
+const seenSlug = new Set();
+for (const level of LEVELS) {
+  for (const place of PLACES) {
+    for (const plan of plansFor(place, level)) {
+      for (const e of plan.items) {
+        const slug = exerciseSlug(e);
+        check(`${e.name}: слаг`, slug === APP.slug(e), `бот ${slug}, приложение ${APP.slug(e)}`);
+        if (seenSlug.has(slug)) continue;
+        seenSlug.add(slug);
+        check(`${e.name}: картинка`, fs.existsSync(path.join(EX_DIR, `${slug}.webp`)), slug);
+      }
+    }
+  }
+}
 
 if (failed) {
   console.error(`check-plans: ${failed} расхождений`);

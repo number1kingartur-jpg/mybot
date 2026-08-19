@@ -2,6 +2,8 @@
 // Аудитория — люди без опыта: каждое упражнение с пошаговой инструкцией,
 // частыми ошибками, облегчением и ступенью усложнения. Дозировка считается от цели.
 
+import { foodSlug } from "./foods";
+
 export interface SimpleExercise {
   name: string;
   short: string;       // одна строка «что это» для карточки тренировки
@@ -627,4 +629,9 @@ export function exerciseVideoUrl(e: SimpleExercise): string {
 
 export function isDirectVideo(url: string): boolean {
   return url.includes("watch?v=") || url.includes("youtu.be/");
+}
+
+/** Имя файла картинки: та же транслитерация, что у блюд. */
+export function exerciseSlug(e: SimpleExercise): string {
+  return foodSlug(e.name);
 }
