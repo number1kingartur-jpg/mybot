@@ -179,10 +179,15 @@ function appRow(): { text: string; web_app?: { url: string } }[][] {
  */
 const APP_ONLY = Boolean(MINIAPP_URL) && process.env.APP_ONLY !== "0";
 
-const APP_KEYBOARD = {
-  keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: appUrl() } }]] : [],
-  resize_keyboard: true,
-};
+// Нижняя широкая web_app-кнопка на iPhone открывает Mini App без initData:
+// страница грузится, /api/state не вызывается, человек видит пустой локальный
+// дневник. Постоянный вход — Menu Button (setChatMenuButton) и кнопка в сообщении.
+const APP_KEYBOARD = APP_ONLY
+  ? { remove_keyboard: true as const }
+  : {
+      keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: appUrl() } }]] : [],
+      resize_keyboard: true,
+    };
 
 // ── Keyboards ──────────────────────────────────────────────────────────────
 const FULL_MAIN_KEYBOARD = {
@@ -753,11 +758,14 @@ async function sendAppWelcome(
     `🏋️ тренировка на сегодня и программа по неделям\n` +
     `🧮 1ПМ и таблица процентов\n` +
     `⚖️ вес, тренд и личный профиль\n\n` +
-    `<i>Кнопка ниже и «⚡️ Открыть KINGMODE» в меню — это одно и то же.</i>`,
+    `<i>Открой кнопкой ниже или «KINGMODE» слева от поля ввода. Это одно окно.</i>`,
     { reply_markup: kb, ...HTML }
   );
   if (MINIAPP_URL) {
-    await ctx.reply("Кнопка внизу всегда под рукой 👇", { reply_markup: APP_KEYBOARD });
+    await ctx.reply(
+      "Нижнюю широкую кнопку убрал: на iPhone она открывала приложение без дневника.",
+      { reply_markup: APP_KEYBOARD }
+    );
   }
 }
 

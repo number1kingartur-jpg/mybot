@@ -2917,7 +2917,32 @@
     profile: renderProfile
   };
 
+  /** Нижняя web_app-клавиатура на iPhone: SDK есть, подписи нет. Нельзя
+   *  показывать локальный дневник: человек принимает его за настоящий. */
+  function telegramUnsigned() {
+    if (KM_API.available()) return false;
+    var d = KM_API.diag ? KM_API.diag() : null;
+    if (!d) return false;
+    return Boolean(d.sdk || (d.platform && d.platform !== "неизвестен"));
+  }
+
+  function unsignedGate() {
+    return card(
+      cardHead("Это окно без доступа к дневнику", "Открой заново из сообщения бота") +
+        "<p class=\"lead\">Широкая кнопка внизу чата на iPhone не передаёт подпись Telegram. " +
+        "Цифры здесь будут пустыми или чужими. Закрой окно и нажми «Открыть KINGMODE» в сообщении " +
+        "или «KINGMODE» слева от поля ввода.</p>"
+    );
+  }
+
   function render() {
+    if (telegramUnsigned()) {
+      view.innerHTML = '<div class="screen">' + unsignedGate() + "</div>";
+      titleEl.textContent = "KINGMODE";
+      tabbar.hidden = true;
+      if (tg && tg.BackButton) tg.BackButton.hide();
+      return;
+    }
     view.innerHTML = '<div class="screen">' + SCREENS[state.screen]() + "</div>";
     var tab = TABS.filter(function (t) {
       return t[0] === state.screen;
