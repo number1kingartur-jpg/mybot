@@ -166,11 +166,6 @@ function appUrl(): string {
   return MINIAPP_URL ?? "";
 }
 
-function appRow(): { text: string; web_app?: { url: string } }[][] {
-  if (!MINIAPP_URL) return [];
-  return [[{ text: "⚡️ Приложение", web_app: { url: appUrl() } }]];
-}
-
 /**
  * Режим лаунчера: бот не дублирует приложение, а открывает его.
  * Включён по умолчанию, когда адрес приложения известен. `APP_ONLY=0` возвращает
@@ -179,20 +174,13 @@ function appRow(): { text: string; web_app?: { url: string } }[][] {
  */
 const APP_ONLY = Boolean(MINIAPP_URL) && process.env.APP_ONLY !== "0";
 
-// Нижняя широкая web_app-кнопка на iPhone открывает Mini App без initData:
-// страница грузится, /api/state не вызывается, человек видит пустой локальный
-// дневник. Постоянный вход — Menu Button (setChatMenuButton) и кнопка в сообщении.
-const APP_KEYBOARD = APP_ONLY
-  ? { remove_keyboard: true as const }
-  : {
-      keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: appUrl() } }]] : [],
-      resize_keyboard: true,
-    };
+// Reply-клавиатура с web_app на iPhone открывает Mini App без initData.
+// Этой кнопки больше нет ни в лаунчере, ни в полном меню.
+const APP_KEYBOARD = { remove_keyboard: true as const };
 
 // ── Keyboards ──────────────────────────────────────────────────────────────
 const FULL_MAIN_KEYBOARD = {
   keyboard: [
-    ...appRow(),
     [{ text: "📝 Записать тренировку" }, { text: "📔 Сегодня" }],
     [{ text: "📊 Прогресс" }, { text: "🏆 Рекорды" }],
     [{ text: "📋 Программа" }, { text: "🍗 Питание" }],
@@ -213,7 +201,6 @@ const EXERCISE_EMOJI: Record<string, string> = {
 
 const FULL_SIMPLE_KEYBOARD = {
   keyboard: [
-    ...appRow(),
     [{ text: "🏋️ Тренировка на сегодня" }, { text: "📈 Мой прогресс" }],
     [{ text: "🍗 Питание" }, { text: "⚖️ Вес тела" }],
     [{ text: "⚔️ Челлендж" }, { text: "📸 Еда" }],
@@ -743,7 +730,11 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
  * расходится с приложением при каждой правке.
  */
 async function sendAppWelcome(
-  ctx: { reply: (t: string, o?: object) => Promise<unknown> },
+  ctx: {
+    reply: (t: string, o?: object) => Promise<{ message_id: number }>;
+    api: { deleteMessage: (chatId: number, messageId: number) => Promise<unknown> };
+    chat: { id: number };
+  },
   name: string
 ) {
   const kb = new InlineKeyboard();
@@ -758,14 +749,16 @@ async function sendAppWelcome(
     `🏋️ тренировка на сегодня и программа по неделям\n` +
     `🧮 1ПМ и таблица процентов\n` +
     `⚖️ вес, тренд и личный профиль\n\n` +
-    `<i>Открой кнопкой ниже или «KINGMODE» слева от поля ввода. Это одно окно.</i>`,
+    `<i>Открой кнопкой ниже или «KINGMODE» слева от поля ввода.</i>`,
     { reply_markup: kb, ...HTML }
   );
-  if (MINIAPP_URL) {
-    await ctx.reply(
-      "Нижнюю широкую кнопку убрал: на iPhone она открывала приложение без дневника.",
-      { reply_markup: APP_KEYBOARD }
-    );
+  // Убрать широкую клавиатуру можно только сообщением. Сразу удаляю его,
+  // чтобы в чате не оставалась служебная строка.
+  const strip = await ctx.reply("\u2060", { reply_markup: APP_KEYBOARD });
+  try {
+    await ctx.api.deleteMessage(ctx.chat.id, strip.message_id);
+  } catch {
+    /* клавиатура уже снята, строка останется только если Telegram не дал удалить */
   }
 }
 
