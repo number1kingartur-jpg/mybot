@@ -115,6 +115,16 @@ check(
   TRAIN_PLANS.home[0].items[0].name === "Приседания до параллели",
   TRAIN_PLANS.home[0].items[0].name
 );
+check(
+  "зал: ступени разные",
+  plansFor("gym", "start")[0].items[0].name !== plansFor("gym", "train")[0].items[0].name,
+  plansFor("gym", "train")[0].items[0].name
+);
+check(
+  "дом: ступени разные",
+  plansFor("home", "start")[0].items[0].name !== plansFor("home", "train")[0].items[0].name,
+  plansFor("home", "train")[0].items[0].name
+);
 
 const squat = SIMPLE_PLANS.home[0].items[0];
 check("набор: 4 подхода", schemeFor(squat, "bulk").startsWith("4 подхода"), schemeFor(squat, "bulk"));

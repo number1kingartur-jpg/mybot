@@ -845,7 +845,7 @@
               ["start", "С нуля"],
               ["train", "Уже тренируюсь"]
             ]),
-            "С нуля: стул, стена, колени. Уже тренируюсь: полный присед, опора, одна нога."
+            "С нуля: дома стул и стена, в зале жим лежа. Уже тренируюсь: полный присед, болгарские, жим стоя."
           ) +
           '<div class="btn-stack" style="margin-top:18px">' +
           '<button class="btn btn--primary" data-action="setup-done">Готово</button>' +
@@ -873,6 +873,12 @@
     if (!state.entries.length) state.entries.push({ date: today(), weightKg: Math.round(w * 10) / 10 });
     persist();
     syncProfile();
+    // Место и ступень иначе останутся только на устройстве: loadDay потом
+    // перетрёт их значением бота по умолчанию.
+    workoutTouched = true;
+    if (online) {
+      KM_API.saveSettings({ place: state.workout.place, level: workoutLevel() }).catch(function () {});
+    }
     haptic("medium");
     go("home");
   }
@@ -1133,6 +1139,7 @@
           : "ещё не взвешивался"
       ) +
       "</div>" +
+      waterHomeChips() +
       programCard() +
       card(
         cardHead(
@@ -1141,7 +1148,9 @@
             ? workoutLevel() === "train"
               ? "Дома, свой вес"
               : "Дома, с нуля"
-            : "В зале, гантели и блок",
+            : workoutLevel() === "train"
+              ? "В зале, гантели"
+              : "В зале, с нуля",
           plan.items.length + " " + plural(plan.items.length, "упражнение", "упражнения", "упражнений")
         ) +
           '<p class="lead">' +
@@ -1486,6 +1495,7 @@
         ? '<p class="note note--plain">Открыт прошлый день, здесь только просмотр. Новые приёмы ' +
           "пишутся в сегодняшний.</p>"
         : addOrBusy(quota)) +
+      (isToday ? waterCard() : "") +
       mealsListCard(meals, isToday) +
       '<p class="note note--plain">В оценке по фото продукты определяет модель, а ' +
       "калории берутся из справочника. Ошибка порции легко даёт ±15–20%, " +
@@ -1613,7 +1623,13 @@
     var q = String(state.foodQuery || "").trim().toLowerCase();
     var list = state.foods
       .filter(function (f) {
-        return !q || f.name.toLowerCase().indexOf(q) !== -1;
+        if (!q) return true;
+        if (f.name.toLowerCase().indexOf(q) !== -1) return true;
+        var als = f.aliases || [];
+        for (var i = 0; i < als.length; i++) {
+          if (String(als[i]).toLowerCase().indexOf(q) !== -1) return true;
+        }
+        return false;
       })
       .slice(0, 10);
 
@@ -2341,7 +2357,9 @@
             ? level === "train"
               ? "Дома · свой вес, уже не с нуля"
               : "Дома · без инвентаря, с нуля"
-            : "В зале · гантели и блок",
+            : level === "train"
+              ? "В зале · гантели, уже не с нуля"
+              : "В зале · гантели и блок, с нуля",
           plan.items.length +
             " " +
             plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
@@ -2520,8 +2538,14 @@
    * Вода за сегодня. С сервером — общая цифра с ботом; без сервера — только на
    * устройстве. Ориентир: 35 мл на кг, от свежего веса из дневника, а не из анкеты.
    */
+  function waterToday() {
+    return Boolean(state.day && state.day.water && state.day.date === (state.day.today || serverToday()));
+  }
+
   function water() {
-    if (state.day && state.day.water) return state.day.water;
+    // После просмотра вчерашнего дня state.day ещё вчерашний, пока не придёт
+    // сегодня. Показывать и писать ту воду нельзя: +250 уедет не в тот день.
+    if (waterToday()) return state.day.water;
     var last = sortedEntries().slice(-1)[0];
     var kg = last ? last.weightKg : num(state.profile.weightKg) || 0;
     return {
@@ -2530,6 +2554,20 @@
       basedOnKg: kg || null,
       local: true
     };
+  }
+
+  function waterHomeChips() {
+    var w = water();
+    return (
+      '<div class="chips chips--wrap" style="margin:0 0 14px">' +
+      [250, 500, 750]
+        .map(function (ml) {
+          return '<button type="button" class="chip" data-water="' + ml + '">+' + ml + " мл</button>";
+        })
+        .join("") +
+      (w.ml > 0 ? '<button type="button" class="chip" data-water="-250">−250 мл</button>' : "") +
+      "</div>"
+    );
   }
 
   function fmtWater(ml) {
@@ -2646,7 +2684,7 @@
       "</div>";
 
     if (state.profTab === "progress") {
-      return noticeHtml() + tabs + goalWeightCard() + renderDiary();
+      return noticeHtml() + tabs + goalWeightCard() + recentWorkoutsCard() + renderDiary();
     }
     if (state.profTab === "look") {
       return noticeHtml() + tabs + themeCard() + aboutCard();
@@ -2770,7 +2808,7 @@
   function addWater(ml) {
     haptic("light");
     if (state.day) {
-      KM_API.addWater(ml, state.day.date)
+      KM_API.addWater(ml)
         .then(function (data) {
           state.day = data;
           render();
@@ -2782,9 +2820,39 @@
       return;
     }
     var key = today();
-    state.localWater[key] = Math.max(0, (state.localWater[key] || 0) + ml);
+    state.localWater[key] = Math.max(0, Math.min(15000, (state.localWater[key] || 0) + ml));
     persist();
     render();
+  }
+
+  function recentWorkoutsCard() {
+    var list = state.day && state.day.workoutsRecent ? state.day.workoutsRecent : [];
+    if (!list.length) {
+      return card(
+        cardHead("Тренировки", "Пока нет записей") +
+          '<p class="lead">Отметь план в «Тренировке», и даты появятся здесь.</p>'
+      );
+    }
+    return card(
+      cardHead(
+        "Тренировки",
+        "Последние " + list.length,
+        String(state.day.workoutsTotal || list.length)
+      ) +
+        '<ul class="log">' +
+        list
+          .map(function (w) {
+            return (
+              '<li><span class="log__date">' +
+              esc(formatDate(w.date)) +
+              '</span><span class="log__value">' +
+              esc(w.name) +
+              "</span></li>"
+            );
+          })
+          .join("") +
+        "</ul>"
+    );
   }
 
   function formatDate(iso) {

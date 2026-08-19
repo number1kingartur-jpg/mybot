@@ -7,7 +7,7 @@ import {
   addMeal, removeMeal, scaleMeal, getMeals, mealTotals, mealStreak, frequentMeals,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
-  addWorkout, getAllWorkouts, checkPr,
+  addWorkout, getAllWorkouts, getWorkouts, checkPr,
   saveProgram, getActiveProgram, advanceProgramDay,
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium,
   type NutritionProfile, type Lift, type Program,
@@ -255,6 +255,10 @@ function dayState(userId: number, date: string) {
             : "start",
     },
     workoutsTotal: getAllWorkouts(userId).length,
+    workoutsRecent: getWorkouts(userId, undefined, 8)
+      .slice()
+      .reverse()
+      .map((w) => ({ date: w.date, name: w.exercise })),
   };
 }
 
@@ -446,13 +450,9 @@ async function handleApi(
       json(res, 400, { error: "bad_ml", message: "Порция: от 1 до 3000 мл." });
       return;
     }
-    const raw = body.date == null ? "" : String(body.date);
-    const day = raw ? safeDate(raw) : date;
-    if (!day) {
-      json(res, 400, { error: "bad_date", message: "Дата должна быть не в будущем." });
-      return;
-    }
-    addWater(user.id, Math.round(ml), day);
+    // Вода пишется только в сегодня: прошлый день в «Съедено» — просмотр еды,
+    // а не правка выпитого. Иначе +250 с главного уезжало во вчера.
+    addWater(user.id, Math.round(ml), date);
     json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;
   }
@@ -572,6 +572,7 @@ async function handleApi(
         defaultG: f.defaultG,
         category: f.category,
         slug: foodSlug(f.name),
+        aliases: f.aliases,
       })),
     });
     return;
