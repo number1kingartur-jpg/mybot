@@ -5,16 +5,21 @@
  * node scripts/fix-channel-photos.mjs --dry-run
  */
 import "dotenv/config";
-import { readFileSync, existsSync, readdirSync } from "fs";
-import { join, extname } from "path";
+import { readFileSync, existsSync } from "fs";
+import { join, extname, basename } from "path";
 import { Blob } from "buffer";
 import { CHANNEL_POSTS } from "../dist/channel/posts.js";
+import { CHANNEL_POSTS_ANALYSIS } from "../dist/channel/posts-analysis.js";
 
 const token = process.env.BOT_TOKEN;
 const channel = process.env.TELEGRAM_CHANNEL_ID?.trim() || "@kingmode_fit";
 const owner = parseInt(process.env.ADMIN_ID || process.env.OWNER_ID || "1775515654", 10);
 const dryRun = process.argv.includes("--dry-run");
-const idsArg = process.argv.slice(2).filter((x) => !x.startsWith("--")).map((x) => parseInt(x, 10)).filter(Boolean);
+const idsArg = process.argv
+  .slice(2)
+  .filter((x) => !x.startsWith("--"))
+  .map((x) => parseInt(x, 10))
+  .filter(Boolean);
 
 const siteUrl = (process.env.KINGMODE_SITE_URL || "https://arturkingfitness.com").replace(/\/$/, "");
 const dmUser = (process.env.KINGMODE_DM_USERNAME || "arturking10").replace(/^@/, "");
@@ -28,6 +33,15 @@ const keyboard = {
       { text: "🤖 Бот", url: `https://t.me/${botUser}?start=kingmode` },
     ],
   ],
+};
+
+/** Дубли текста (#55–58 = #51–54, #89 = плато) — другое фото, тот же смысл. */
+const MSG_ASSET_ID = {
+  55: "log_rule",
+  56: "deload",
+  57: "bands",
+  58: "protein",
+  89: "mini_cut",
 };
 
 /** Старые посты канала (не из очереди CHANNEL_POSTS). */
@@ -48,6 +62,7 @@ const PREFIX_MAP = [
 ];
 
 const ASSETS = join(process.cwd(), "assets", "channel");
+const ALL_POSTS = [...CHANNEL_POSTS, ...CHANNEL_POSTS_ANALYSIS];
 
 const apiJson = (method, params = {}) =>
   fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -74,7 +89,7 @@ function matchPostId(caption) {
 
   let best = null;
   let bestLen = 0;
-  for (const post of CHANNEL_POSTS) {
+  for (const post of ALL_POSTS) {
     const body = norm(postBody(post));
     for (const n of [80, 60, 40, 30]) {
       const head = body.slice(0, n);
@@ -112,31 +127,76 @@ async function fetchChannelPhoto(messageId) {
   return m;
 }
 
+function largestPhotoId(photoSizes) {
+  return photoSizes.slice(-1)[0]?.file_unique_id ?? null;
+}
+
+/** Загрузить файл через sendPhoto в личку админа → получить file_id для editMessageMedia. */
+async function uploadPhotoFileId(path) {
+  const form = new FormData();
+  form.append("chat_id", String(owner));
+  form.append("photo", new Blob([readFileSync(path)]), basename(path));
+  form.append("disable_notification", "true");
+
+  const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+    method: "POST",
+    body: form,
+  }).then((res) => res.json());
+
+  if (!r.ok) return { ok: false, description: r.description };
+
+  const fileId = r.result.photo.slice(-1)[0].file_id;
+  await apiJson("deleteMessage", { chat_id: owner, message_id: r.result.message_id });
+  return { ok: true, fileId };
+}
+
 async function editPhoto(messageId, postId, caption) {
   const path = assetPath(postId);
   if (!path) return { ok: false, description: `no asset for ${postId}` };
 
+  const beforeMsg = await fetchChannelPhoto(messageId);
+  if (!beforeMsg?.photo?.length) {
+    return { ok: false, description: "cannot read current photo" };
+  }
+  const beforeUid = largestPhotoId(beforeMsg.photo);
+
   for (let attempt = 0; attempt < 5; attempt++) {
-    const form = new FormData();
-    form.append("chat_id", channel);
-    form.append("message_id", String(messageId));
-    form.append(
-      "media",
-      JSON.stringify({
+    const up = await uploadPhotoFileId(path);
+    if (!up.ok) return up;
+
+    const r = await apiJson("editMessageMedia", {
+      chat_id: channel,
+      message_id: messageId,
+      media: JSON.stringify({
         type: "photo",
-        media: "attach://photo",
+        media: up.fileId,
         caption: caption.slice(0, 1024),
-      })
-    );
-    form.append("photo", new Blob([readFileSync(path)]), postId + extname(path));
-    form.append("reply_markup", JSON.stringify(keyboard));
+      }),
+      reply_markup: keyboard,
+    });
 
-    const r = await fetch(`https://api.telegram.org/bot${token}/editMessageMedia`, {
-      method: "POST",
-      body: form,
-    }).then((res) => res.json());
+    if (r.ok) {
+      await new Promise((res) => setTimeout(res, 1500));
+      const afterMsg = await fetchChannelPhoto(messageId);
+      const afterUid = largestPhotoId(afterMsg?.photo);
+      if (afterUid && afterUid !== beforeUid) {
+        return { ok: true, changed: true, beforeUid, afterUid };
+      }
+      return {
+        ok: true,
+        unchanged: true,
+        description: `already has this photo (${beforeUid})`,
+      };
+    }
 
-    if (r.ok) return r;
+    if (r.description?.includes("message is not modified")) {
+      return {
+        ok: true,
+        unchanged: true,
+        description: "already has this photo (telegram dedup)",
+      };
+    }
+
     const wait = r.parameters?.retry_after ?? (attempt + 1) * 3;
     if (r.error_code === 429) {
       console.log(`  rate limit, wait ${wait}s...`);
@@ -185,6 +245,7 @@ console.log(`Found ${targets.length} photo posts\n`);
 let ok = 0;
 let skip = 0;
 let fail = 0;
+let unchanged = 0;
 
 for (const { messageId, caption } of targets) {
   const postId = LEGACY_PHOTO[messageId] || matchPostId(caption);
@@ -193,26 +254,34 @@ for (const { messageId, caption } of targets) {
     skip++;
     continue;
   }
-  const path = assetPath(postId);
+  const assetId = MSG_ASSET_ID[messageId] || postId;
+  const path = assetPath(assetId);
   if (!path) {
-    console.log(`#${messageId}: ${postId} — asset missing`);
+    console.log(`#${messageId}: ${assetId} — asset missing`);
     fail++;
     continue;
   }
   if (dryRun) {
-    console.log(`#${messageId} → ${postId} (${path.split(/[/\\]/).pop()})`);
+    const tag = assetId !== postId ? `${postId}→${assetId}` : postId;
+    console.log(`#${messageId} → ${tag} (${path.split(/[/\\]/).pop()})`);
     ok++;
     continue;
   }
-  const r = await editPhoto(messageId, postId, caption);
-  if (r.ok) {
-    console.log(`#${messageId} → ${postId}: OK`);
+  const r = await editPhoto(messageId, assetId, caption);
+  const tag = assetId !== postId ? `${postId}→${assetId}` : postId;
+  if (r.ok && r.changed) {
+    console.log(`#${messageId} → ${tag}: OK (photo changed)`);
     ok++;
+  } else if (r.unchanged) {
+    console.log(`#${messageId} → ${tag}: UNCHANGED — ${r.description}`);
+    unchanged++;
   } else {
-    console.log(`#${messageId} → ${postId}: FAIL ${r.description}`);
+    console.log(`#${messageId} → ${tag}: FAIL ${r.description}`);
     fail++;
   }
   await new Promise((res) => setTimeout(res, 1200));
 }
 
-console.log(`\nDone: ${ok} ok, ${skip} skip, ${fail} fail${dryRun ? " (dry-run)" : ""}`);
+console.log(
+  `\nDone: ${ok} changed, ${unchanged} unchanged, ${skip} skip, ${fail} fail${dryRun ? " (dry-run)" : ""}`
+);

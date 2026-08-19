@@ -2,6 +2,7 @@
 
 import { POST_CLOSINGS } from "./post-closings";
 import { finalizeChannelPosts } from "./validate-posts";
+import { CHANNEL_POSTS_WAVE5 } from "./posts-wave5";
 
 export interface ChannelPost {
   id: string;
@@ -236,8 +237,16 @@ const CHANNEL_POSTS_BASE: ChannelPost[] = [
   ),
 ];
 
-/** Автопост: только базовые посты с твоими фото. Разборы — в posts-analysis.ts, не в очереди. */
-const CHANNEL_POSTS_RAW: ChannelPost[] = [...CHANNEL_POSTS_BASE];
+/**
+ * Автопост: базовые посты с фото + волна 5 (личная фактура).
+ * Волны extra / more / wave4 / bank написаны по старому шаблону и в очередь не входят —
+ * решение по ним отдельное, стандарт текста сменился (Marketing/research/КОНТЕНТ-СИСТЕМА.md).
+ * Разборы — в posts-analysis.ts, тоже не в очереди.
+ */
+const CHANNEL_POSTS_RAW: ChannelPost[] = [
+  ...CHANNEL_POSTS_BASE,
+  ...CHANNEL_POSTS_WAVE5,
+];
 
 /** Уникальная концовка по id — не общий шаблон на все посты. */
 function withClosing(post: ChannelPost): ChannelPost {
