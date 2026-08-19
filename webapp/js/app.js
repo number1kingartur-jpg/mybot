@@ -1124,11 +1124,7 @@
       frequentRow() +
       streakStrip() +
       '<div class="grid-2">' +
-      metric(
-        "Вода",
-        fmtWater(w.ml),
-        w.ml >= w.targetMl ? "норма закрыта" : "из " + fmtWater(w.targetMl)
-      ) +
+      waterMetric() +
       metric(
         "Вес",
         last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "нет",
@@ -2574,6 +2570,65 @@
     return ml >= 1000 ? (Math.round(ml / 100) / 10).toFixed(1).replace(".", ",") + " л" : ml + " мл";
   }
 
+  var waterShownPct = null;
+
+  function waterFillPct(w) {
+    if (!w || !w.targetMl) return 0;
+    return Math.max(0, Math.min(100, (w.ml * 100) / w.targetMl));
+  }
+
+  function glassHtml(w, size) {
+    var from = waterShownPct == null ? waterFillPct(w) : waterShownPct;
+    var empty = from < 2;
+    return (
+      '<div class="glass glass--' +
+      (size || "sm") +
+      (w.ml >= w.targetMl ? " glass--full" : "") +
+      (empty ? " glass--empty" : "") +
+      '" data-glass><div class="glass__shine"></div><div class="glass__fill" style="height:' +
+      from.toFixed(1) +
+      '%"><span class="glass__wave"></span><span class="glass__wave glass__wave--b"></span></div></div>'
+    );
+  }
+
+  function playWaterFill() {
+    var nodes = document.querySelectorAll("[data-glass]");
+    if (!nodes.length) return;
+    var w = water();
+    var to = waterFillPct(w);
+    var from = waterShownPct == null ? to : waterShownPct;
+    waterShownPct = to;
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var fill = el.querySelector(".glass__fill");
+      if (!fill) continue;
+      el.classList.toggle("glass--full", to >= 99.5);
+      el.classList.toggle("glass--empty", to < 2);
+      if (from === to) {
+        fill.style.height = to.toFixed(1) + "%";
+        continue;
+      }
+      fill.style.transition = "none";
+      fill.style.height = from.toFixed(1) + "%";
+      void fill.offsetWidth;
+      fill.style.transition = "";
+      fill.style.height = to.toFixed(1) + "%";
+    }
+  }
+
+  function waterMetric() {
+    var w = water();
+    return (
+      '<div class="metric metric--water">' +
+      glassHtml(w, "sm") +
+      "<div><span class=\"metric__label\">Вода</span><span class=\"metric__value\">" +
+      fmtWater(w.ml) +
+      '</span><span class="metric__sub">' +
+      esc(w.ml >= w.targetMl ? "норма закрыта" : "из " + fmtWater(w.targetMl)) +
+      "</span></div></div>"
+    );
+  }
+
   function waterCard() {
     var w = water();
     var left = w.targetMl - w.ml;
@@ -2585,14 +2640,9 @@
           : "Ориентир " + fmtWater(w.targetMl) + ". Задай вес, и посчитаю точнее",
         w.local ? "на устройстве" : null
       ) +
+        '<div class="glass-row">' +
+        glassHtml(w, "lg") +
         figure(fmtWater(w.ml).replace(/ (мл|л)$/, ""), w.ml >= 1000 ? " л" : " мл", "выпито сегодня") +
-        '<div class="bars">' +
-        bar(
-          "Норма дня",
-          left > 0 ? "#6fa8c7" : "#cba968",
-          fmtWater(w.ml) + " / " + fmtWater(w.targetMl),
-          (w.ml * 100) / w.targetMl
-        ) +
         "</div>" +
         // Перенос обязателен: на узком экране четвёртая кнопка уезжала в скролл
         // и «убрать лишнее» просто не было видно
@@ -3023,6 +3073,7 @@
       if (state.screen === "home" || state.screen === "setup") tg.BackButton.hide();
       else tg.BackButton.show();
     }
+    playWaterFill();
   }
 
   function go(screen) {
