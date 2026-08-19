@@ -294,48 +294,54 @@ async function geminiRequest(apiKey: string, parts: object[], model: string): Pr
   throw new Error(`gemini: no content [${model}]`);
 }
 
-async function geminiVision(imageBase64: string, mime: string): Promise<string> {
+/**
+ * Проход по ключам и моделям — с разбором ответа **внутри** цикла.
+ *
+ * Раньше список моделей перебирался только по ошибкам сети. Но первой кадр
+ * достаётся самой дешёвой модели, и она на понятной бутылке иногда отвечает
+ * HTTP 200 и «не еда»: разбор падал, а сильные модели не спрашивались вовсе —
+ * снаружи это выглядело как «не разбирает вполне понятные фото». Отказ разбора
+ * теперь такой же повод идти дальше по списку, как и 429 или таймаут.
+ */
+async function geminiMeal(parts: object[], what: string): Promise<MealAnalysis> {
   const keys = geminiKeys();
   if (!keys.length) throw new Error("GEMINI_API_KEY not set");
 
   let lastErr = "unknown";
+  let refusal: MealPhotoUnreadableError | undefined;
+
   for (const key of keys) {
     for (const model of GEMINI_MODELS) {
       for (let attempt = 0; attempt < 2; attempt++) {
+        let raw: string;
         try {
-          return await geminiRequest(key, [
-            { text: IDENTIFY_PROMPT },
-            { inline_data: { mime_type: mime, data: imageBase64 } },
-          ], model);
+          raw = await geminiRequest(key, parts, model);
         } catch (e) {
           lastErr = e instanceof Error ? e.message : String(e);
-          console.error("gemini", model, `attempt=${attempt}`, lastErr.slice(0, 100));
-          if (isModelMissing(lastErr)) break;
-          if (isQuotaError(lastErr) && attempt === 0) {
+          console.error("gemini", model, `${what} attempt=${attempt}`, lastErr.slice(0, 100));
+          // Квота отпускает через пару секунд, остальное — сразу к другой модели.
+          if (isQuotaError(lastErr) && !isModelMissing(lastErr) && attempt === 0) {
             await sleep(2500);
             continue;
           }
-          if (!isQuotaError(lastErr) && !isModelMissing(lastErr)) break;
+          break;
+        }
+        try {
+          return mealFromIdentify(raw);
+        } catch (e) {
+          if (!(e instanceof MealPhotoUnreadableError)) throw e;
+          // Отказ, где модель назвала продукты, полезнее «не еда»: если сильные
+          // тоже не справятся, человеку покажем именно его — с составом.
+          if (!refusal || (!refusal.seen && e.seen)) refusal = e;
+          console.error("gemini", model, `${what} отказ=${e.reason}`, (e.seen || e.saw).slice(0, 80));
+          break; // тот же запрос той же модели даст тот же отказ
         }
       }
     }
   }
-  throw new Error(`service_unavailable: ${lastErr}`);
-}
 
-async function geminiText(description: string): Promise<string> {
-  const keys = geminiKeys();
-  if (!keys.length) throw new Error("GEMINI_API_KEY not set");
-  const prompt = `${IDENTIFY_PROMPT}\n\nОписание: ${description}`;
-  let lastErr = "unknown";
-  for (const key of keys) {
-    try {
-      return await geminiRequest(key, [{ text: prompt }], GEMINI_MODELS[0]);
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e);
-    }
-  }
-  throw new Error(lastErr);
+  if (refusal) throw refusal;
+  throw new Error(`service_unavailable: ${lastErr}`);
 }
 
 /** Текст: справочник → Gemini (компоненты) → справочник. */
@@ -349,8 +355,7 @@ export async function analyzeMealText(description: string): Promise<MealAnalysis
     throw new Error("Укажи продукты: лосось 150 г, рис 200 г, салат");
   }
 
-  const raw = await geminiText(description);
-  return mealFromIdentify(raw);
+  return geminiMeal([{ text: `${IDENTIFY_PROMPT}\n\nОписание: ${description}` }], "текст");
 }
 
 /** Фото: кэш → Gemini (компоненты) → справочник КБЖУ. */
@@ -365,8 +370,10 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
 
   const b64 = imageBuffer.toString("base64");
   try {
-    const raw = await geminiVision(b64, mime);
-    const meal = mealFromIdentify(raw);
+    const meal = await geminiMeal([
+      { text: IDENTIFY_PROMPT },
+      { inline_data: { mime_type: mime, data: b64 } },
+    ], "фото");
     setCached(imageBuffer, meal);
     return meal;
   } catch (e) {
