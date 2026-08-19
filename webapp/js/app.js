@@ -1393,10 +1393,10 @@
       '<div style="margin-top:18px">' +
       field(
         "Что съел",
-        '<input class="input" type="text" data-path="mealText" placeholder="лосось 150 г, рис 200 г, салат" value="' +
+        '<textarea class="input" rows="3" data-path="mealText" placeholder="250 мл жидкого белка, 3 банана, 8 ложек овсянки, 2 скупа протеина, 1 ложка арахисовой пасты">' +
           esc(state.mealText) +
-          '" />',
-        "Продукты и граммы. Сначала ищу в справочнике, если не нашёл — разбираю моделью."
+          "</textarea>",
+        "Меры считаю любые: граммы, миллилитры, ложки, скупы, стаканы, штуки — «пол ложки креатина» тоже. Сначала справочник, если продукта в нём нет — модель."
       ) +
       '<button class="btn btn--primary" data-action="add-text">Посчитать и записать</button></div>'
     );

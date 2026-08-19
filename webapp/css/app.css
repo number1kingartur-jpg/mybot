@@ -557,6 +557,12 @@ button {
   appearance: none;
 }
 
+textarea.input {
+  min-height: 88px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .input:focus {
   outline: none;
   border-color: var(--gold);
