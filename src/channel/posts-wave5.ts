@@ -18,20 +18,26 @@ function w5(title: string, body: string, id: string, guideStart?: string): Chann
   return { id, title, body, guideStart };
 }
 
-/** Кадр к каждому посту. Пути от CONTENT/brand/media-archive. */
+/**
+ * Кадр к каждому посту. Пути от CONTENT/brand/media-archive.
+ *
+ * generated/akf-real/* — кадры Артура из архива с заменённой локацией и светом.
+ * Лицо, телосложение, одежда и поза взяты из реального снимка и не меняются;
+ * генерация трогает только фон. Метод описан в Marketing/.cursor/agents/visual-machine.md.
+ */
 const WAVE5_PHOTOS: Record<string, string> = {
-  w5_heat: "generated/akf-2026-08/prog-bg-2-water.png",
-  w5_five_am: "generated/akf-2026-08/sleep-bg-5-clock-night.png",
+  w5_heat: "generated/akf-real/akf-heat-noon.png",
+  w5_five_am: "generated/akf-real/akf-gym-dawn.png",
   w5_no_alcohol: "generated/akf-2026-08/sleep-bg-3-night.png",
   w5_site: "generated/akf-2026-08/akf-rack-dawn.png",
-  w5_discipline: "generated/akf-2026-08/sleep-bg-7-sunrise.png",
-  w5_case_start: "generated/akf-2026-08/prog-bg-8-notebook.png",
+  w5_discipline: "generated/akf-real/akf-viewpoint-fog.png",
+  w5_case_start: "generated/akf-real/akf-basement-gym.png",
   w5_test_first: "generated/akf-2026-08/prog-bg-4-tape.png",
   w5_low_back: "generated/akf-2026-08/sleep-bg-6-gym-dawn.png",
   w5_shoulder: "generated/broll/broll-band-facepull.png",
-  w5_rir: "generated/akf-2026-08/akf-bar-grip.png",
-  w5_steps: "generated/broll/broll-jumprope-track.png",
-  w5_scale_lies: "generated/akf-2026-08/prog-bg-1-cover.png",
+  w5_rir: "generated/akf-real/akf-bench-night.png",
+  w5_steps: "generated/akf-real/akf-beach-sunrise.png",
+  w5_scale_lies: "generated/akf-real/akf-room-morning.png",
   w5_seven_hours: "generated/akf-2026-08/sleep-bg-2-clock.png",
   w5_grip: "generated/broll/broll-kettlebell-hold.png",
   w5_bands: "frames/band-stadium.jpg",

@@ -19,7 +19,7 @@ function w6(title: string, body: string, id: string, guideStart?: string): Chann
 const WAVE6_PHOTOS: Record<string, string> = {
   w6_casein: "generated/nutrition/cottage-cheese-bowl.png",
   w6_animal: "generated/nutrition/eggs-steak-meal.png",
-  w6_plate: "generated/nutrition/high-protein-meal.png",
+  w6_plate: "generated/akf-real/akf-cafe-morning.png",
   w6_whey_need: "generated/nutrition/protein-tub-minimal.png",
   w6_label: "generated/nutrition/protein-label-closeup.png",
   w6_brands: "generated/nutrition/protein-brands-compare.png",
@@ -29,7 +29,7 @@ const WAVE6_PHOTOS: Record<string, string> = {
   w6_water_day: "generated/nutrition/hydration-water-dark.png",
   w6_sauna: "generated/recovery/sauna-steam-dark.png",
   w6_bed: "generated/recovery/sleep-recovery-bed.png",
-  w6_hr: "generated/broll/broll-heart-rate.png",
+  w6_hr: "generated/akf-real/akf-track-sunrise.png",
   w6_belt: "generated/akf-2026-08/prog-bg-7-belt.png",
 };
 
