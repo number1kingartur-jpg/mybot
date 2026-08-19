@@ -254,6 +254,10 @@ check("слаг из названия", foodSlug("Котлета куриная 
 check("слаги не повторяются", new Set(FOODS.map((f) => foodSlug(f.name))).size === FOODS.length);
 const plate = macrosFromText("курица жареная 200 г, рис 150 г");
 check("картинка приёма — по главному продукту", plate?.slug === "kurica-zharenaya", plate?.slug);
+check("зелёное яблоко не красное", matchFood("яблоко зелёное")?.name === "Яблоко зелёное", matchFood("яблоко зелёное")?.name);
+check("зелёное яблоко: слаг", foodSlug("Яблоко зелёное") === "yabloko-zelenoe", foodSlug("Яблоко зелёное"));
+check("просто яблоко остаётся красным", matchFood("яблоко")?.name === "Яблоко", matchFood("яблоко")?.name);
+check("груша не яблоко", matchFood("груша")?.name === "Груша", matchFood("груша")?.name);
 
 // ── Ответ модели по фото упаковки: раньше это был отказ ──────────────────────
 function fromModel(json) {
