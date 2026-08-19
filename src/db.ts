@@ -22,6 +22,8 @@ export interface BodyweightEntry {
   userId: number;
   date: string;        // YYYY-MM-DD
   weightKg: number;
+  /** profile: цифра из анкеты, не взвешивание. user: человек встал на весы. */
+  source?: "profile" | "user";
 }
 
 export interface SessionPlan {
@@ -96,6 +98,7 @@ export interface UserRecord {
   mealRemindMissed?: number;   // сколько напоминаний подряд не привели к записи
   mealRemindPaused?: boolean;  // авто-пауза: не надоедаем тому, кто не отвечает
   ref?: string;                // источник: kingmode, channel, …
+  restDate?: string;           // YYYY-MM-DD: сегодня отмечен отдых в маршруте дня
 }
 
 export interface MealEntry {
@@ -383,12 +386,17 @@ export function advanceProgramDay(userId: number): Program | null {
 
 // ── Bodyweight ────────────────────────────────────────────────────────────────
 /** Дата необязательна: в чате пишется «сегодня», из приложения можно указать день. */
-export function addBodyweight(userId: number, weightKg: number, date?: string): BodyweightEntry {
+export function addBodyweight(
+  userId: number,
+  weightKg: number,
+  date?: string,
+  source: "profile" | "user" = "user"
+): BodyweightEntry {
   const db = load();
   const day = date ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
   // одна запись в день — перезаписываем
   db.bodyweight = db.bodyweight.filter((b) => !(b.userId === userId && b.date === day));
-  const row: BodyweightEntry = { userId, date: day, weightKg };
+  const row: BodyweightEntry = { userId, date: day, weightKg, source };
   db.bodyweight.push(row);
   db.bodyweight.sort((a, b) => a.date.localeCompare(b.date));
   save(db);
@@ -477,7 +485,7 @@ export function setNutrition(chatId: number, profile: NutritionProfile) {
   // Вес в анкете и вес в дневнике жили в разных таблицах: человек писал 80 кг
   // в норме, а карточка «Вес» смотрела дневник и писала «нет».
   if (getBodyweight(chatId, 1).length === 0 && profile.weightKg >= 30) {
-    addBodyweight(chatId, profile.weightKg);
+    addBodyweight(chatId, profile.weightKg, undefined, "profile");
   }
 }
 

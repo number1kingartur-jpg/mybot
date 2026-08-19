@@ -242,7 +242,11 @@ function dayState(userId: number, date: string) {
     visionEnabled: mealVisionEnabled(),
     // Всё остальное состояние человека — одним ответом, чтобы приложение не делало
     // пять запросов на старте
-    bodyweight: getBodyweight(userId, 60).map((b) => ({ date: b.date, weightKg: b.weightKg })),
+    bodyweight: getBodyweight(userId, 60).map((b) => ({
+      date: b.date,
+      weightKg: b.weightKg,
+      source: b.source === "profile" ? "profile" : "user",
+    })),
     program: programState(userId),
     simple: {
       idx: u?.simpleIdx ?? 0,
@@ -259,6 +263,7 @@ function dayState(userId: number, date: string) {
       .slice()
       .reverse()
       .map((w) => ({ date: w.date, name: w.exercise })),
+    restDate: u?.restDate && u.restDate === today() ? u.restDate : null,
   };
 }
 
@@ -508,6 +513,7 @@ async function handleApi(
       if (check.isWeightPr) pr = { kind: "weight", value: session.weightKg };
       else if (check.isE1rmPr) pr = { kind: "e1rm", value: check.e1rm };
     }
+    updateUser(user.id, { restDate: "" });
     const updated = advanceProgramDay(user.id);
     json(res, 200, {
       ok: true,
@@ -541,7 +547,12 @@ async function handleApi(
       sets: 1, reps: 1, weightKg: 0,
       notes: "simple",
     });
-    updateUser(user.id, { simpleIdx: idx + 1, simplePlace: place, simpleLevel: level });
+    updateUser(user.id, {
+      simpleIdx: idx + 1,
+      simplePlace: place,
+      simpleLevel: level,
+      restDate: "",
+    });
     json(res, 200, {
       ok: true,
       done: w.label,
@@ -552,10 +563,16 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/settings") {
-    const body = JSON.parse(await readBody(req)) as { place?: string; level?: string };
-    const patch: { simplePlace?: Place; simpleLevel?: "start" | "train" } = {};
+    const body = JSON.parse(await readBody(req)) as {
+      place?: string;
+      level?: string;
+      rest?: boolean;
+    };
+    const patch: { simplePlace?: Place; simpleLevel?: "start" | "train"; restDate?: string } = {};
     if (body.place === "home" || body.place === "gym") patch.simplePlace = body.place;
     if (body.level === "start" || body.level === "train") patch.simpleLevel = body.level;
+    if (body.rest === true) patch.restDate = date;
+    if (body.rest === false) patch.restDate = "";
     if (Object.keys(patch).length) updateUser(user.id, patch);
     json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;

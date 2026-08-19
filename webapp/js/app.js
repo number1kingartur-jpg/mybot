@@ -356,7 +356,12 @@
     var entries = sortedEntries();
     if (entries.length) {
       var e = entries[entries.length - 1];
-      return { weightKg: e.weightKg, date: e.date, fromDiary: true };
+      return {
+        weightKg: e.weightKg,
+        date: e.date,
+        fromDiary: true,
+        source: e.source === "profile" ? "profile" : "user"
+      };
     }
     var kg = num(state.profile.weightKg);
     if (kg >= 30 && kg <= 250) return { weightKg: kg, date: null, fromDiary: false };
@@ -433,7 +438,9 @@
           state.workout.plan = data.simple.idx % planList().length;
         }
         migrateWeights();
-        seedWeightFromProfile();
+        if (!state.restDays) state.restDays = {};
+        if (data.restDate) state.restDays[data.restDate] = true;
+        else delete state.restDays[data.today || serverToday()];
         // Обратный случай: анкета заполнена в приложении, а в базе бота её нет.
         // Так было всё время, пока подпись не проходила проверку: ответы жили
         // только на устройстве, поэтому бот и норма воды считали по ориентиру
@@ -511,18 +518,6 @@
       .catch(function () {
         /* перенос повторится при следующем открытии — данные на устройстве целы */
       });
-  }
-
-  function seedWeightFromProfile() {
-    if (!state.day || (state.day.bodyweight && state.day.bodyweight.length)) return;
-    var kg = num((state.day.nutrition && state.day.nutrition.weightKg) || state.profile.weightKg);
-    if (!(kg >= 30 && kg <= 250)) return;
-    KM_API.saveWeight(kg)
-      .then(function (data) {
-        state.day = data;
-        render();
-      })
-      .catch(function () {});
   }
 
   function applyMealResult(data, okText) {
@@ -1208,12 +1203,6 @@
     );
   }
 
-  function daysBetween(from, to) {
-    var a = new Date(from + "T00:00:00");
-    var b = new Date(to + "T00:00:00");
-    return Math.round((b.getTime() - a.getTime()) / 86400000);
-  }
-
   function workoutLoggedToday() {
     var d = serverToday();
     var list = state.day && state.day.workoutsRecent ? state.day.workoutsRecent : [];
@@ -1228,48 +1217,51 @@
     return Boolean(state.restDays && state.restDays[serverToday()]);
   }
 
-  /**
-   * Вес в маршруте дня: не каждый день, 3–4 раза в неделю, как на карточке дневника.
-   * Открыт, если записи в дневнике нет или она старше двух дней.
-   */
-  function weightDue() {
-    var last = lastWeighIn();
-    if (!last || !last.fromDiary || !last.date) return true;
-    return daysBetween(last.date, serverToday()) > 2;
+  function dayIsToday() {
+    return !state.day || state.day.date === (state.day.today || serverToday());
   }
 
   function dayRoute() {
-    var eaten = eatenTotals();
+    var eaten = dayIsToday()
+      ? eatenTotals()
+      : { kcal: 0, proteinG: 0, fatG: 0, carbsG: 0, count: 0 };
     var w = water();
     var last = lastWeighIn();
     var trained = workoutLoggedToday();
     var rest = isRestToday();
-    var foodOn = eaten.count >= 1;
-    var waterOn = w.ml >= w.targetMl && w.targetMl > 0;
-    var moveOn = Boolean(trained) || rest;
-    var massOn = !weightDue();
+    var target = macros();
+    var flags = KM.dayRoute({
+      eatenKcal: eaten.kcal,
+      eatenCount: eaten.count,
+      targetKcal: target ? target.kcal : 0,
+      waterMl: w.ml,
+      waterTargetMl: w.targetMl,
+      trainedToday: Boolean(trained),
+      restToday: rest,
+      lastWeight: last,
+      today: serverToday(),
+      profileKg: num(state.profile.weightKg) || 0,
+      weightCount: sortedEntries().length
+    });
 
     return [
       {
         id: "food",
         name: "Еда",
-        hint: foodOn
-          ? eaten.count +
-            " " +
-            plural(eaten.count, "приём", "приёма", "приёмов") +
-            ", " +
-            eaten.kcal +
-            " ккал"
-          : "ещё нет записей",
-        on: foodOn,
+        hint: target
+          ? eaten.kcal + " из " + target.kcal + " ккал"
+          : eaten.count
+            ? eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
+            : "ещё нет записей",
+        on: flags.foodOn,
         action: "route-food",
         cta: "Записать еду"
       },
       {
         id: "water",
         name: "Вода",
-        hint: waterOn ? "норма закрыта" : fmtWater(w.ml) + " из " + fmtWater(w.targetMl),
-        on: waterOn,
+        hint: flags.waterOn ? "норма закрыта" : fmtWater(w.ml) + " из " + fmtWater(w.targetMl),
+        on: flags.waterOn,
         action: "route-water",
         cta: "+250 мл"
       },
@@ -1277,17 +1269,22 @@
         id: "move",
         name: "Тренировка",
         hint: trained ? trained.name : rest ? "сегодня отдых" : "ещё не отмечена",
-        on: moveOn,
+        on: flags.moveOn,
         action: "route-workout",
         cta: "Открыть план"
       },
       {
         id: "weight",
         name: "Вес",
-        hint: last && last.fromDiary
-          ? last.weightKg + " кг" + (last.date === serverToday() ? ", сегодня" : ", " + formatDate(last.date))
-          : "из анкеты, запиши утром",
-        on: massOn,
+        hint:
+          last && last.fromDiary && last.source !== "profile"
+            ? last.weightKg +
+              " кг" +
+              (last.date === serverToday() ? ", сегодня" : ", " + formatDate(last.date))
+            : last
+              ? last.weightKg + " кг из анкеты"
+              : "запиши утром",
+        on: flags.weightOn,
         action: "route-weight",
         cta: "Записать вес"
       }
@@ -1295,6 +1292,9 @@
   }
 
   function routeCard() {
+    if (state.day && !dayIsToday()) {
+      return card(cardHead("Маршрут дня", "Обновляю данные…"));
+    }
     var items = dayRoute();
     var done = items.filter(function (x) {
       return x.on;
@@ -1346,16 +1346,29 @@
   function markRestDay() {
     var d = serverToday();
     if (!state.restDays) state.restDays = {};
-    if (state.restDays[d]) delete state.restDays[d];
-    else state.restDays[d] = true;
+    var on = !state.restDays[d];
+    if (on) state.restDays[d] = true;
+    else delete state.restDays[d];
     persist();
     haptic("light");
     render();
+    if (!state.day) return;
+    KM_API.saveSettings({ rest: on })
+      .then(function (data) {
+        state.day = data;
+        if (data.restDate) state.restDays[data.restDate] = true;
+        else delete state.restDays[d];
+        persist();
+        render();
+      })
+      .catch(function () {});
   }
 
   function openRouteFood() {
-    var eaten = eatenTotals();
-    if (eaten.count) {
+    var food = dayRoute().filter(function (x) {
+      return x.id === "food";
+    })[0];
+    if (food && food.on) {
       state.nutTab = "eaten";
       return go("nutrition");
     }
@@ -1372,6 +1385,17 @@
     state.notice = null;
     haptic("light");
     render();
+  }
+
+  function openRouteWater() {
+    var waterItem = dayRoute().filter(function (x) {
+      return x.id === "water";
+    })[0];
+    if (waterItem && waterItem.on) {
+      state.profTab = "day";
+      return go("profile");
+    }
+    return addWater(250);
   }
 
   /** Активная программа из базы бота: тот же план, по которому он ведёт в чате. */
@@ -2490,6 +2514,8 @@
       .then(function (data) {
         state.day = data;
         state.busy = null;
+        if (state.restDays) delete state.restDays[serverToday()];
+        persist();
         // Дальше очередь A/B снова ведёт бот
         workoutTouched = false;
         state.workout.plan = data.simple.idx % planList().length;
@@ -3530,7 +3556,7 @@
       case "route-food":
         return openRouteFood();
       case "route-water":
-        return addWater(250);
+        return openRouteWater();
       case "route-workout":
         if (isRestToday() && !workoutLoggedToday()) return markRestDay();
         return go("workout");

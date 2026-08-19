@@ -373,6 +373,49 @@ var KM = (function () {
     return calculatePeriodization(input);
   }
 
+  /**
+   * Маршрут дня: четыре пункта, которые надо закрыть.
+   * Еда: 40% нормы, иначе один приём если нормы нет.
+   * Вес: не считаем запись из анкеты и единственную запись, равную весу в профиле.
+   */
+  function daysBetween(from, to) {
+    var a = new Date(from + "T00:00:00");
+    var b = new Date(to + "T00:00:00");
+    return Math.round((b.getTime() - a.getTime()) / 86400000);
+  }
+
+  function weightOpen(input) {
+    var last = input.lastWeight;
+    if (!last || !last.fromDiary || !last.date) return true;
+    if (last.source === "profile") return true;
+    if (
+      input.weightCount === 1 &&
+      input.profileKg &&
+      Math.abs(last.weightKg - input.profileKg) < 0.05
+    ) {
+      return true;
+    }
+    return daysBetween(last.date, input.today) > 2;
+  }
+
+  function dayRoute(input) {
+    var target = input.targetKcal || 0;
+    var foodOn = target > 0 ? input.eatenKcal >= target * 0.4 : input.eatenCount >= 1;
+    var waterOn = input.waterTargetMl > 0 && input.waterMl >= input.waterTargetMl;
+    var moveOn = Boolean(input.trainedToday || input.restToday);
+    var massOn = !weightOpen(input);
+    var done = (foodOn ? 1 : 0) + (waterOn ? 1 : 0) + (moveOn ? 1 : 0) + (massOn ? 1 : 0);
+    return {
+      foodOn: foodOn,
+      waterOn: waterOn,
+      moveOn: moveOn,
+      weightOn: massOn,
+      done: done,
+      total: 4,
+      closed: done === 4
+    };
+  }
+
   return {
     round2_5: round2_5,
     calcOneRm: calcOneRm,
@@ -381,6 +424,7 @@ var KM = (function () {
     mealSplit: mealSplit,
     weightTrendAdvice: weightTrendAdvice,
     buildProgram: buildProgram,
+    dayRoute: dayRoute,
     ACTIVITY_FACTOR: ACTIVITY_FACTOR,
     GOAL_CFG: GOAL_CFG
   };
