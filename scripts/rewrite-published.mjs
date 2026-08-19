@@ -1,15 +1,19 @@
 /**
  * Правка уже опубликованных постов канала на месте: дата публикации сохраняется.
  *
- * Тексты берутся из scripts/rewrite/wave-r.mjs — массив { id, title, text }.
- * Фото-сообщения правятся через editMessageCaption, текстовые — editMessageText.
+ * Тексты берутся из scripts/rewrite/wave-r.mjs, массив { id, title, text }.
+ * Фото-сообщения правятся через editMessageCaption, текстовые через editMessageText.
  *
- *   node scripts/rewrite-published.mjs            — показать план, ничего не менять
- *   node scripts/rewrite-published.mjs --apply    — применить
- *   node scripts/rewrite-published.mjs --apply 51 — применить только к сообщению 51
+ *   node scripts/rewrite-published.mjs             показать план, ничего не менять
+ *   node scripts/rewrite-published.mjs --apply     применить
+ *   node scripts/rewrite-published.mjs --apply 51  применить только к сообщению 51
+ *   node scripts/rewrite-published.mjs --apply --rest
+ *       применить ко всем, кроме тех, где медиа и подпись уже обновлены через
+ *       replace-media.mjs: Telegram отвечает ошибкой на правку без изменений.
  */
 import "dotenv/config";
 import { REWRITES } from "./rewrite/wave-r.mjs";
+import { MEDIA } from "./rewrite/media-r.mjs";
 
 const token = process.env.BOT_TOKEN;
 const channel = process.env.TELEGRAM_CHANNEL_ID?.trim() || "@kingmode_fit";
@@ -31,7 +35,11 @@ const api = (method, params) =>
     body: JSON.stringify(params),
   }).then((r) => r.json());
 
-const targets = only.length ? REWRITES.filter((r) => only.includes(r.id)) : REWRITES;
+const rest = process.argv.includes("--rest");
+const withMedia = new Set(Object.keys(MEDIA).map(Number));
+
+let targets = only.length ? REWRITES.filter((r) => only.includes(r.id)) : REWRITES;
+if (rest) targets = targets.filter((r) => !withMedia.has(r.id));
 
 let tooLong = 0;
 for (const r of targets) {
@@ -50,7 +58,7 @@ console.log(`целей: ${targets.length}, режим: ${apply ? "ПРИМЕН�
 
 if (!apply) {
   for (const r of targets) {
-    console.log(`${r.id} [${r.kind}] ${r.title} — ${r.text.length} симв.`);
+    console.log(`${r.id} [${r.kind}] ${r.title}, ${r.text.length} симв.`);
   }
   process.exit(0);
 }
@@ -64,7 +72,16 @@ for (const r of targets) {
       ? { chat_id: channel, message_id: r.id, text: r.text, link_preview_options: { is_disabled: true } }
       : { chat_id: channel, message_id: r.id, caption: r.text };
 
-  const res = await api(method, payload);
+  // Telegram троттлит правку сообщений и в ответе сам говорит, сколько ждать.
+  // Без этого пауза подбирается наугад и половина партии отваливается на 429.
+  let res = await api(method, payload);
+  for (let tries = 0; !res.ok && res.parameters?.retry_after && tries < 3; tries++) {
+    const wait = res.parameters.retry_after + 1;
+    console.log(`     ${r.id}: лимит, жду ${wait} с`);
+    await new Promise((s) => setTimeout(s, wait * 1000));
+    res = await api(method, payload);
+  }
+
   if (res.ok) {
     ok++;
     console.log(`ok   ${r.id} ${r.title}`);
@@ -72,7 +89,7 @@ for (const r of targets) {
     failed.push({ id: r.id, error: res.description });
     console.error(`FAIL ${r.id} ${r.title}: ${res.description}`);
   }
-  await new Promise((s) => setTimeout(s, 1200));
+  await new Promise((s) => setTimeout(s, 3000));
 }
 
 console.log(`\nготово: ${ok}/${targets.length}`);
