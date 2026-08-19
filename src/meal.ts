@@ -142,7 +142,7 @@ export class MealPhotoUnreadableError extends Error {
 }
 
 /**
- * Состав расчёта строками: «котлета куриная жареная — 150 г, 320 ккал».
+ * Состав расчёта строками: «котлета куриная жареная, 150 г, 320 ккал».
  *
  * Один форматтер на бота и приложение: две копии текста разошлись бы после
  * первой правки, а человек читает их как один ответ одной программы.
@@ -150,8 +150,8 @@ export class MealPhotoUnreadableError extends Error {
 export function mealPartLines(meal: MealAnalysis): string[] {
   if (!meal.parts || !meal.parts.length) return [];
   return meal.parts.map((p) => {
-    const from = p.source === "label" ? " (с упаковки)" : "";
-    return `${p.name.toLowerCase()} — ${p.grams} г, ${p.kcal} ккал${from}`;
+    const from = p.source === "label" ? " (цифры с упаковки)" : "";
+    return `${p.name.toLowerCase()}, ${p.grams} г, ${p.kcal} ккал${from}`;
   });
 }
 

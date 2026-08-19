@@ -9,6 +9,15 @@ var KM = (function () {
     return Math.round(n / 2.5) * 2.5;
   }
 
+  /** Слово при числе. Сокращение «дн.» экономит три знака и звучит как справка. */
+  function plural(n, one, few, many) {
+    var m10 = n % 10;
+    var m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+    return many;
+  }
+
   /* ── 1RM ────────────────────────────────────────────────────────────────── */
   // Формулы валидны до ~15 повторений: выше Brzycki делит на ноль при 37.
 
@@ -118,27 +127,27 @@ var KM = (function () {
     if (goal === "bulk") {
       if (rate < 0.15) {
         kcalDelta = 150;
-        verdict = "вес почти не растёт — добавь калорий";
+        verdict = "вес почти не растёт, добавь калорий";
       } else if (rate > 0.6) {
         kcalDelta = -150;
-        verdict = "вес растёт слишком быстро (лишний жир) — убавь";
+        verdict = "вес растёт слишком быстро и берёт лишний жир, убавь";
       } else verdict = "скорость набора в норме, ничего не меняй";
     } else if (goal === "cut") {
       if (rate > -0.2) {
         kcalDelta = -200;
-        verdict = "вес не снижается — урежь калории";
+        verdict = "вес не снижается, урежь калории";
       } else if (rate < -1.0) {
         kcalDelta = 150;
-        verdict = "слишком быстрое похудение (риск потери мышц) — добавь";
+        verdict = "похудение идёт слишком быстро и рискует мышцами, добавь";
       } else verdict = "скорость снижения в норме, продолжай";
     } else {
       if (rate > 0.25) {
         kcalDelta = -150;
-        verdict = "вес ползёт вверх — слегка убавь";
+        verdict = "вес ползёт вверх, слегка убавь";
       } else if (rate < -0.25) {
         kcalDelta = 150;
-        verdict = "вес уходит вниз — слегка добавь";
-      } else verdict = "вес стабилен — цель выполняется";
+        verdict = "вес уходит вниз, слегка добавь";
+      } else verdict = "вес держится, цель выполняется";
     }
 
     var sign = rate > 0 ? "+" : "";
@@ -150,7 +159,19 @@ var KM = (function () {
       kcalDelta: kcalDelta,
       // verdict — без цифр, для экранов, где скорость уже показана отдельно
       verdict: verdict.charAt(0).toUpperCase() + verdict.slice(1) + deltaStr + ".",
-      text: "Тренд веса: " + sign + rate + " кг/нед за " + days + " дн. " + verdict + deltaStr + "."
+      text:
+        "Тренд веса: " +
+        sign +
+        rate +
+        " кг/нед за " +
+        days +
+        " " +
+        plural(days, "день", "дня", "дней") +
+        ". " +
+        verdict.charAt(0).toUpperCase() +
+        verdict.slice(1) +
+        deltaStr +
+        "."
     };
   }
 

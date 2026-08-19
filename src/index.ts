@@ -2737,7 +2737,7 @@ function mealConfirmMarkup(token: string) {
     inline_keyboard: [
       [
         { text: "✅ Да, записать", callback_data: `meal_ok_${token}` },
-        { text: "✏️ Не то", callback_data: `meal_no_${token}` },
+        { text: "✏️ Нет, поправлю", callback_data: `meal_no_${token}` },
       ],
     ],
   };
@@ -2993,7 +2993,7 @@ bot.callbackQuery(/^meal_no_([a-f0-9]+)$/, async (ctx) => {
   getSession(userId).state = "awaiting_meal_text";
   const text =
     `Не записал.\n${HR}\n\n<b>Поправь и пришли текстом:</b>\n<code>${esc(draft)}</code>\n\n` +
-    `<i>Нажми на строку — она скопируется.</i>`;
+    `<i>Нажми на строку, и она скопируется.</i>`;
   try {
     await ctx.editMessageText(text, HTML);
   } catch {

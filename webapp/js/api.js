@@ -127,8 +127,8 @@ window.KM_API = (function () {
     var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     return {
       sdk: Boolean(tg),
-      platform: tg && tg.platform ? tg.platform : "—",
-      version: tg && tg.version ? tg.version : "—",
+      platform: tg && tg.platform ? tg.platform : "неизвестен",
+      version: tg && tg.version ? tg.version : "неизвестна",
       initLen: readInitData().length,
       source: source,
       keys: launchKeys(),
