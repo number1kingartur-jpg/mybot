@@ -3,6 +3,9 @@ import path from "path";
 
 // Railway Volume mounts at /data; locally falls back to project root
 const DB_PATH = process.env.DATA_PATH ?? path.join(__dirname, "..", "data.json");
+// Запись идёт во временный файл, прежнее состояние остаётся в резервном.
+const TMP_PATH = `${DB_PATH}.tmp`;
+const BAK_PATH = `${DB_PATH}.bak`;
 
 export interface WorkoutEntry {
   id: string;
@@ -138,12 +141,16 @@ interface DB {
   channelLastPublish?: { postId: string; messageIds: number[]; date: string };
 }
 
-function load(): DB {
-  const empty: DB = { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], water: [], channelPosted: [], channelLastPublish: undefined };
-  if (!fs.existsSync(DB_PATH)) return empty;
+function emptyDb(): DB {
+  return { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], water: [], channelPosted: [], channelLastPublish: undefined };
+}
+
+/** Прочитать и привести к полной форме. `null` — файла нет или он не разбирается. */
+function readAt(file: string): DB | null {
+  if (!fs.existsSync(file)) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Partial<DB>;
-    const db: DB = {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<DB>;
+    return {
       workouts: parsed.workouts ?? [],
       programs: parsed.programs ?? [],
       bodyweight: parsed.bodyweight ?? [],
@@ -156,11 +163,61 @@ function load(): DB {
       // не находил последнюю публикацию: записать её было можно, прочитать — нет.
       channelLastPublish: parsed.channelLastPublish,
     };
-    migrate(db);
-    return db;
   } catch {
-    return empty;
+    return null;
   }
+}
+
+/**
+ * Битый файл больше не превращается в пустую базу.
+ *
+ * Раньше на любой ошибке разбора чтение отдавало пустую базу, а первая же
+ * следующая запись закрепляла эту пустоту на диске. Одна прерванная запись —
+ * и дневники, веса и программы всех пользователей исчезали без строки в логе.
+ * Похоже, именно так пропали отметки опубликованного в канале: очередь
+ * посчитала неопубликованными все 28 постов, включая уже вышедшие.
+ *
+ * Порядок теперь такой: основной файл, затем резервная копия, и только
+ * отсутствие обоих считается первым запуском. Если файл есть, но не читается
+ * и резерва нет — исключение вместо тишины. Мёртвый бот заметен сразу,
+ * молча обнулённая база — через неделю и уже безвозвратно.
+ */
+function load(): DB {
+  const main = readAt(DB_PATH);
+  if (main) {
+    migrate(main);
+    return main;
+  }
+
+  const brokenFile = fs.existsSync(DB_PATH);
+  const backup = readAt(BAK_PATH);
+  if (backup) {
+    console.error(
+      `БАЗА: ${brokenFile ? "основной файл не разбирается" : "основного файла нет"}, ` +
+        `поднимаю резервную копию ${BAK_PATH}`
+    );
+    if (brokenFile) {
+      // Битый файл сохраняем: перезапись затрёт единственную улику, по которой
+      // потом можно понять, на чём оборвалась запись.
+      try {
+        fs.renameSync(DB_PATH, `${DB_PATH}.corrupt-${Date.now()}`);
+      } catch {
+        // Не вышло отложить — резерв всё равно важнее.
+      }
+    }
+    migrate(backup);
+    return backup;
+  }
+
+  if (brokenFile) {
+    throw new Error(
+      `БАЗА не разбирается, резервной копии нет: ${DB_PATH}. ` +
+        `Файл на диске не тронут — разберись с ним до перезапуска.`
+    );
+  }
+
+  // Ни основного файла, ни резервного — это действительно первый запуск.
+  return emptyDb();
 }
 
 /** Старые записи без userId принадлежат первому зарегистрированному пользователю (владельцу). */
@@ -174,8 +231,31 @@ function migrate(db: DB) {
   if (changed) save(db);
 }
 
+/**
+ * Запись в обход живого файла.
+ *
+ * `writeFileSync` по существующему пути сначала обрезает файл, а потом наполняет:
+ * процесс, убитый в этот промежуток — редеплой, перезапуск, нехватка памяти, —
+ * оставлял на диске обрезанный JSON. Теперь наполняется временный файл, прежнее
+ * состояние уходит в резервное, и лишь потом переименование ставит новое на место.
+ * Переименование в пределах одного диска атомарно: на пути лежит либо старый файл
+ * целиком, либо новый целиком, промежуточного состояния не бывает.
+ *
+ * Отступы убраны: они раздували файл почти вдвое, а перезаписывается он целиком
+ * при каждом изменении. Читать базу глазами всё равно незачем.
+ */
 function save(db: DB) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
+  const fd = fs.openSync(TMP_PATH, "w");
+  try {
+    fs.writeFileSync(fd, JSON.stringify(db), "utf-8");
+    // Без сброса на диск переименование может опередить сами данные, и после
+    // внезапной остановки под правильным именем окажется пустота.
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (fs.existsSync(DB_PATH)) fs.renameSync(DB_PATH, BAK_PATH);
+  fs.renameSync(TMP_PATH, DB_PATH);
 }
 
 function uid(): string {
