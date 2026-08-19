@@ -522,6 +522,12 @@
     state.notice = null;
     state.addMode = null;
     state.pending = data && data.pending ? data.pending : null;
+    // Фото и текст стартуют с «Сегодня». Карточка «это оно» жила только
+    // в «Питании»: разбор приходил, спиннер гас, на экране ничего не менялось.
+    if (state.pending) {
+      state.screen = "nutrition";
+      state.nutTab = "eaten";
+    }
     haptic("light");
     render();
   }
@@ -1106,8 +1112,9 @@
               (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
               '</p><p class="muted">Обычно 3–10 секунд.</p>'
           )
-        : "") +
-      portionCard() +
+        : state.pending
+          ? pendingCard()
+          : portionCard()) +
       frequentRow() +
       streakStrip() +
       '<div class="grid-2">' +
