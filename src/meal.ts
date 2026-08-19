@@ -38,8 +38,11 @@ export const IDENTIFY_PROMPT =
   "«жарка на растительном масле, количество масла не видно».\n" +
   "9. Напиток — это еда: сок, газировка, витаминный напиток, кофе с молоком, пиво, смузи. " +
   "Для жидкости grams = объём в мл (бутылка 0,5 л → 500).\n" +
-  "10. Упаковка, бутылка, банка, батончик: прочитай этикетку и назови продукт как на ней " +
-  "(«витаминный напиток C-vitt», «кола», «протеиновый батончик»). Если на этикетке видны " +
+  "10. Упаковка, бутылка, банка, батончик: прочитай этикетку и назови продукт вместе с маркой, " +
+  "как написано на ней — «витаминный напиток C-vitt», «энергетик Sting», «йогурт Actimel», " +
+  "«батончик Snickers». Марку не выбрасывай и не заменяй общим словом: по категории цифры " +
+  "будут от другого продукта. Такой позиции добавь \"packaged\":true. " +
+  "Не разобрал надпись — так и напиши в note. Если на этикетке видны " +
   "КБЖУ — верни именно их в kcal100/p100/f100/c100; если не видны — поставь по своему знанию " +
   "этого продукта. Объём и вес возьми с упаковки, а не на глаз.\n" +
   "11. Тара пустая или почти пустая — всё равно считай полную порцию упаковки, " +
@@ -101,8 +104,11 @@ export interface MealPart {
   name: string;
   grams: number;
   kcal: number;
-  /** `catalog` — цифры из справочника, `label` — с упаковки, по словам модели. */
-  source: "catalog" | "label";
+  /**
+   * Откуда цифра: `catalog` — из справочника, `label` — с упаковки по словам
+   * модели, `similar` — марки в справочнике нет, счёт по похожему продукту.
+   */
+  source: "catalog" | "label" | "similar";
 }
 
 export interface MealAnalysis {
@@ -149,9 +155,12 @@ export class MealPhotoUnreadableError extends Error {
  */
 export function mealPartLines(meal: MealAnalysis): string[] {
   if (!meal.parts || !meal.parts.length) return [];
+  // Регистр названия решён при разборе: своё слово пришло строчным, марка — как
+  // на упаковке. Здесь опускать нельзя, иначе `Snickers` станет опечаткой.
   return meal.parts.map((p) => {
-    const from = p.source === "label" ? " (цифры с упаковки)" : "";
-    return `${p.name.toLowerCase()}, ${p.grams} г, ${p.kcal} ккал${from}`;
+    const from =
+      p.source === "label" ? " (цифры с упаковки)" : p.source === "similar" ? " (по похожему продукту)" : "";
+    return `${p.name}, ${p.grams} г, ${p.kcal} ккал${from}`;
   });
 }
 
@@ -216,6 +225,8 @@ interface IdentifiedItem {
   p100?: number;
   f100?: number;
   c100?: number;
+  /** Продукт из упаковки, а не с кухни: цифры должны быть с этикетки. */
+  packaged?: boolean;
 }
 
 /** Цифра с этикетки: за пределами диапазона — значит модель ошиблась, не берём. */
@@ -240,6 +251,7 @@ function parseIdentifyJson(raw: string): { items: IdentifiedItem[]; note?: strin
         p100: per100(x.p100, 100),
         f100: per100(x.f100, 100),
         c100: per100(x.c100, 100),
+        packaged: x.packaged === true,
       }))
       .filter((x) => x.name && x.grams > 0);
     return { items, note: j.note ? String(j.note).slice(0, 120) : undefined };

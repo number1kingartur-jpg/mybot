@@ -120,7 +120,7 @@ for (const [text, expect] of [
 
 // ── Напитки: бутылка — это тоже приём ────────────────────────────────────────
 for (const [text, expect] of [
-  ["витаминный напиток c-vitt", "витаминный напиток"],
+  ["витаминный напиток c-vitt", "c-vitt"],
   ["500 мл колы", "кола"],
   ["банка энергетика", "энергетик"],
   ["латте 300 мл", "латте"],
@@ -149,6 +149,63 @@ check("этикетка: сказано, откуда цифры", /упаков
 
 const noNumbers = macrosFromItems([{ name: "напиток yakult", grams: 100 }]);
 check("без цифр на этикетке продукт не выдумывается", noNumbers === null);
+
+// ── Марка вместо категории ───────────────────────────────────────────────────
+// Главный разбор: раньше «витаминный напиток C-vitt» уходил в общую позицию
+// «Витаминный напиток», потому что её алиас длиннее короткого «c vitt». В записи
+// оставалась полка магазина, а цифры и объём брались от другого продукта.
+const brand = macrosFromItems([{ name: "витаминный напиток C-vitt", grams: 140 }]);
+check("марка не подменяется категорией", /c-vitt/i.test(brand?.name ?? ""), brand?.name);
+near("C-vitt считается по своей позиции", brand?.kcal ?? 0, 45, 0.15);
+
+// Своя позиция важнее цифр модели: она проверена, и одно фото даёт одно число.
+const brandVsModel = macrosFromItems([
+  { name: "энергетик Red Bull", grams: 250, kcal100: 200, p100: 0, f100: 0, c100: 50 },
+]);
+check("марка из справочника не берёт выдуманные цифры", (brandVsModel?.kcal ?? 0) < 150, String(brandVsModel?.kcal));
+check("марка в названии записи", /red bull/i.test(brandVsModel?.name ?? ""), brandVsModel?.name);
+
+// Марка рядом с категорией — один продукт, а не два.
+const oneDrink = macrosFromText("энергетик red bull 250 мл");
+near("категория рядом с маркой не удваивает приём", oneDrink?.kcal ?? 0, 113, 0.15);
+
+// Порция берётся от упаковки марки, а не от категории: в бутылочке Actimel
+// 100 мл, а у питьевого йогурта порция по умолчанию 290 г — это тройной приём.
+const actimel = macrosFromItems([{ name: "йогурт Actimel", grams: 100 }]);
+near("Actimel считается своей бутылочкой", actimel?.kcal ?? 0, 71, 0.15);
+
+// Незнакомая марка с цифрами на упаковке: цифры важнее похожего продукта.
+const unknownWithLabel = macrosFromItems([
+  { name: "энергетик Sting", grams: 250, kcal100: 60, p100: 0, f100: 0, c100: 15 },
+]);
+near("незнакомая марка считается по этикетке", unknownWithLabel?.kcal ?? 0, 150, 0.05);
+check("этикетка помечена в составе", unknownWithLabel?.parts?.[0]?.source === "label", unknownWithLabel?.parts?.[0]?.source);
+
+// Незнакомая марка без цифр: считаем по категории, но говорим об этом прямо.
+const unknownNoLabel = macrosFromItems([{ name: "энергетик Sting", grams: 250 }]);
+check("похожий продукт помечен", unknownNoLabel?.parts?.[0]?.source === "similar", unknownNoLabel?.parts?.[0]?.source);
+check("марка сохранена в названии", /sting/i.test(unknownNoLabel?.name ?? ""), unknownNoLabel?.name);
+check("человеку сказано про похожий продукт", /похожему продукту/.test(unknownNoLabel?.note ?? ""), unknownNoLabel?.note);
+check("догадка не выдана за справочник", !/RASCHET/.test(unknownNoLabel?.note ?? ""), unknownNoLabel?.note);
+check(
+  "в строке состава видно, что счёт по похожему",
+  mealPartLines(unknownNoLabel).some((l) => /по похожему продукту/.test(l)),
+  mealPartLines(unknownNoLabel).join(" | ")
+);
+
+// Упаковка есть, а марку модель не назвала. Цифры категории тут — догадка, и
+// подавать её как знание справочника нельзя: на кадре был конкретный продукт.
+const packagedNoBrand = macrosFromItems([{ name: "витаминный напиток", grams: 140, packaged: true }]);
+check("неопознанная упаковка помечена", packagedNoBrand?.parts?.[0]?.source === "similar", packagedNoBrand?.parts?.[0]?.source);
+near("неопознанная упаковка всё же посчитана", packagedNoBrand?.kcal ?? 0, 45, 0.15);
+
+// Способ приготовления — не марка: домашняя еда обязана считаться справочником,
+// иначе модель начнёт присылать свои калории на каждую котлету.
+const homeCooked = macrosFromItems([
+  { name: "котлета куриная жареная", grams: 150, kcal100: 90, p100: 20, f100: 1, c100: 0 },
+]);
+near("домашнее блюдо считается справочником", homeCooked?.kcal ?? 0, 330, 0.15);
+check("домашнее блюдо не помечается упаковкой", homeCooked?.parts?.[0]?.source === "catalog", homeCooked?.parts?.[0]?.source);
 
 const mixed = macrosFromItems([
   { name: "курица отварная", grams: 150 },

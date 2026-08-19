@@ -576,6 +576,9 @@
     var fromLabel = parts.some(function (x) {
       return x.source === "label";
     });
+    var bySimilar = parts.some(function (x) {
+      return x.source === "similar";
+    });
 
     return card(
       '<div class="confirm__head">' +
@@ -607,6 +610,7 @@
                   // ничего не сообщало — оно там всегда, — но глушило тот случай,
                   // ради которого пометка и нужна: цифры прочитаны с упаковки.
                   (x.source === "label" ? " · цифры с упаковки" : "") +
+                  (x.source === "similar" ? " · по похожему продукту" : "") +
                   '</span></span><span class="log__value">' +
                   x.kcal +
                   " ккал</span></li>"
@@ -620,6 +624,12 @@
         (fromLabel
           ? '<p class="note note--plain">Часть цифр прочитана с упаковки, поэтому сверь ' +
             "с этикеткой, если что-то не сходится.</p>"
+          : "") +
+        // Подстановка похожего продукта — догадка, а не расчёт. Молча она выглядит
+        // как знание, поэтому названа своим именем прямо в карточке.
+        (bySimilar
+          ? '<p class="note note--plain">Точной марки я не знаю, счёт по похожему продукту. ' +
+            "Если на упаковке есть КБЖУ, надёжнее ввести их вручную.</p>"
           : "") +
         '<div class="btn-stack" style="margin-top:14px">' +
         '<button class="btn btn--primary" data-action="meal-confirm">Да, записать</button>' +
