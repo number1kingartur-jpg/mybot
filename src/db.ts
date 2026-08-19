@@ -88,6 +88,9 @@ export interface UserRecord {
   photoCount?: number;         // сколько фото-анализов за текущую неделю
   photoDayKey?: string;        // день для дневной планки (YYYY-MM-DD)
   photoDayCount?: number;      // сколько фото-анализов за сегодня
+  mealRemindDate?: string;     // когда напомнили про дневник еды (YYYY-MM-DD)
+  mealRemindMissed?: number;   // сколько напоминаний подряд не привели к записи
+  mealRemindPaused?: boolean;  // авто-пауза: не надоедаем тому, кто не отвечает
   ref?: string;                // источник: kingmode, channel, …
 }
 
@@ -473,6 +476,26 @@ export function removeMeal(userId: number, mealId: string): boolean {
   db.meals.splice(idx, 1);
   save(db);
   return true;
+}
+
+/**
+ * Пересчёт записи под другую порцию. Оценка по фото всегда приблизительна, и
+ * ошибается она чаще всего в размере порции, а не в составе блюда: состав модель
+ * видит, вес — нет. Поэтому правится множитель, а КБЖУ пересчитываются
+ * пропорционально: так соотношение белка, жира и углеводов остаётся тем, что
+ * определено по блюду, и человеку не нужно вводить четыре числа заново.
+ */
+export function scaleMeal(userId: number, mealId: string, factor: number): MealEntry | null {
+  const db = load();
+  const row = db.meals.find((m) => m.id === mealId && m.userId === userId);
+  if (!row) return null;
+  const k = Math.max(0.2, Math.min(5, factor));
+  row.kcal = Math.round(row.kcal * k);
+  row.proteinG = Math.round(row.proteinG * k);
+  row.fatG = Math.round(row.fatG * k);
+  row.carbsG = Math.round(row.carbsG * k);
+  save(db);
+  return row;
 }
 
 export function getMeals(userId: number, date?: string): MealEntry[] {

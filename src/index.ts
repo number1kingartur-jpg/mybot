@@ -9,7 +9,7 @@ import {
   registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
-  addMeal, getMeals, getMealsForDays, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, trialMode, freePhotoWeek, photoGate, bumpPhotoCount, grantPremium,
+  addMeal, getMeals, getMealsForDays, mealStreak, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, trialMode, freePhotoWeek, photoGate, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
@@ -3409,6 +3409,63 @@ cron.schedule("0 * * * *", async () => {
         { parse_mode: "HTML" }
       );
       updateUser(u.chatId, { lastReminderDate: today(), remindersMissed: missed });
+    } catch { /* пользователь заблокировал бота */ }
+  }
+}, { timezone: "Asia/Bangkok" });
+
+// ── Напоминание про дневник еды (ежедневно 20:00 Бангкок) ──────────────────
+// Пропущенный день — это и есть точка, где дневник бросают: у всех счётчиков в
+// нише отвал начинается не с недовольства, а с одного незаписанного вечера.
+// Правила против спама те же, что у напоминаний о тренировке: пишем только тем,
+// кто уже вёл дневник на этой неделе, один раз в день, и замолкаем после трёх
+// напоминаний подряд, оставшихся без записи.
+cron.schedule(process.env.MEAL_REMIND_CRON ?? "0 20 * * *", async () => {
+  if (process.env.MEAL_REMIND === "0") return;
+
+  const day = today();
+  for (const u of getUsers()) {
+    if (u.mealRemindPaused) continue;
+    if (!u.nutrition) continue;                       // норма не задана — напоминать нечего
+    if (getMeals(u.chatId, day).length) continue;     // сегодня уже записал
+
+    const recent = getMealsForDays(u.chatId, 7);
+    if (!recent.length) continue;                     // человек и не начинал — это была бы реклама
+
+    let missed = u.mealRemindMissed ?? 0;
+    if (u.mealRemindDate && u.mealRemindDate < day) {
+      const loggedSince = recent.some((m) => m.date >= u.mealRemindDate!);
+      missed = loggedSince ? 0 : missed + 1;
+    }
+
+    if (missed >= 3) {
+      updateUser(u.chatId, { mealRemindPaused: true, mealRemindMissed: missed });
+      try {
+        await bot.api.sendMessage(
+          u.chatId,
+          `🔕 <b>Больше не напоминаю про дневник.</b>\n\n` +
+          `Три вечера подряд без записи — значит сейчас не до этого.\n` +
+          `<i>Захочешь вернуться — просто запиши приём в приложении, напоминания включатся сами.</i>`,
+          { parse_mode: "HTML" }
+        );
+      } catch { /* пользователь заблокировал бота */ }
+      continue;
+    }
+
+    const streak = mealStreak(u.chatId, day);
+    const dayWord = streak.days % 10 === 1 && streak.days % 100 !== 11 ? "день" : "дня";
+    const tail =
+      streak.days >= 2
+        ? `Серия: <b>${streak.days} ${dayWord}</b> подряд. Сегодня она ещё цела.`
+        : `Одно фото — и день записан.`;
+
+    const kb = MINIAPP_URL ? new InlineKeyboard().webApp("⚡️ Записать еду", appUrl("remind")) : undefined;
+    try {
+      await bot.api.sendMessage(
+        u.chatId,
+        `🍽 <b>Сегодня в дневнике пусто.</b>\n\n${tail}`,
+        { parse_mode: "HTML", reply_markup: kb }
+      );
+      updateUser(u.chatId, { mealRemindDate: day, mealRemindMissed: missed });
     } catch { /* пользователь заблокировал бота */ }
   }
 }, { timezone: "Asia/Bangkok" });

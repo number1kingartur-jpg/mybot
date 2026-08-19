@@ -24,6 +24,7 @@
     setupDone: false,
     theme: "night", // night | graphite | ivory — оформление, выбор человека
     profTab: "day", // day | progress | look — подразделы личного профиля
+    lastMeal: null, // последняя запись еды: по ней предлагается уточнить порцию
     goalWeightKg: "", // цель по весу; из неё считается прогноз на «Сегодня»
     calcTab: "orm",
     nutTab: "eaten",
@@ -494,8 +495,85 @@
     state.addMode = null;
     state.mealText = "";
     state.manual = { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" };
+    // Запоминаем последнюю запись, чтобы предложить правку порции. Состав модель
+    // видит, вес — нет: именно порция и есть главный источник ошибки в оценке.
+    state.lastMeal =
+      data && data.mealId && data.meal
+        ? { id: data.mealId, name: data.meal.name, kcal: data.meal.kcal, factor: 1 }
+        : null;
     haptic("medium");
     render();
+  }
+
+  /** Пересчёт порции у последней записи: множитель, а не четыре числа заново. */
+  function scaleLastMeal(factor) {
+    var last = state.lastMeal;
+    if (!last || !online) return;
+    state.busy = "food";
+    state.notice = null;
+    render();
+    KM_API.scaleMeal(last.id, factor)
+      .then(function (data) {
+        state.day = data;
+        state.busy = null;
+        state.lastMeal = {
+          id: last.id,
+          name: data.meal.name,
+          kcal: data.meal.kcal,
+          factor: last.factor * factor
+        };
+        state.notice = { kind: "ok", text: "Порция уточнена: " + data.meal.kcal + " ккал." };
+        haptic("light");
+        render();
+      })
+      .catch(mealError);
+  }
+
+  /**
+   * Уточнение порции. Появляется только после свежей записи и исчезает после
+   * ухода с экрана: это не постоянный элемент, а вопрос «столько ли ты съел»,
+   * заданный один раз в нужный момент.
+   */
+  function portionCard() {
+    var last = state.lastMeal;
+    if (!last || !online) return "";
+    var steps = [
+      [0.5, "половина"],
+      [0.75, "меньше"],
+      [1.25, "больше"],
+      [1.5, "полторы"],
+      [2, "две порции"]
+    ];
+    return card(
+      cardHead(
+        "Столько и съел?",
+        esc(last.name) +
+          " — " +
+          last.kcal +
+          " ккал" +
+          (last.factor !== 1 ? " (порция ×" + (Math.round(last.factor * 100) / 100).toString().replace(".", ",") + ")" : "")
+      ) +
+        '<p class="lead">Состав блюда модель видит, вес — нет. Если порция была другой, ' +
+        "поправь множителем: КБЖУ пересчитаются в той же пропорции.</p>" +
+        '<div class="chips chips--wrap">' +
+        steps
+          .map(function (s) {
+            return (
+              '<button type="button" class="chip" data-portion="' +
+              s[0] +
+              '">×' +
+              s[0] +
+              " · " +
+              s[1] +
+              "</button>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        '<div class="btn-stack" style="margin-top:12px">' +
+        '<button class="btn btn--outline btn--slim" data-action="portion-done">Всё верно</button>' +
+        "</div>"
+    );
   }
 
   function mealError(err) {
@@ -807,6 +885,7 @@
               '</p><p class="muted">Обычно 3–10 секунд.</p>'
           )
         : "") +
+      portionCard() +
       frequentRow() +
       streakStrip() +
       '<div class="grid-2">' +
@@ -938,11 +1017,7 @@
           "</div>",
         { gold: true }
       ) +
-      (state.notice
-        ? state.notice.kind === "ok"
-          ? '<p class="note"><strong>Записал.</strong> ' + esc(state.notice.text) + "</p>"
-          : errorBox(state.notice.text)
-        : "") +
+      noticeHtml() +
       d.meals.map(function (m) {
         return menuMealHtml(m, logged.indexOf(mealTitle(m)) !== -1);
       }).join("") +
@@ -1059,11 +1134,9 @@
     return (
       (state.day ? dayNav() : "") +
       head +
-      (state.notice
-        ? state.notice.kind === "ok"
-          ? '<p class="note"><strong>Записал.</strong> ' + esc(state.notice.text) + "</p>"
-          : errorBox(state.notice.text)
-        : "") +
+      // Один вид сообщения на все экраны: три копии этой разметки успели разойтись
+      // по заголовку, и «Записал» появлялось там, где ничего не записывалось
+      noticeHtml() +
       (!isToday
         ? '<p class="note note--plain">Открыт прошлый день — только просмотр. Новые приёмы ' +
           "пишутся в сегодняшний.</p>"
@@ -1079,7 +1152,7 @@
      экрана: две копии разошлись бы при первой же правке форм. */
 
   function addOrBusy(quota) {
-    if (!state.busy) return addBlock(quota);
+    if (!state.busy) return portionCard() + addBlock(quota);
     return card(
       '<p class="lead">' +
         (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
@@ -2394,6 +2467,9 @@
     state.screen = screen;
     state.result = null;
     state.notice = null;
+    // Вопрос про порцию задаётся один раз, сразу после записи: на другом экране
+    // он превращается в непонятную карточку без повода
+    state.lastMeal = null;
     haptic("light");
     // Уходя из «Съедено», возвращаемся к сегодняшнему дню: иначе «Сегодня»
     // покажет итоги вчерашнего
@@ -2435,6 +2511,10 @@
     // Повтор частого блюда — тоже раньше .chip, по той же причине
     var rep = t.closest("[data-repeat]");
     if (rep) return repeatMeal(rep.getAttribute("data-repeat"));
+
+    // Множитель порции: тоже чип, и его нельзя отдавать общему переключателю
+    var portion = t.closest("[data-portion]");
+    if (portion) return scaleLastMeal(Number(portion.getAttribute("data-portion")));
 
     var chip = t.closest(".chip");
     if (chip) return onSeg(chip);
@@ -2557,6 +2637,11 @@
       }
       case "water-250":
         return addWater(250);
+      case "portion-done":
+        state.lastMeal = null;
+        state.notice = null;
+        haptic("light");
+        return render();
       case "nutrition-tab":
         // Объяснение, почему фото недоступно, живёт в «Питании»: там же кнопка
         // «Проверить связь» и вся диагностика

@@ -259,6 +259,9 @@ window.KM_API = (function () {
     repeat: function (name) {
       return request("POST", "/api/meal/repeat", { name: name });
     },
+    scaleMeal: function (id, factor) {
+      return request("PATCH", "/api/meal", { id: id, factor: factor });
+    },
     remove: function (id) {
       return request("DELETE", "/api/meal?id=" + encodeURIComponent(id));
     },

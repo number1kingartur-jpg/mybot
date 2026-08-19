@@ -4,7 +4,7 @@ import path from "path";
 import { verifyInitData, type WebAppUser } from "./webapp-auth";
 import {
   registerUser, getUser, updateUser, setNutrition,
-  addMeal, removeMeal, getMeals, mealTotals, mealStreak, frequentMeals,
+  addMeal, removeMeal, scaleMeal, getMeals, mealTotals, mealStreak, frequentMeals,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, checkPr,
@@ -594,12 +594,14 @@ async function handleApi(
 
     try {
       const meal = await analyzeMealPhoto(buf, mime);
-      addMeal({
+      // id записи уходит клиенту: сразу после распознавания человек правит порцию,
+      // а без id пришлось бы искать запись по названию — их может быть две
+      const row = addMeal({
         userId: user.id, date,
         name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
       });
       bumpPhotoCount(user.id, wk, date);
-      json(res, 200, { meal, note: meal.note, ...dayState(user.id, date) });
+      json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, date) });
     } catch (e) {
       if (e instanceof MealPhotoUnreadableError) {
         json(res, 422, {
@@ -624,11 +626,11 @@ async function handleApi(
     }
     try {
       const meal = await analyzeMealText(text);
-      addMeal({
+      const row = addMeal({
         userId: user.id, date,
         name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
       });
-      json(res, 200, { meal, note: meal.note, ...dayState(user.id, date) });
+      json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, date) });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       json(res, 422, {
@@ -652,11 +654,11 @@ async function handleApi(
       json(res, 422, { error: "unknown_food", message: "Такого продукта нет в справочнике." });
       return;
     }
-    addMeal({
+    const row = addMeal({
       userId: user.id, date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
     });
-    json(res, 200, { meal, ...dayState(user.id, date) });
+    json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
   }
 
@@ -686,8 +688,8 @@ async function handleApi(
       fatG: prev.fatG,
       carbsG: prev.carbsG,
     };
-    addMeal({ userId: user.id, date, ...meal });
-    json(res, 200, { meal, ...dayState(user.id, date) });
+    const row = addMeal({ userId: user.id, date, ...meal });
+    json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
   }
 
@@ -704,8 +706,31 @@ async function handleApi(
       return;
     }
     const meal = { name, kcal, proteinG, fatG, carbsG };
-    addMeal({ userId: user.id, date, ...meal });
-    json(res, 200, { meal, ...dayState(user.id, date) });
+    const row = addMeal({ userId: user.id, date, ...meal });
+    json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
+    return;
+  }
+
+  /**
+   * Правка порции у уже записанного приёма. Главная претензия ко всем счётчикам
+   * по фото: состав модель угадывает, вес — нет, и человек видит «250 ккал» там,
+   * где съел полторы порции. Поэтому правим множитель, а не четыре числа: состав
+   * блюда остаётся тем, что определён, меняется только количество.
+   */
+  if (req.method === "PATCH" && urlPath === "/api/meal") {
+    const body = JSON.parse(await readBody(req)) as { id?: string; factor?: number };
+    const id = String(body.id ?? "");
+    const factor = Number(body.factor);
+    if (!id || !Number.isFinite(factor) || factor <= 0) {
+      json(res, 400, { error: "bad_request", message: "Нужны id записи и множитель порции." });
+      return;
+    }
+    const row = scaleMeal(user.id, id, factor);
+    if (!row) {
+      json(res, 404, { error: "not_found", message: "Запись не найдена." });
+      return;
+    }
+    json(res, 200, { meal: row, ...dayState(user.id, row.date) });
     return;
   }
 
