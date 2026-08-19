@@ -1166,6 +1166,25 @@
     );
   }
 
+  /**
+   * Картинка блюда. Файла может не быть — тогда остаётся буква под ним: узнавание
+   * по картинке нужно в списке, но пустой квадрат хуже монограммы, а грузить
+   * сотню файлов ради проверки существования нельзя.
+   */
+  function thumb(slug, title) {
+    var letter = esc(String(title || "?").trim().charAt(0).toUpperCase());
+    return (
+      '<span class="thumb" aria-hidden="true">' +
+      letter +
+      (slug
+        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="img/food/' +
+          esc(slug) +
+          '.webp" onerror="this.remove()" />'
+        : "") +
+      "</span>"
+    );
+  }
+
   function mealsListCard(meals, isToday) {
     if (!meals.length) {
       return (
@@ -1183,7 +1202,9 @@
         meals
           .map(function (m) {
             return (
-              '<li><span class="meal__name">' +
+              '<li class="log--thumbed">' +
+              thumb(m.slug, m.name) +
+              '<span class="meal__name">' +
               esc(m.name) +
               '<span class="meal__macro">' +
               m.proteinG +
@@ -1252,7 +1273,9 @@
           var grams = num(state.foodGrams);
           var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG;
           return (
-            '<li><span class="meal__name">' +
+            '<li class="log--thumbed">' +
+            thumb(f.slug, f.name) +
+            '<span class="meal__name">' +
             esc(f.name) +
             '<span class="meal__macro">' +
             f.kcal100 +
