@@ -59,7 +59,7 @@ const failed = [];
 for (const id of ids) {
   const post = byId.get(id);
   const m = MEDIA[id];
-  const isPhoto = m.out.endsWith(".jpg");
+  const isPhoto = /\.(jpg|png)$/.test(m.out);
   const field = isPhoto ? "photo" : "clip";
 
   const media = isPhoto
