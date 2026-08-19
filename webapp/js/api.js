@@ -5,6 +5,18 @@
 window.KM_API = (function () {
   "use strict";
 
+  // Старые кнопки ещё открывают /?from=kb и /?from=inline. Срезаем метку из
+  // адреса, чтобы следующее открытие не плодило ещё одно хранилище.
+  try {
+    var launch = new URL(location.href);
+    if (launch.searchParams.has("from")) {
+      launch.searchParams.delete("from");
+      history.replaceState(null, "", launch.pathname + launch.search + launch.hash);
+    }
+  } catch (e) {
+    /* старый браузер — адрес не трогаем */
+  }
+
   // Подпись читается лениво, а не один раз при загрузке: SDK telegram.org —
   // внешний файл, и если он не пришёл (сеть, блокировка, медленный старт), то
   // при чтении «на старте» приложение навсегда считало себя открытым вне

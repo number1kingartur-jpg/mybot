@@ -157,18 +157,18 @@ const MINIAPP_URL =
   process.env.MINIAPP_URL ?? (RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/` : undefined);
 
 /**
- * Метка способа запуска в адресе. Подпись Telegram живёт в части адреса после `#`
- * и до сервера не доходит, поэтому иначе невозможно узнать, какой кнопкой открыто
- * приложение — а от этого зависит, передаёт Telegram подпись или нет.
+ * Один и тот же адрес на всех кнопках. Раньше в ссылку писали `?from=kb|inline`,
+ * чтобы в логе видеть способ запуска. Telegram на iOS держит отдельный кэш и
+ * отдельное хранилище на каждый полный URL: нижняя кнопка и кнопка в сообщении
+ * открывали два разных приложения с разными цифрами и разной версией кода.
  */
-function appUrl(from: string): string {
-  if (!MINIAPP_URL) return "";
-  return MINIAPP_URL + (MINIAPP_URL.includes("?") ? "&" : "?") + "from=" + from;
+function appUrl(): string {
+  return MINIAPP_URL ?? "";
 }
 
 function appRow(): { text: string; web_app?: { url: string } }[][] {
   if (!MINIAPP_URL) return [];
-  return [[{ text: "⚡️ Приложение", web_app: { url: appUrl("row") } }]];
+  return [[{ text: "⚡️ Приложение", web_app: { url: appUrl() } }]];
 }
 
 /**
@@ -180,7 +180,7 @@ function appRow(): { text: string; web_app?: { url: string } }[][] {
 const APP_ONLY = Boolean(MINIAPP_URL) && process.env.APP_ONLY !== "0";
 
 const APP_KEYBOARD = {
-  keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: appUrl("kb") } }]] : [],
+  keyboard: MINIAPP_URL ? [[{ text: "⚡️ Открыть KINGMODE", web_app: { url: appUrl() } }]] : [],
   resize_keyboard: true,
 };
 
@@ -742,7 +742,7 @@ async function sendAppWelcome(
   name: string
 ) {
   const kb = new InlineKeyboard();
-  if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", appUrl("inline")).row();
+  if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", appUrl()).row();
   kb.url("📢 Канал", "https://t.me/kingmode_fit");
 
   await ctx.reply(
@@ -3579,7 +3579,7 @@ cron.schedule(process.env.MEAL_REMIND_CRON ?? "0 20 * * *", async () => {
         ? `Серия: <b>${streak.days} ${dayWord}</b> подряд. Сегодня она ещё цела.`
         : `Одно фото — и день записан.`;
 
-    const kb = MINIAPP_URL ? new InlineKeyboard().webApp("⚡️ Записать еду", appUrl("remind")) : undefined;
+    const kb = MINIAPP_URL ? new InlineKeyboard().webApp("⚡️ Записать еду", appUrl()) : undefined;
     try {
       await bot.api.sendMessage(
         u.chatId,
@@ -3676,6 +3676,21 @@ async function main() {
 
   // В режиме лаунчера список команд короткий: длинный список — это второе меню,
   // которое обещает в чате то, что живёт в приложении.
+  if (MINIAPP_URL) {
+    try {
+      await bot.api.setChatMenuButton({
+        menu_button: {
+          type: "web_app",
+          text: "KINGMODE",
+          web_app: { url: appUrl() },
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`setChatMenuButton: ${msg}`);
+    }
+  }
+
   await bot.api.setMyCommands(
     APP_ONLY
       ? [
