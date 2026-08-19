@@ -301,11 +301,14 @@ window.KM_API = (function () {
     programDone: function () {
       return request("POST", "/api/program/done", {});
     },
-    workoutDone: function (place) {
-      return request("POST", "/api/workout/simple", { place: place });
+    workoutDone: function (place, level) {
+      return request("POST", "/api/workout/simple", { place: place, level: level });
     },
     savePlace: function (place) {
       return request("POST", "/api/settings", { place: place });
+    },
+    saveSettings: function (body) {
+      return request("POST", "/api/settings", body);
     }
   };
 })();

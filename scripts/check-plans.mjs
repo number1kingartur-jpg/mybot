@@ -10,6 +10,8 @@ import path from "node:path";
 import vm from "node:vm";
 import {
   SIMPLE_PLANS,
+  TRAIN_PLANS,
+  plansFor,
   schemeFor,
   restFor,
   doseLabel,
@@ -38,9 +40,11 @@ check("приложение отдаёт планы", Boolean(APP && APP.plans &
 if (!APP) process.exit(1);
 
 const PLACES = ["home", "gym"];
+const LEVELS = ["start", "train"];
 const GOALS = ["cut", "maint", "bulk"];
 
 check("SEX_NOTE совпадает", SEX_NOTE === APP.sexNote, `бот «${SEX_NOTE}»`);
+check("приложение отдаёт forPlace", typeof APP.forPlace === "function");
 
 for (const place of PLACES) {
   const botPlans = SIMPLE_PLANS[place];
@@ -84,6 +88,32 @@ for (const place of PLACES) {
     check(`${place}/${goal}: подпись цели`, doseLabel(goal) === APP.doseLabel(goal));
   }
 }
+
+for (const level of LEVELS) {
+  for (const place of PLACES) {
+    const bot = plansFor(place, level);
+    const app = APP.forPlace(place, level);
+    check(`${level}/${place}: столько же планов`, bot.length === app.length);
+    bot.forEach((plan, pi) => {
+      plan.items.forEach((e, i) => {
+        const a = app[pi].items[i];
+        const tag = `${level}/${place}/${plan.label}/${e.name}`;
+        check(`${tag}: имя`, e.name === a.name, a.name);
+        check(`${tag}: есть усложнение`, exerciseHarder(e).length > 0);
+        check(`${tag}: усложнение`, exerciseHarder(e) === APP.harder(a));
+        for (const goal of GOALS) {
+          check(`${tag}/${goal}: схема`, schemeFor(e, goal) === APP.scheme(a, goal));
+        }
+      });
+    });
+  }
+}
+
+check(
+  "высокая ступень дома без стула",
+  TRAIN_PLANS.home[0].items[0].name === "Приседания до параллели",
+  TRAIN_PLANS.home[0].items[0].name
+);
 
 const squat = SIMPLE_PLANS.home[0].items[0];
 check("набор: 4 подхода", schemeFor(squat, "bulk").startsWith("4 подхода"), schemeFor(squat, "bulk"));

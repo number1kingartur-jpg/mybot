@@ -49,7 +49,7 @@
     profile: { sex: "m", age: 30, heightCm: 180, weightKg: 80, activity: "mid", goal: "maint" },
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
-    workout: { place: "home", plan: 0 },
+    workout: { place: "home", plan: 0, level: "" },
     diary: { date: today(), weightKg: "" },
     entries: [],
     lastOrm: null,
@@ -409,7 +409,10 @@
         // очередь A/B. Ручное переключение в этой сессии не перетираем.
         if (!workoutTouched && data.simple) {
           state.workout.place = data.simple.place === "gym" ? "gym" : "home";
-          state.workout.plan = data.simple.idx % KM_PLANS.plans[state.workout.place].length;
+          if (data.simple.level === "start" || data.simple.level === "train") {
+            state.workout.level = data.simple.level;
+          }
+          state.workout.plan = data.simple.idx % planList().length;
         }
         migrateWeights();
         // Обратный случай: анкета заполнена в приложении, а в базе бота её нет.
@@ -830,6 +833,14 @@
             ])
           ) +
           field("Где тренируешься", chips("s_place", state.workout.place, [["home", "Дома"], ["gym", "В зале"]])) +
+          field(
+            "Уровень",
+            chips("s_level", workoutLevel(), [
+              ["start", "С нуля"],
+              ["train", "Уже тренируюсь"]
+            ]),
+            "С нуля: стул, стена, колени. Уже тренируюсь: полный присед, опора, одна нога."
+          ) +
           '<div class="btn-stack" style="margin-top:18px">' +
           '<button class="btn btn--primary" data-action="setup-done">Готово</button>' +
           '<button class="btn btn--outline btn--slim" data-action="setup-skip">Пропустить</button>' +
@@ -1041,7 +1052,7 @@
     var advice = KM.weightTrendAdvice(entries, state.profile.goal);
     var last = entries.length ? entries[entries.length - 1] : null;
     var place = state.workout.place;
-    var plan = KM_PLANS.plans[place][state.workout.plan] || KM_PLANS.plans[place][0];
+    var plan = planList()[state.workout.plan] || planList()[0];
     var eaten = eatenTotals();
     var w = water();
 
@@ -1119,7 +1130,11 @@
       card(
         cardHead(
           "Тренировка · план " + esc(plan.label),
-          place === "home" ? "Дома, без инвентаря" : "В зале, гантели и блок",
+          place === "home"
+            ? workoutLevel() === "train"
+              ? "Дома, свой вес"
+              : "Дома, с нуля"
+            : "В зале, гантели и блок",
           plan.items.length + " " + plural(plan.items.length, "упражнение", "упражнения", "упражнений")
         ) +
           '<p class="lead">' +
@@ -2210,13 +2225,13 @@
     state.busy = "workout";
     state.notice = null;
     render();
-    KM_API.workoutDone(state.workout.place)
+    KM_API.workoutDone(state.workout.place, workoutLevel())
       .then(function (data) {
         state.day = data;
         state.busy = null;
         // Дальше очередь A/B снова ведёт бот
         workoutTouched = false;
-        state.workout.plan = data.simple.idx % KM_PLANS.plans[state.workout.place].length;
+        state.workout.plan = data.simple.idx % planList().length;
         state.notice = {
           kind: "ok",
           text:
@@ -2275,14 +2290,35 @@
     return goal === "bulk" || goal === "cut" ? goal : "maint";
   }
 
+  /**
+   * Стартовый набор или следующая ступень.
+   *
+   * Если человек не выбирал, берём из активности: высокая значит, что стул
+   * и стена ему уже не нужны. Явный выбор на чипе перекрывает догадку.
+   */
+  function workoutLevel() {
+    var lv = state.workout.level;
+    if (lv === "start" || lv === "train") return lv;
+    return state.profile && state.profile.activity === "high" ? "train" : "start";
+  }
+
+  function planList() {
+    return KM_PLANS.forPlace(state.workout.place, workoutLevel());
+  }
+
   function renderWorkout() {
     var wk = state.workout;
-    var list = KM_PLANS.plans[wk.place];
+    var list = planList();
     var plan = list[wk.plan] || list[0];
     var goal = workoutGoal();
+    var level = workoutLevel();
 
     return (
       chips("w_place", wk.place, [["home", "Дома"], ["gym", "В зале"]]) +
+      chips("w_level", level, [
+        ["start", "С нуля"],
+        ["train", "Уже тренируюсь"]
+      ]) +
       chips(
         "w_plan",
         wk.plan,
@@ -2292,7 +2328,11 @@
       ) +
       card(
         cardHead(
-          wk.place === "home" ? "Дома · без инвентаря" : "В зале · гантели и блок",
+          wk.place === "home"
+            ? level === "train"
+              ? "Дома · свой вес, уже не с нуля"
+              : "Дома · без инвентаря, с нуля"
+            : "В зале · гантели и блок",
           plan.items.length +
             " " +
             plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
@@ -3211,6 +3251,10 @@
         state.workout.place = value;
         state.workout.plan = 0;
         break;
+      case "s_level":
+        state.workout.level = value;
+        state.workout.plan = 0;
+        break;
       case "p_model":
         state.program.model = value;
         state.result = null;
@@ -3235,13 +3279,26 @@
         persist();
         // Место тренировок общее с ботом: в чате должен открываться тот же зал/дом
         if (state.day) {
-          KM_API.savePlace(value)
+          KM_API.saveSettings({ place: value, level: workoutLevel() })
             .then(function (data) {
               state.day = data;
             })
             .catch(function () {
               /* не критично: план на экране уже переключён */
             });
+        }
+        return render();
+      case "w_level":
+        state.workout.level = value;
+        state.workout.plan = 0;
+        workoutTouched = true;
+        persist();
+        if (state.day) {
+          KM_API.saveSettings({ place: state.workout.place, level: value })
+            .then(function (data) {
+              state.day = data;
+            })
+            .catch(function () {});
         }
         return render();
       case "w_plan":

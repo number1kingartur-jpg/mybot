@@ -19,7 +19,7 @@ import { dropPending, peekPending, putPending, takePending, updatePending } from
 import { FOODS, foodSlug, macrosFromItems, matchFood } from "./foods";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
-import { SIMPLE_PLANS, type Place } from "./simple";
+import { plansFor, type Place } from "./simple";
 
 /**
  * HTTP-сервер бота: раздаёт Mini App и обслуживает его запросы.
@@ -247,6 +247,12 @@ function dayState(userId: number, date: string) {
     simple: {
       idx: u?.simpleIdx ?? 0,
       place: u?.simplePlace === "gym" ? "gym" : "home",
+      level:
+        u?.simpleLevel === "train" || u?.simpleLevel === "start"
+          ? u.simpleLevel
+          : u?.nutrition?.activity === "high"
+            ? "train"
+            : "start",
     },
     workoutsTotal: getAllWorkouts(userId).length,
   };
@@ -517,12 +523,20 @@ async function handleApi(
 
   // ── Готовая тренировка (дом/зал): та же отметка, что кнопка в чате ─────────
   if (req.method === "POST" && urlPath === "/api/workout/simple") {
-    const body = JSON.parse(await readBody(req)) as { place?: string };
+    const body = JSON.parse(await readBody(req)) as { place?: string; level?: string };
     const u = getUser(user.id);
     const place: Place =
       body.place === "gym" ? "gym" : body.place === "home" ? "home" : u?.simplePlace === "gym" ? "gym" : "home";
+    const level =
+      body.level === "train" || body.level === "start"
+        ? body.level
+        : u?.simpleLevel === "train" || u?.simpleLevel === "start"
+          ? u.simpleLevel
+          : u?.nutrition?.activity === "high"
+            ? "train"
+            : "start";
     const idx = u?.simpleIdx ?? 0;
-    const plan = SIMPLE_PLANS[place];
+    const plan = plansFor(place, level);
     const w = plan[idx % plan.length];
     addWorkout({
       userId: user.id, date,
@@ -530,7 +544,7 @@ async function handleApi(
       sets: 1, reps: 1, weightKg: 0,
       notes: "simple",
     });
-    updateUser(user.id, { simpleIdx: idx + 1, simplePlace: place });
+    updateUser(user.id, { simpleIdx: idx + 1, simplePlace: place, simpleLevel: level });
     json(res, 200, {
       ok: true,
       done: w.label,
@@ -541,10 +555,11 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/settings") {
-    const body = JSON.parse(await readBody(req)) as { place?: string };
-    if (body.place === "home" || body.place === "gym") {
-      updateUser(user.id, { simplePlace: body.place });
-    }
+    const body = JSON.parse(await readBody(req)) as { place?: string; level?: string };
+    const patch: { simplePlace?: Place; simpleLevel?: "start" | "train" } = {};
+    if (body.place === "home" || body.place === "gym") patch.simplePlace = body.place;
+    if (body.level === "start" || body.level === "train") patch.simpleLevel = body.level;
+    if (Object.keys(patch).length) updateUser(user.id, patch);
     json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;
   }

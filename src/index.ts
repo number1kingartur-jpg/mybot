@@ -19,7 +19,7 @@ import { putPending, takePending } from "./pending";
 import { calcMacros, weightTrendAdvice } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
 import {
-  SIMPLE_PLANS, type Place, type SimpleExercise, type Goal as SimpleGoal,
+  plansFor, type Place, type Level, type SimpleExercise, type Goal as SimpleGoal,
   schemeFor, restFor, doseLabel, progressionRule, enduranceNote, SEX_NOTE,
   exerciseHarder, exerciseVideoUrl, isDirectVideo,
 } from "./simple";
@@ -920,9 +920,15 @@ const PLACE_KEYBOARD = {
 function currentSimpleWorkout(userId: number) {
   const u = getUser(userId);
   const place: Place = u?.simplePlace === "gym" ? "gym" : "home";
+  const level: Level =
+    u?.simpleLevel === "train" || u?.simpleLevel === "start"
+      ? u.simpleLevel
+      : u?.nutrition?.activity === "high"
+        ? "train"
+        : "start";
   const idx = u?.simpleIdx ?? 0;
-  const plan = SIMPLE_PLANS[place];
-  return { place, idx, w: plan[idx % plan.length] };
+  const plan = plansFor(place, level);
+  return { place, level, idx, w: plan[idx % plan.length] };
 }
 
 /** Цель из анкеты: дозировка плана, а не набор упражнений. */
@@ -947,7 +953,7 @@ function diffAdvice(userId: number, place: Place): string {
 }
 
 function buildSimpleWorkoutText(userId: number): string {
-  const { place, w } = currentSimpleWorkout(userId);
+  const { place, level, w } = currentSimpleWorkout(userId);
   const goal = simpleGoal(userId);
   const items = w.items
     .map((e, i) =>
@@ -957,7 +963,7 @@ function buildSimpleWorkoutText(userId: number): string {
     .join("\n\n");
 
   return (
-    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"}\n${HR}\n\n` +
+    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"} ${DOT} ${level === "train" ? "уже тренируюсь" : "с нуля"}\n${HR}\n\n` +
     `<i>Цель: ${esc(doseLabel(goal))}. Отдых между подходами: ${esc(restFor(goal))}.</i>\n\n` +
     `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом.</i>\n\n` +
     items +
@@ -1168,8 +1174,8 @@ const FEEDBACK_KEYBOARD = {
 
 bot.callbackQuery("simple_done", async (ctx) => {
   const userId = ctx.from.id;
-  const { idx, w, place } = currentSimpleWorkout(userId);
-  const plan = SIMPLE_PLANS[place];
+  const { idx, w, place, level } = currentSimpleWorkout(userId);
+  const plan = plansFor(place, level);
 
   addWorkout({
     userId,
