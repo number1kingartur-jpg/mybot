@@ -4,7 +4,7 @@ import path from "path";
 import { verifyInitData, type WebAppUser } from "./webapp-auth";
 import {
   registerUser, getUser, updateUser, setNutrition,
-  addMeal, removeMeal, getMeals, mealTotals,
+  addMeal, removeMeal, getMeals, mealTotals, mealStreak, frequentMeals,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, checkPr,
@@ -209,6 +209,10 @@ function dayState(userId: number, date: string) {
       carbsG: m.carbsG,
     })),
     totals: mealTotals(userId, date),
+    // Серия и частые блюда считаются всегда от сегодняшнего дня, а не от
+    // открытого в календаре: это состояние человека, а не свойство даты
+    streak: mealStreak(userId, today()),
+    frequent: frequentMeals(userId, today()),
     photo: photoQuota(userId),
     visionEnabled: mealVisionEnabled(),
     // Всё остальное состояние человека — одним ответом, чтобы приложение не делало
@@ -652,6 +656,37 @@ async function handleApi(
       userId: user.id, date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG,
     });
+    json(res, 200, { meal, ...dayState(user.id, date) });
+    return;
+  }
+
+  /**
+   * Повтор съеденного: одно касание вместо нового распознавания. Берём последнюю
+   * запись с этим названием и копируем её в выбранный день — распознавание тут
+   * ничего не уточнит, а фото и текст стоят запроса к модели.
+   */
+  if (req.method === "POST" && urlPath === "/api/meal/repeat") {
+    const body = JSON.parse(await readBody(req)) as { name?: string };
+    const name = String(body.name ?? "").trim().toLowerCase();
+    if (!name) {
+      json(res, 400, { error: "no_name" });
+      return;
+    }
+    const prev = getMeals(user.id)
+      .filter((m) => m.name.trim().toLowerCase() === name)
+      .pop();
+    if (!prev) {
+      json(res, 404, { error: "not_found", message: "Такого блюда нет в истории." });
+      return;
+    }
+    const meal = {
+      name: prev.name,
+      kcal: prev.kcal,
+      proteinG: prev.proteinG,
+      fatG: prev.fatG,
+      carbsG: prev.carbsG,
+    };
+    addMeal({ userId: user.id, date, ...meal });
     json(res, 200, { meal, ...dayState(user.id, date) });
     return;
   }

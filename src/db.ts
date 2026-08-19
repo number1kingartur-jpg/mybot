@@ -491,6 +491,77 @@ export function getMealsForDays(userId: number, days = 7): MealEntry[] {
     .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
 }
 
+/**
+ * Серия: сколько дней подряд, считая назад от переданного дня, есть хотя бы одна
+ * запись еды. Текущий день не обрывает серию, пока он не закончился: пустое утро
+ * не должно обнулять двадцать дней работы, поэтому отсчёт начинается со вчера,
+ * а сегодня только продлевает результат.
+ */
+export function mealStreak(userId: number, todayStr: string): { days: number; last7: boolean[] } {
+  const filled = new Set(load().meals.filter((m) => m.userId === userId).map((m) => m.date));
+  const shift = (base: string, back: number): string => {
+    const d = new Date(base + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - back);
+    return d.toISOString().slice(0, 10);
+  };
+
+  let days = filled.has(todayStr) ? 1 : 0;
+  for (let back = 1; back <= 400; back++) {
+    if (!filled.has(shift(todayStr, back))) break;
+    days++;
+  }
+
+  const last7: boolean[] = [];
+  for (let back = 6; back >= 0; back--) last7.push(filled.has(shift(todayStr, back)));
+  return { days, last7 };
+}
+
+/**
+ * Частые блюда: то, что человек уже вносил, чтобы повтор занимал одно касание,
+ * а не новое распознавание. КБЖУ берём из самой свежей записи с этим названием:
+ * порции у одного и того же блюда меняются, и последняя оценка ближе к правде,
+ * чем средняя по месяцу.
+ */
+export function frequentMeals(
+  userId: number,
+  todayStr: string,
+  daysBack = 30,
+  limit = 6
+): { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; count: number }[] {
+  const from = new Date(todayStr + "T00:00:00Z");
+  from.setUTCDate(from.getUTCDate() - (daysBack - 1));
+  const since = from.toISOString().slice(0, 10);
+
+  const rows = load()
+    .meals.filter((m) => m.userId === userId && m.date >= since)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+
+  const byName = new Map<string, { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; count: number }>();
+  for (const m of rows) {
+    const key = m.name.trim().toLowerCase();
+    const seen = byName.get(key);
+    if (seen) {
+      seen.count++;
+      seen.name = m.name;
+      seen.kcal = m.kcal;
+      seen.proteinG = m.proteinG;
+      seen.fatG = m.fatG;
+      seen.carbsG = m.carbsG;
+    } else {
+      byName.set(key, {
+        name: m.name,
+        kcal: m.kcal,
+        proteinG: m.proteinG,
+        fatG: m.fatG,
+        carbsG: m.carbsG,
+        count: 1,
+      });
+    }
+  }
+
+  return [...byName.values()].sort((a, b) => b.count - a.count).slice(0, limit);
+}
+
 export function mealTotals(userId: number, date: string) {
   const rows = getMeals(userId, date);
   return rows.reduce(

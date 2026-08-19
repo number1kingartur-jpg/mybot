@@ -2,7 +2,15 @@
    Палитра и шрифты — с arturkingfitness.com. Геометрия адаптирована под мобильное
    приложение: скругления и карточки вместо издательских острых углов сайта. */
 
+/*
+ * Тема задаётся одним атрибутом на <html data-theme="...">: все цвета живут в
+ * переменных, поэтому вариант оформления не трогает ни одного правила вёрстки.
+ * Смысл двух базовых переменных: --ink это фон, --paper это текст. В светлой
+ * теме они меняются местами, названия оставлены прежними, чтобы не переписывать
+ * девятьсот строк ради синонимов.
+ */
 :root {
+  color-scheme: dark;
   --ink: #0b0b0c;
   --ink-soft: #121213;
   --graphite: #1a1a1c;
@@ -19,6 +27,17 @@
   --surface: linear-gradient(180deg, rgba(250, 250, 248, 0.045), rgba(250, 250, 248, 0.012));
   --surface-gold: linear-gradient(180deg, rgba(176, 141, 69, 0.14), rgba(176, 141, 69, 0.03));
 
+  --text-soft: rgba(250, 250, 248, 0.74);
+  --fill-1: rgba(250, 250, 248, 0.03);
+  --fill-2: rgba(250, 250, 248, 0.045);
+  --track: rgba(250, 250, 248, 0.08);
+  --bar-bg: rgba(11, 11, 12, 0.92);
+  --gold-fill: rgba(176, 141, 69, 0.1);
+  --danger-bg: rgba(217, 138, 138, 0.08);
+  --danger-line: rgba(217, 138, 138, 0.25);
+  --danger-ink: #e0a1a1;
+  --glow: radial-gradient(120% 60% at 50% 0%, rgba(176, 141, 69, 0.09), transparent 60%);
+
   --font-display: "Playfair Display", Georgia, "Times New Roman", serif;
   --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
@@ -34,6 +53,73 @@
   --tabbar-h: 68px;
 }
 
+/*
+ * Графит: строгий вариант. Отличается не оттенком золота, а характером — фон
+ * холоднее, углы жёстче, декоративная золотая подложка заменена стальной.
+ * Латунь остаётся только на цифрах и активных элементах.
+ */
+[data-theme="graphite"] {
+  --ink: #0e1013;
+  --ink-soft: #14171b;
+  --graphite: #1a1e23;
+  --paper: #eef1f4;
+  --gold: #a98f5c;
+  --gold-light: #c2a771;
+  --muted: #8b9299;
+  --dim: #5f666e;
+
+  --line: rgba(238, 241, 244, 0.08);
+  --line-strong: rgba(238, 241, 244, 0.15);
+  --line-gold: rgba(238, 241, 244, 0.2);
+
+  --surface: linear-gradient(180deg, rgba(238, 241, 244, 0.055), rgba(238, 241, 244, 0.02));
+  --surface-gold: linear-gradient(180deg, rgba(238, 241, 244, 0.075), rgba(238, 241, 244, 0.025));
+
+  --text-soft: rgba(238, 241, 244, 0.74);
+  --fill-1: rgba(238, 241, 244, 0.03);
+  --fill-2: rgba(238, 241, 244, 0.05);
+  --track: rgba(238, 241, 244, 0.09);
+  --bar-bg: rgba(14, 16, 19, 0.94);
+  --gold-fill: rgba(169, 143, 92, 0.12);
+  --glow: linear-gradient(180deg, rgba(238, 241, 244, 0.03), transparent 220px);
+
+  --r-lg: 12px;
+  --r-md: 9px;
+  --r-sm: 6px;
+}
+
+/* Слоновая кость: светлая тема для дневного света. Золото темнее, чтобы
+   держать контраст на белом, текст — тёплый графит вместо чёрного. */
+[data-theme="ivory"] {
+  color-scheme: light;
+  --ink: #f7f4ef;
+  --ink-soft: #f1ece3;
+  --graphite: #e8e1d6;
+  --paper: #17161a;
+  --gold: #8a6a2c;
+  --gold-light: #a5822f;
+  --muted: #6e6c70;
+  --dim: #8d8b90;
+
+  --line: rgba(23, 22, 26, 0.1);
+  --line-strong: rgba(23, 22, 26, 0.17);
+  --line-gold: rgba(138, 106, 44, 0.3);
+
+  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.62));
+  --surface-gold: linear-gradient(180deg, rgba(138, 106, 44, 0.1), rgba(138, 106, 44, 0.02));
+
+  --text-soft: rgba(23, 22, 26, 0.76);
+  --fill-1: rgba(23, 22, 26, 0.035);
+  --fill-2: rgba(23, 22, 26, 0.06);
+  --track: rgba(23, 22, 26, 0.11);
+  --bar-bg: rgba(247, 244, 239, 0.93);
+  --gold-fill: rgba(138, 106, 44, 0.09);
+  --danger-bg: rgba(168, 62, 62, 0.07);
+  --danger-line: rgba(168, 62, 62, 0.22);
+  --danger-ink: #9c3b3b;
+  --glow: radial-gradient(120% 60% at 50% 0%, rgba(138, 106, 44, 0.1), transparent 62%);
+}
+
 *,
 *::before,
 *::after {
@@ -47,9 +133,7 @@ html {
 
 body {
   margin: 0;
-  background:
-    radial-gradient(120% 60% at 50% 0%, rgba(176, 141, 69, 0.09), transparent 60%),
-    var(--ink);
+  background: var(--glow), var(--ink);
   color: var(--paper);
   font-family: var(--font-body);
   font-size: 15px;
@@ -184,7 +268,7 @@ button {
 }
 
 .lead {
-  color: rgba(250, 250, 248, 0.72);
+  color: var(--text-soft);
   font-size: 14.5px;
   line-height: 1.55;
 }
@@ -273,7 +357,7 @@ button {
 
 .badge--plain {
   border-color: var(--line-strong);
-  background: rgba(250, 250, 248, 0.05);
+  background: var(--fill-2);
   color: var(--muted);
 }
 
@@ -333,7 +417,7 @@ button {
 
 .figure__unit {
   font-size: 17px;
-  color: rgba(250, 250, 248, 0.55);
+  color: var(--muted);
   margin-left: 4px;
 }
 
@@ -378,13 +462,13 @@ button {
 .bar__value {
   font-size: 14px;
   font-variant-numeric: tabular-nums;
-  color: rgba(250, 250, 248, 0.85);
+  color: var(--text-soft);
 }
 
 .bar__track {
   height: 5px;
   border-radius: var(--r-pill);
-  background: rgba(250, 250, 248, 0.07);
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -418,8 +502,8 @@ button {
 .chip {
   border-radius: var(--r-pill);
   border: 1px solid var(--line-strong);
-  background: rgba(250, 250, 248, 0.04);
-  color: rgba(250, 250, 248, 0.7);
+  background: var(--fill-2);
+  color: var(--text-soft);
   font-size: 13px;
   padding: 10px 16px;
   white-space: nowrap;
@@ -463,7 +547,7 @@ button {
   width: 100%;
   border-radius: var(--r-md);
   border: 1px solid var(--line-strong);
-  background: rgba(250, 250, 248, 0.04);
+  background: var(--fill-2);
   color: var(--paper);
   font-family: var(--font-body);
   font-size: 16px;
@@ -537,7 +621,7 @@ select.input {
 }
 
 .btn--outline {
-  background: rgba(250, 250, 248, 0.04);
+  background: var(--fill-2);
   color: var(--paper);
   border: 1px solid var(--line-strong);
 }
@@ -580,7 +664,7 @@ select.input {
   background: rgba(176, 141, 69, 0.06);
   border: 1px solid rgba(176, 141, 69, 0.16);
   padding: 14px 16px;
-  color: rgba(250, 250, 248, 0.72);
+  color: var(--text-soft);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -591,7 +675,7 @@ select.input {
 }
 
 .note--plain {
-  background: rgba(250, 250, 248, 0.03);
+  background: var(--fill-1);
   border-color: var(--line);
   color: var(--muted);
 }
@@ -652,7 +736,7 @@ select.input {
 }
 
 .acc--deload {
-  background: rgba(250, 250, 248, 0.02);
+  background: var(--fill-1);
 }
 
 .acc__head {
@@ -710,7 +794,7 @@ select.input {
 
 .sess {
   border-radius: var(--r-md);
-  background: rgba(250, 250, 248, 0.03);
+  background: var(--fill-1);
   border: 1px solid var(--line);
   padding: 14px 15px;
   margin-bottom: 8px;
@@ -774,7 +858,7 @@ select.input {
   padding: 6px 0;
   font-size: 14px;
   line-height: 1.55;
-  color: rgba(250, 250, 248, 0.85);
+  color: var(--text-soft);
 }
 
 .steps-list li::before {
@@ -803,7 +887,7 @@ select.input {
   padding: 5px 0;
   font-size: 14px;
   line-height: 1.55;
-  color: rgba(250, 250, 248, 0.78);
+  color: var(--text-soft);
 }
 
 .bullets li::before {
@@ -905,9 +989,9 @@ label.btn {
 
 .error {
   border-radius: var(--r-md);
-  background: rgba(217, 138, 138, 0.08);
-  border: 1px solid rgba(217, 138, 138, 0.25);
-  color: #e0a1a1;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-ink);
   font-size: 13px;
   padding: 13px 15px;
 }
@@ -923,7 +1007,7 @@ label.btn {
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--fill-1);
 }
 
 .daynav__btn {
@@ -931,7 +1015,7 @@ label.btn {
   padding: 8px 0;
   border: 0;
   border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--fill-2);
   color: var(--gold);
   font-size: 16px;
   line-height: 1;
@@ -964,7 +1048,7 @@ label.btn {
   display: flex;
   gap: 2px;
   padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
-  background: rgba(11, 11, 12, 0.92);
+  background: var(--bar-bg);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border-top: 1px solid var(--line);
@@ -1002,7 +1086,143 @@ label.btn {
 
 .tab[aria-current="page"] {
   color: var(--gold);
-  background: rgba(176, 141, 69, 0.1);
+  background: var(--gold-fill);
+}
+
+/* ── Кольцо дня ─────────────────────────────────────────────────────────── */
+/* Одна цифра в центре: сколько ещё можно съесть. Всё остальное — вокруг. */
+
+.ring {
+  position: relative;
+  width: 172px;
+  height: 172px;
+  margin: 4px auto 6px;
+}
+
+.ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring__arc {
+  transition: stroke-dashoffset 0.7s var(--ease);
+}
+
+.ring__mid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.ring__value {
+  font-family: var(--font-display);
+  font-size: 40px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ring__unit {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-widest);
+  color: var(--muted);
+}
+
+.ring__note {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+/* ── Быстрые действия ───────────────────────────────────────────────────── */
+/* Три касания, которые человек делает каждый день: снять еду, повторить, вода. */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tile {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  padding: 14px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  transition: transform 0.3s var(--ease), border-color 0.3s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tile:active {
+  transform: scale(0.97);
+  border-color: var(--line-gold);
+}
+
+.tile svg {
+  width: 22px;
+  height: 22px;
+  color: var(--gold);
+}
+
+.tile__label {
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.tile--gold {
+  background: var(--surface-gold);
+  border-color: var(--line-gold);
+}
+
+/* ── Серия дней ─────────────────────────────────────────────────────────── */
+
+.streak {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+
+.streak__dots {
+  display: flex;
+  gap: 5px;
+}
+
+.streak__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+}
+
+.streak__dot--on {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.streak__text {
+  font-size: 13px;
+  color: var(--text-soft);
+  flex: 1;
 }
 
 /* ── Футер ──────────────────────────────────────────────────────────────── */

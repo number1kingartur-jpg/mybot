@@ -42,6 +42,19 @@
 
     <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
 
+    <!--
+      Поле выбора файла живёт вне #view: экран перерисовывается целиком, и если
+      input стоит внутри карточки, он исчезает вместе с ней — в момент, когда
+      системный выбор фото ещё открыт. Атрибута capture нет намеренно: с ним
+      Android уходит сразу в камеру и теряет галерею.
+    -->
+    <input
+      id="photoInput"
+      type="file"
+      accept="image/*"
+      style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none"
+    />
+
     <script src="js/api.js"></script>
     <script src="js/engine.js"></script>
     <script src="js/plans.js"></script>

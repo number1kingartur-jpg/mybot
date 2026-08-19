@@ -22,6 +22,9 @@
   var state = {
     screen: "home",
     setupDone: false,
+    theme: "night", // night | graphite | ivory — оформление, выбор человека
+    profTab: "day", // day | progress | look — подразделы личного профиля
+    goalWeightKg: "", // цель по весу; из неё считается прогноз на «Сегодня»
     calcTab: "orm",
     nutTab: "eaten",
     menu: { id: "ru" },
@@ -48,6 +51,34 @@
     lastOrm: null,
     result: null
   };
+
+  /**
+   * Три оформления вместо одного. Смысл не в украшении: тёмная тема в солнечный
+   * день на улице читается плохо, а светлая вечером бьёт по глазам. Цвета живут
+   * в CSS-переменных, здесь только выбор и цвет служебных полос Telegram.
+   */
+  var THEMES = {
+    night: { label: "Ночь", attr: null, bg: "#0b0b0c" },
+    graphite: { label: "Графит", attr: "graphite", bg: "#101114" },
+    ivory: { label: "Слоновая кость", attr: "ivory", bg: "#f7f4ef" }
+  };
+
+  function applyTheme() {
+    var t = THEMES[state.theme] || THEMES.night;
+    if (t.attr) document.documentElement.setAttribute("data-theme", t.attr);
+    else document.documentElement.removeAttribute("data-theme");
+
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", t.bg);
+    if (tg) {
+      try {
+        if (tg.setBackgroundColor) tg.setBackgroundColor(t.bg);
+        if (tg.setHeaderColor) tg.setHeaderColor(t.bg);
+      } catch (e) {
+        /* клиент старше 6.1 — полосы останутся своими */
+      }
+    }
+  }
 
   function today() {
     var d = new Date();
@@ -77,7 +108,9 @@
           localMeals: state.localMeals,
           localWater: state.localWater,
           setupDone: state.setupDone,
-          migrated: state.migrated
+          migrated: state.migrated,
+          theme: state.theme,
+          goalWeightKg: state.goalWeightKg
         })
       );
     } catch (e) {
@@ -97,6 +130,8 @@
       if (Array.isArray(saved.localMeals)) state.localMeals = saved.localMeals;
       if (saved.localWater && typeof saved.localWater === "object") state.localWater = saved.localWater;
       if (saved.lastOrm) state.lastOrm = saved.lastOrm;
+      if (THEMES[saved.theme]) state.theme = saved.theme;
+      if (saved.goalWeightKg) state.goalWeightKg = saved.goalWeightKg;
       state.setupDone = Boolean(saved.setupDone);
       state.migrated = Boolean(saved.migrated);
       hadSavedProfile = Boolean(saved.profile);
@@ -562,6 +597,157 @@
   }
 
   /* ── Экран: сегодня ─────────────────────────────────────────────────────── */
+  // Один экран — один вопрос: сколько ещё можно съесть и что нажать. Формулы,
+  // коэффициенты и вторые цифры живут в «Расчётах»: здесь они только мешают.
+
+  /** Кольцо дня: доля съеденного, крупная цифра остатка в центре. */
+  function ring(pct, value, unit, note, over) {
+    var r = 74;
+    var c = 2 * Math.PI * r;
+    var filled = Math.max(0, Math.min(1, pct / 100));
+    return (
+      '<div class="ring"><svg viewBox="0 0 172 172" aria-hidden="true">' +
+      '<circle cx="86" cy="86" r="' +
+      r +
+      '" fill="none" stroke="var(--track)" stroke-width="9" />' +
+      '<circle class="ring__arc" cx="86" cy="86" r="' +
+      r +
+      '" fill="none" stroke="' +
+      (over ? "#d98a8a" : "var(--gold)") +
+      '" stroke-width="9" stroke-linecap="round" stroke-dasharray="' +
+      c.toFixed(1) +
+      '" stroke-dashoffset="' +
+      (c * (1 - filled)).toFixed(1) +
+      '" /></svg>' +
+      '<div class="ring__mid"><span class="ring__value">' +
+      esc(value) +
+      '</span><span class="ring__unit">' +
+      esc(unit) +
+      "</span>" +
+      (note ? '<span class="ring__note">' + esc(note) + "</span>" : "") +
+      "</div></div>"
+    );
+  }
+
+  var TILE_ICONS = {
+    photo: "M4 8.5A2.5 2.5 0 0 1 6.5 6h1L9 4h6l1.5 2h1A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5zM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
+    repeat: "M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6M17 4v3h-3M7 20v-3h3",
+    water: "M12 3.5s6 6.6 6 10.4A6 6 0 0 1 6 13.9C6 10.1 12 3.5 12 3.5z",
+    text: "M5 6.5h14M5 12h14M5 17.5h9"
+  };
+
+  function tile(action, icon, label, gold) {
+    return (
+      '<button class="tile' +
+      (gold ? " tile--gold" : "") +
+      '" data-action="' +
+      action +
+      '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+      'stroke-linecap="round" stroke-linejoin="round"><path d="' +
+      TILE_ICONS[icon] +
+      '"/></svg><span class="tile__label">' +
+      label +
+      "</span></button>"
+    );
+  }
+
+  /**
+   * Серия дней с записанной едой. Смысл не в игре: пропуск двух дней подряд —
+   * это и есть момент, когда дневник бросают, и его видно до того, как бросили.
+   */
+  function streakStrip() {
+    var s = state.day && state.day.streak ? state.day.streak : null;
+    if (!s) return "";
+    var dots = (s.last7 || [])
+      .map(function (on) {
+        return '<span class="streak__dot' + (on ? " streak__dot--on" : "") + '"></span>';
+      })
+      .join("");
+    var text = s.days
+      ? s.days + " " + plural(s.days, "день", "дня", "дней") + " подряд с дневником"
+      : "Серия прервана — запиши любой приём, и она начнётся заново";
+    return (
+      '<div class="streak"><div class="streak__dots">' +
+      dots +
+      '</div><span class="streak__text">' +
+      esc(text) +
+      "</span></div>"
+    );
+  }
+
+  /** Частые блюда: повтор в одно касание, без нового распознавания. */
+  function frequentRow() {
+    var list = state.day && state.day.frequent ? state.day.frequent : [];
+    if (!list.length) return "";
+    return (
+      '<div class="chips chips--wrap" style="margin-bottom:12px">' +
+      list
+        .slice(0, 3)
+        .map(function (f) {
+          // Полное название блюда занимает всю строку, и три кнопки превращаются
+          // в три этажа. Внутри кнопки — короткая подпись, в data-repeat — точное имя.
+          var short = f.name.length > 22 ? f.name.slice(0, 21).replace(/[ ,]+$/, "") + "…" : f.name;
+          return (
+            '<button type="button" class="chip" data-repeat="' +
+            esc(f.name) +
+            '">↺ ' +
+            esc(short) +
+            " · " +
+            f.kcal +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  /**
+   * Прогноз: где будет вес при текущей скорости. Считается только по факту —
+   * четыре взвешивания и настоящий тренд. Обещать «−8 кг за месяц» по анкете,
+   * как это делают соседи по нише, значит один раз соврать и один раз потерять
+   * человека, когда прогноз не сойдётся.
+   */
+  function projectionNote(advice) {
+    if (!advice) return "";
+    var goal = num(state.goalWeightKg);
+    var last = sortedEntries().slice(-1)[0];
+    if (!last || !(goal >= 30 && goal <= 250)) return "";
+    var delta = goal - last.weightKg;
+    if (Math.abs(delta) < 0.3) {
+      return '<p class="note"><strong>Цель по весу достигнута.</strong> ' + goal + " кг — держи норму и наблюдай.</p>";
+    }
+    var rate = advice.rateKgWeek;
+    if (!rate || delta * rate <= 0) {
+      return (
+        '<p class="note"><strong>Вес идёт не в сторону цели.</strong> Тренд ' +
+        (rate > 0 ? "+" : "") +
+        rate +
+        " кг/нед, до цели " +
+        (delta > 0 ? "+" : "") +
+        delta.toFixed(1) +
+        " кг. Правь калории в «Питании».</p>"
+      );
+    }
+    var weeks = Math.abs(delta / rate);
+    if (weeks > 104) return "";
+    var when = new Date();
+    when.setDate(when.getDate() + Math.round(weeks * 7));
+    return (
+      '<p class="note"><strong>При текущем темпе</strong> ' +
+      goal +
+      " кг примерно к " +
+      String(when.getDate()).padStart(2, "0") +
+      "." +
+      String(when.getMonth() + 1).padStart(2, "0") +
+      ": " +
+      (rate > 0 ? "+" : "") +
+      rate +
+      " кг/нед по " +
+      advice.days +
+      " дням взвешиваний.</p>"
+    );
+  }
 
   function renderHome() {
     var m = macros();
@@ -570,107 +756,66 @@
     var last = entries.length ? entries[entries.length - 1] : null;
     var place = state.workout.place;
     var plan = KM_PLANS.plans[place][state.workout.plan] || KM_PLANS.plans[place][0];
-    var pr = state.program;
-
     var eaten = eatenTotals();
-    var normCard = m
-      ? eaten.count
-        ? card(
-            cardHead(
-              m.kcal - eaten.kcal >= 0 ? "Осталось на сегодня" : "Перебор",
-              "Съедено " + eaten.kcal + " из " + m.kcal + " ккал",
-              eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
+    var w = water();
+
+    var left = m ? m.kcal - eaten.kcal : 0;
+    var over = m ? left < 0 : false;
+    var heroCard = m
+      ? card(
+          cardHead(
+            over ? "Перебор" : "Осталось на сегодня",
+            "Норма " + m.kcal + " ккал · " + GOAL_WORD[state.profile.goal],
+            eaten.count ? eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов") : null
+          ) +
+            ring(
+              m.kcal ? (eaten.kcal * 100) / m.kcal : 0,
+              (over ? "+" : "") + Math.abs(left),
+              "ккал",
+              "съедено " + eaten.kcal,
+              over
             ) +
-              figure(
-                (m.kcal - eaten.kcal >= 0 ? "" : "+") + Math.abs(m.kcal - eaten.kcal),
-                " ккал",
-                "цель: " + GOAL_WORD[state.profile.goal]
-              ) +
-              '<div class="bars">' +
-              bar(
-                "Калории",
-                m.kcal - eaten.kcal >= 0 ? "#cba968" : "#d98a8a",
-                eaten.kcal + " / " + m.kcal,
-                (eaten.kcal * 100) / m.kcal
-              ) +
-              bar(
-                "Белок",
-                "#8a7a52",
-                eaten.proteinG + " / " + m.proteinG + " г",
-                (eaten.proteinG * 100) / m.proteinG
-              ) +
-              "</div>",
-            { gold: true, tap: "nutrition" }
-          )
-        : card(
-            cardHead("Норма на день", "Цель: " + GOAL_WORD[state.profile.goal], "Питание") +
-              figure(m.kcal, " ккал", "по твоим данным") +
-              '<div class="bars">' +
-              bar("Белок", "#cba968", m.proteinG + " г", (m.proteinG * 4 * 100) / m.kcal) +
-              bar("Жиры", "#b08d45", m.fatG + " г", (m.fatG * 9 * 100) / m.kcal) +
-              bar("Углеводы", "#8a7a52", m.carbsG + " г", (m.carbsG * 4 * 100) / m.kcal) +
-              "</div>",
-            { gold: true, tap: "nutrition" }
-          )
+            '<div class="bars">' +
+            bar("Белок", "#cba968", eaten.proteinG + " / " + m.proteinG + " г", (eaten.proteinG * 100) / m.proteinG) +
+            bar("Жиры", "#b08d45", eaten.fatG + " / " + m.fatG + " г", (eaten.fatG * 100) / m.fatG) +
+            bar("Углеводы", "#7d8ea8", eaten.carbsG + " / " + m.carbsG + " г", (eaten.carbsG * 100) / m.carbsG) +
+            "</div>",
+          { gold: true, tap: "nutrition" }
+        )
       : card(
-          cardHead("Норма на день", "Заполни данные — посчитаю калории и БЖУ") +
-            '<p class="lead">Открыть раздел «Питание»</p>',
-          { tap: "nutrition" }
+          cardHead("Норма не задана", "Шесть полей — и появится цифра дня") +
+            '<div class="btn-stack"><button class="btn btn--primary" data-action="edit-profile">Задать норму</button></div>'
         );
 
     return (
       noticeHtml() +
-      normCard +
-      programCard() +
+      heroCard +
+      '<div class="tiles">' +
+      tile("pick-photo", "photo", "Фото еды", true) +
+      tile("add-text-form", "text", "Текстом") +
+      tile("water-250", "water", "+250 мл") +
+      "</div>" +
+      (state.addMode === "text" ? card(textForm()) : "") +
+      (state.busy ? card('<p class="lead">Считаю… обычно 3–10 секунд.</p>') : "") +
+      frequentRow() +
+      streakStrip() +
       '<div class="grid-2">' +
+      metric(
+        "Вода",
+        fmtWater(w.ml),
+        w.ml >= w.targetMl ? "норма закрыта" : "из " + fmtWater(w.targetMl)
+      ) +
       metric(
         "Вес",
-        last ? last.weightKg + " <span class=\"figure__unit\">кг</span>" : "—",
-        last ? "запись " + formatDate(last.date) : "нет записей"
-      ) +
-      metric(
-        "Тренд",
-        advice
-          ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + " <span class=\"figure__unit\">кг/нед</span>"
-          : "—",
-        advice ? "за " + advice.days + " дн." : "нужно 4 взвешивания"
+        last ? last.weightKg + ' <span class="figure__unit">кг</span>' : "—",
+        last
+          ? advice
+            ? (advice.rateKgWeek > 0 ? "+" : "") + advice.rateKgWeek + " кг/нед"
+            : "запись " + formatDate(last.date)
+          : "нет записей"
       ) +
       "</div>" +
-      '<div class="grid-2">' +
-      (function () {
-        var w = water();
-        return metric(
-          "Вода",
-          fmtWater(w.ml),
-          w.ml >= w.targetMl ? "норма закрыта" : "из " + fmtWater(w.targetMl)
-        );
-      })() +
-      metric(
-        "Последний 1ПМ",
-        state.lastOrm ? state.lastOrm.oneRm + " <span class=\"figure__unit\">кг</span>" : "—",
-        state.lastOrm ? state.lastOrm.weightKg + " кг × " + state.lastOrm.reps : "не считал"
-      ) +
-      "</div>" +
-      '<div class="chips chips--wrap" style="margin-bottom:18px">' +
-      [250, 500]
-        .map(function (ml) {
-          return '<button type="button" class="chip" data-water="' + ml + '">+' + ml + " мл</button>";
-        })
-        .join("") +
-      '<button type="button" class="chip" data-go="profile">Профиль</button>' +
-      "</div>" +
-      '<div class="grid-2">' +
-      metric(
-        "Программа",
-        modelName(pr.model),
-        pr.weeks + " " + plural(pr.weeks, "неделя", "недели", "недель") + " · " + pr.days + " в нед."
-      ) +
-      metric(
-        "Тренировок",
-        state.day ? String(state.day.workoutsTotal) : "—",
-        state.day ? "записано всего" : "нет связи с ботом"
-      ) +
-      "</div>" +
+      programCard() +
       card(
         cardHead(
           "Тренировка · план " + esc(plan.label),
@@ -688,13 +833,12 @@
           "</p>",
         { tap: "workout" }
       ) +
+      projectionNote(advice) +
       (advice && advice.kcalDelta !== 0
         ? '<p class="note"><strong>Тренд против цели.</strong> ' +
           esc(advice.verdict) +
           " Правь норму в «Питании» и держи новую цифру две недели.</p>"
-        : '<p class="note note--plain">Калории — Миффлин–Сан-Жеор с коэффициентом активности. ' +
-          "1ПМ — среднее трёх формул: Эпли, Бжицки, Ландер. Программы — проценты от максимума " +
-          "с округлением до 2.5 кг. Цифры совпадают с ботом.</p>")
+        : "")
     );
   }
 
@@ -1145,12 +1289,9 @@
       cardHead("Добавить приём пищи", limitLine) +
         '<div class="btn-stack">' +
         // Кнопка, а не <label for>, и открытие через .click() из кода: в WebView
-        // Telegram связка «label → input с display:none» часто не срабатывает, причём
-        // молча. Атрибута capture нет намеренно — с ним Android уходит сразу в камеру
-        // и падает без разрешения, а галерея становится недоступна.
+        // Telegram связка «label → input с display:none» часто не срабатывает,
+        // причём молча. Само поле выбора файла лежит в index.html — см. комментарий там.
         '<button class="btn btn--primary" data-action="pick-photo">Сфотографировать еду</button>' +
-        '<input id="photoInput" type="file" accept="image/*" ' +
-        'style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" />' +
         '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
         '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
         '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
@@ -1944,8 +2085,36 @@
             '<div class="btn-stack"><button class="btn btn--primary" data-action="edit-profile">Задать норму</button></div>'
         );
 
+    // Профиль вырос до восьми карточек: анкета, факт дня, еда, вода, цель, дневник
+    // веса, график, оформление. Одним свитком это не читается, поэтому три
+    // подраздела: что сегодня, что в динамике, как выглядит.
+    var tabs =
+      '<div class="chips" data-seg="prof_tab">' +
+      [["day", "Сегодня"], ["progress", "Прогресс"], ["look", "Вид"]]
+        .map(function (o) {
+          return (
+            '<button type="button" class="chip" data-value="' +
+            o[0] +
+            '" aria-pressed="' +
+            (state.profTab === o[0]) +
+            '">' +
+            o[1] +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>";
+
+    if (state.profTab === "progress") {
+      return noticeHtml() + tabs + goalWeightCard() + renderDiary();
+    }
+    if (state.profTab === "look") {
+      return noticeHtml() + tabs + themeCard() + aboutCard();
+    }
+
     return (
       noticeHtml() +
+      tabs +
       card(
         cardHead(
           name ? esc(name) : "Личный профиль",
@@ -1976,8 +2145,72 @@
       // Еда и вода стоят рядом: то, что человек делает каждый день по многу раз,
       // не должно требовать перехода в другой раздел
       (stale ? "" : addOrBusy(state.day ? state.day.photo : null) + mealsListCard(mealsToday(), true)) +
-      waterCard() +
-      renderDiary()
+      waterCard()
+    );
+  }
+
+  /**
+   * Цель по весу. Одно поле, но без него прогноз на «Сегодня» невозможен, а
+   * прогноз — единственная честная замена обещаниям «−8 кг за месяц», которыми
+   * торгуют соседи по нише.
+   */
+  function goalWeightCard() {
+    var goal = num(state.goalWeightKg);
+    var last = sortedEntries().slice(-1)[0];
+    var set = goal >= 30 && goal <= 250;
+    return card(
+      cardHead(
+        set ? "Цель: " + goal + " кг" : "Цель по весу не задана",
+        set && last
+          ? (goal > last.weightKg ? "+" : "") + (goal - last.weightKg).toFixed(1) + " кг от последнего взвешивания"
+          : "Появится прогноз на «Сегодня»: когда цель будет достигнута при текущем темпе"
+      ) +
+        field("Целевой вес, кг", numInput("goalWeightKg", { min: 30, max: 250, step: 0.1, placeholder: "например 82" })) +
+        '<div class="btn-stack"><button class="btn btn--outline btn--slim" data-action="save-goal-weight">Сохранить цель</button></div>'
+    );
+  }
+
+  /** Где живут данные и какая версия открыта: без этого спор «я обновил» не решить. */
+  function aboutCard() {
+    var b = KM_API.build ? KM_API.build() : "";
+    var when = b ? new Date(Number(b) * 1000) : null;
+    return card(
+      cardHead(
+        "Где хранятся данные",
+        online ? "Дневник общий с ботом: записи видны и в чате" : "Только на этом устройстве: приложение открыто вне Telegram"
+      ) +
+        '<ul class="bullets">' +
+        "<li>Еда, вода, вес и тренировки — в базе бота, привязаны к твоему Telegram.</li>" +
+        "<li>Тема оформления и цель по весу — на устройстве, они ни на что не влияют.</li>" +
+        "<li>Фото уходит на сервер бота для распознавания и не сохраняется.</li>" +
+        "</ul>" +
+        '<p class="note note--plain">Версия приложения: ' +
+        (when
+          ? String(when.getDate()).padStart(2, "0") +
+            "." +
+            String(when.getMonth() + 1).padStart(2, "0") +
+            " " +
+            String(when.getHours()).padStart(2, "0") +
+            ":" +
+            String(when.getMinutes()).padStart(2, "0")
+          : "не определена") +
+        "</p>"
+    );
+  }
+
+  /** Оформление: выбор человека, а не подстройка под тему Telegram. */
+  function themeCard() {
+    return card(
+      cardHead("Оформление", "Три темы: ночная, графитовая и светлая") +
+        chips(
+          "theme",
+          state.theme,
+          Object.keys(THEMES).map(function (id) {
+            return [id, THEMES[id].label];
+          }),
+          true
+        ) +
+        '<p class="note note--plain">Тема хранится на устройстве и не влияет на расчёты.</p>'
     );
   }
 
@@ -2189,6 +2422,10 @@
     var wat = t.closest("[data-water]");
     if (wat) return addWater(parseInt(wat.getAttribute("data-water"), 10));
 
+    // Повтор частого блюда — тоже раньше .chip, по той же причине
+    var rep = t.closest("[data-repeat]");
+    if (rep) return repeatMeal(rep.getAttribute("data-repeat"));
+
     var chip = t.closest(".chip");
     if (chip) return onSeg(chip);
 
@@ -2308,6 +2545,13 @@
         pick.click();
         return;
       }
+      case "water-250":
+        return addWater(250);
+      case "save-goal-weight":
+        persist();
+        state.notice = { kind: "ok", text: "Цель сохранена." };
+        haptic("medium");
+        return render();
       case "add-food":
         return addMealFood(action.getAttribute("data-food"), Number(action.getAttribute("data-grams")));
       case "day-prev":
@@ -2407,6 +2651,16 @@
         state.nutTab = value;
         state.notice = null;
         state.addMode = null;
+        return render();
+      case "prof_tab":
+        state.profTab = value;
+        state.notice = null;
+        state.addMode = null;
+        return render();
+      case "theme":
+        state.theme = value;
+        persist();
+        applyTheme();
         return render();
       case "menu_id":
         state.menu.id = value;
@@ -2529,6 +2783,19 @@
     render();
   }
 
+  /** Повтор блюда из истории: сервер копирует последнюю запись с этим названием. */
+  function repeatMeal(name) {
+    if (!name || !state.day) return;
+    state.busy = "food";
+    state.notice = null;
+    render();
+    KM_API.repeat(name)
+      .then(function (data) {
+        applyMealResult(data, data.meal.name + " — " + data.meal.kcal + " ккал.");
+      })
+      .catch(mealError);
+  }
+
   function addMealFood(name, grams) {
     if (!name || !state.day) return;
     state.busy = "food";
@@ -2614,15 +2881,12 @@
   state.nutTab = online ? "eaten" : "norm";
   if (!state.setupDone && !hadSavedProfile) state.screen = "setup";
 
+  applyTheme();
+
   if (tg) {
     tg.ready();
     tg.expand();
-    try {
-      if (tg.setHeaderColor) tg.setHeaderColor("#0b0b0c");
-      if (tg.setBackgroundColor) tg.setBackgroundColor("#0b0b0c");
-    } catch (e) {
-      /* старый клиент */
-    }
+    applyTheme(); // после ready(): до него клиент не принимает цвет полос
     if (tg.BackButton) {
       tg.BackButton.onClick(function () {
         if (state.screen === "home") tg.close();
