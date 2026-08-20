@@ -1916,46 +1916,61 @@
     if (!state.foods.length) return '<p class="muted">Загружаю справочник…</p>';
 
     var q = String(state.foodQuery || "").trim().toLowerCase();
-    var list = state.foods
-      .filter(function (f) {
-        if (!q) return true;
-        if (f.name.toLowerCase().indexOf(q) !== -1) return true;
-        var als = f.aliases || [];
-        for (var i = 0; i < als.length; i++) {
-          if (String(als[i]).toLowerCase().indexOf(q) !== -1) return true;
-        }
-        return false;
+    var list = state.foods.filter(function (f) {
+      if (!q) return true;
+      if (f.name.toLowerCase().indexOf(q) !== -1) return true;
+      var als = f.aliases || [];
+      for (var i = 0; i < als.length; i++) {
+        if (String(als[i]).toLowerCase().indexOf(q) !== -1) return true;
+      }
+      return false;
+    });
+
+    if (!list.length) {
+      return '<p class="muted">В основных продуктах этого нет. Сладости и газировку добавь текстом или фото.</p>';
+    }
+
+    function foodRow(f) {
+      var grams = num(state.foodGrams);
+      var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG;
+      return (
+        '<li class="log--thumbed">' +
+        thumb(f.slug, f.name) +
+        '<span class="meal__name">' +
+        esc(f.name) +
+        '<span class="meal__macro">' +
+        f.kcal100 +
+        " ккал / 100 г</span></span>" +
+        '<button class="btn btn--outline btn--slim" data-action="add-food" data-food="' +
+        esc(f.name) +
+        '" data-grams="' +
+        g +
+        '">' +
+        g +
+        " г</button></li>"
+      );
+    }
+
+    if (q) {
+      return '<ul class="log">' + list.map(foodRow).join("") + "</ul>";
+    }
+
+    var groups = [
+      { id: "protein", title: "Белок" },
+      { id: "fat", title: "Жиры" },
+      { id: "carb", title: "Углеводы" },
+      { id: "fiber", title: "Клетчатка" },
+      { id: "water", title: "Вода" },
+    ];
+    return groups
+      .map(function (g) {
+        var items = list.filter(function (f) {
+          return f.role === g.id;
+        });
+        if (!items.length) return "";
+        return '<p class="pick__label">' + g.title + "</p><ul class=\"log\">" + items.map(foodRow).join("") + "</ul>";
       })
-      .slice(0, 10);
-
-    if (!list.length) return '<p class="muted">Ничего не нашёл. Добавь текстом или вручную.</p>';
-
-    return (
-      '<ul class="log">' +
-      list
-        .map(function (f) {
-          var grams = num(state.foodGrams);
-          var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG;
-          return (
-            '<li class="log--thumbed">' +
-            thumb(f.slug, f.name) +
-            '<span class="meal__name">' +
-            esc(f.name) +
-            '<span class="meal__macro">' +
-            f.kcal100 +
-            " ккал / 100 г</span></span>" +
-            '<button class="btn btn--outline btn--slim" data-action="add-food" data-food="' +
-            esc(f.name) +
-            '" data-grams="' +
-            g +
-            '">' +
-            g +
-            " г</button></li>"
-          );
-        })
-        .join("") +
-      "</ul>"
-    );
+      .join("");
   }
 
   function foodForm() {
@@ -1964,10 +1979,10 @@
       '<div style="margin-top:18px">' +
       field(
         "Продукт",
-        '<input class="input" type="text" data-path="foodQuery" placeholder="курица, рис, творог" value="' +
+        '<input class="input" type="text" data-path="foodQuery" placeholder="грудка, гречка, вода" value="' +
           esc(state.foodQuery) +
           '" />',
-        "КБЖУ берутся из справочника бота, без модели и без догадок."
+        "Основные продукты: белок, жиры, углеводы, клетчатка, вода."
       ) +
       field(
         "Граммы",

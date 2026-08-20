@@ -5,7 +5,7 @@
  * овсянки, 2 скупа протеина». Каждая ошибка здесь стоит человеку сотен
  * килокалорий в дневнике, поэтому разбор проверяется на сборке.
  */
-import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug } from "../dist/foods.js";
+import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, STAPLE_ROLE } from "../dist/foods.js";
 import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
 import { factsFromOffJson, isOffImage, validGtin } from "../dist/product-db.js";
@@ -320,6 +320,16 @@ check("тёмный шоколад не молочный", matchFood("тёмны
 const saladCarrot = macrosFromItems([{ name: "салат из зелени и моркови", grams: 180 }]);
 check("салат с морковью остаётся салатом", /салат/i.test(saladCarrot?.name ?? ""), saladCarrot?.name);
 near("куриная грудка 150 г ≈ 248 ккал", macrosFromItems([{ name: "куриная грудка", grams: 150 }])?.kcal ?? 0, 248, 0.05);
+
+for (const name of Object.keys(STAPLE_ROLE)) {
+  check(`основной продукт «${name}» есть в справочнике`, FOODS.some((f) => f.name === name && f.role === STAPLE_ROLE[name]));
+}
+check("печенье не в основных", !FOODS.find((f) => f.name === "Печенье")?.role);
+check("кола не в основных", !FOODS.find((f) => f.name === "Кола")?.role);
+check("наггетсы не в основных", !FOODS.find((f) => f.name === "Наггетсы")?.role);
+check("отруби в клетчатке", matchFood("отруби")?.name === "Отруби" && matchFood("отруби")?.role === "fiber");
+check("лён отдельно от чиа", matchFood("льняное семя")?.name === "Льняное семя", matchFood("льняное семя")?.name);
+check("фото печенья по-прежнему находится", matchFood("печенье")?.name === "Печенье", matchFood("печенье")?.name);
 
 const saladShot = macrosFromItems([
   {

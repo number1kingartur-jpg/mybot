@@ -582,7 +582,7 @@ async function handleApi(
 
   if (req.method === "GET" && urlPath === "/api/foods") {
     json(res, 200, {
-      foods: FOODS.map((f) => ({
+      foods: FOODS.filter((f) => f.role).map((f) => ({
         name: f.name,
         kcal100: f.kcal100,
         p100: f.p100,
@@ -590,6 +590,7 @@ async function handleApi(
         c100: f.c100,
         defaultG: f.defaultG,
         category: f.category,
+        role: f.role,
         slug: foodSlug(f.name),
         aliases: f.aliases,
       })),

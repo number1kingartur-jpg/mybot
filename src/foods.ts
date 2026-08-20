@@ -60,7 +60,14 @@ export interface FoodItem {
   variantOf?: string;
   /** Фото упаковки из открытой базы, если продукт найден по штрихкоду. */
   photoUrl?: string;
+  /**
+   * Основной продукт в подборе: белок, жир, углевод, клетчатка или вода.
+   * Печенье и кола в справочнике остаются для фото, в этот список не входят.
+   */
+  role?: FoodRole;
 }
+
+export type FoodRole = "protein" | "fat" | "carb" | "fiber" | "water";
 
 /**
  * Справочник КБЖУ на 100 г **готового** продукта.
@@ -204,7 +211,9 @@ export const FOODS: FoodItem[] = [
   { aliases: ["арахисовая паста", "арахисовой пасты", "паста арахисовая", "арахисовое масло", "ореховая паста", "миндальная паста", "peanut butter"], name: "Арахисовая паста", kcal100: 600, p100: 25, f100: 50, c100: 20, defaultG: 30, category: "fat", tbspG: 16, tspG: 6, minG: 3 },
   { aliases: ["хумус", "хумуса", "hummus"], name: "Хумус", kcal100: 166, p100: 8, f100: 10, c100: 14, defaultG: 50, category: "fat", tbspG: 20, minG: 10 },
   { aliases: ["nuts", "орех", "орехи", "almond", "миндаль", "кешью", "грецкий"], name: "Орехи", kcal100: 580, p100: 21, f100: 50, c100: 20, defaultG: 30, category: "fat", tbspG: 15, minG: 5 },
-  { aliases: ["семена чиа", "чиа", "льняное семя", "семена льна", "chia"], name: "Семена чиа", kcal100: 490, p100: 17, f100: 31, c100: 42, defaultG: 15, category: "fat", tbspG: 12, tspG: 4, minG: 3 },
+  { aliases: ["семена чиа", "чиа", "chia"], name: "Семена чиа", kcal100: 490, p100: 17, f100: 31, c100: 42, defaultG: 15, category: "fat", tbspG: 12, tspG: 4, minG: 3 },
+  { aliases: ["льняное семя", "семена льна", "лен", "flax", "flaxseed"], name: "Льняное семя", kcal100: 534, p100: 18, f100: 42, c100: 29, defaultG: 15, category: "fat", tbspG: 12, tspG: 4, minG: 3 },
+  { aliases: ["отруби", "отрубей", "пшеничные отруби", "овсяные отруби", "bran"], name: "Отруби", kcal100: 216, p100: 15.5, f100: 4, c100: 64, defaultG: 20, category: "carb", tbspG: 8, minG: 5 },
   { aliases: ["какао", "какао порошок", "cocoa"], name: "Какао порошок", kcal100: 230, p100: 20, f100: 14, c100: 58, defaultG: 10, category: "other", tbspG: 6, tspG: 2, minG: 2 },
   { aliases: ["coconut", "кокос", "coconut milk"], name: "Кокос", kcal100: 230, p100: 2.3, f100: 24, c100: 6, defaultG: 80, category: "fat" },
   // ── Сладкое ───────────────────────────────────────────────────────────────
@@ -307,6 +316,93 @@ export const FOODS: FoodItem[] = [
   { aliases: ["sushi", "суши", "ролл", "roll", "maki"], name: "Суши", kcal100: 150, p100: 6, f100: 3, c100: 24, defaultG: 200, category: "other" },
   { aliases: ["burrito", "боул", "bowl", "poke", "поке"], name: "Боул", kcal100: 140, p100: 10, f100: 5, c100: 15, defaultG: 350, category: "other" },
 ];
+
+/**
+ * Что человек видит в подборе. Остальное (печенье, кола, наггетсы) живёт
+ * только для разбора фото: иначе снимок пачки некуда деть, а в списке
+ * основных продуктов этому месту нет.
+ */
+export const STAPLE_ROLE: Record<string, FoodRole> = {
+  "Куриная грудка": "protein",
+  "Курица отварная": "protein",
+  "Курица": "protein",
+  "Индейка": "protein",
+  "Говядина": "protein",
+  "Свинина": "protein",
+  "Лосось": "protein",
+  "Рыба": "protein",
+  "Рыба на пару": "protein",
+  "Тунец": "protein",
+  "Тунец консервированный": "protein",
+  "Креветки": "protein",
+  "Тофу": "protein",
+  "Яйца": "protein",
+  "Яйца отварные": "protein",
+  "Творог": "protein",
+  "Творог обезжиренный": "protein",
+  "Греческий йогурт": "protein",
+  "Йогурт": "protein",
+  "Кефир": "protein",
+  "Молоко": "protein",
+  "Молоко 1.5%": "protein",
+  "Протеин": "protein",
+  "Белок яичный жидкий": "protein",
+  "Авокадо": "fat",
+  "Орехи": "fat",
+  "Арахисовая паста": "fat",
+  "Масло растительное": "fat",
+  "Масло сливочное": "fat",
+  "Сыр": "fat",
+  "Хумус": "fat",
+  "Сметана": "fat",
+  "Рис отварной": "carb",
+  "Рис коричневый": "carb",
+  "Гречка отварная": "carb",
+  "Овсянка на воде": "carb",
+  "Паста отварная": "carb",
+  "Картофель отварной": "carb",
+  "Батат": "carb",
+  "Хлеб цельнозерновой": "carb",
+  "Банан": "carb",
+  "Гейнер": "carb",
+  "Овсяные хлопья сухие": "fiber",
+  "Киноа": "fiber",
+  "Чечевица": "fiber",
+  "Нут": "fiber",
+  "Фасоль": "fiber",
+  "Горох": "fiber",
+  "Ягоды": "fiber",
+  "Яблоко": "fiber",
+  "Яблоко зелёное": "fiber",
+  "Груша": "fiber",
+  "Брокколи": "fiber",
+  "Шпинат": "fiber",
+  "Капуста": "fiber",
+  "Цветная капуста": "fiber",
+  "Морковь": "fiber",
+  "Перец болгарский": "fiber",
+  "Кабачок": "fiber",
+  "Огурец": "fiber",
+  "Помидоры": "fiber",
+  "Семена чиа": "fiber",
+  "Льняное семя": "fiber",
+  "Отруби": "fiber",
+  "Хлебцы": "fiber",
+  "Апельсин": "fiber",
+  "Киви": "fiber",
+  "Ананас": "fiber",
+  "Папайя": "fiber",
+  "Арбуз": "water",
+  "Вода": "water",
+  "Чай без сахара": "water",
+  "Кофе чёрный": "water",
+  "Кокосовая вода": "water",
+};
+
+for (const food of FOODS) {
+  const role = STAPLE_ROLE[food.name];
+  if (role) food.role = role;
+}
 
 const TRANSLIT: Record<string, string> = {
   а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ж: "zh", з: "z", и: "i", й: "y",
