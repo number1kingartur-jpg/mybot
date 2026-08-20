@@ -7,7 +7,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, imageSlug, mealImageSlug, resolveMealThumb, SHAKE_SLUG, STAPLE_ROLE } from "../dist/foods.js";
+import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, imageSlug, mealImageSlug, resolveMealThumb, pieceImageSlug, SHAKE_SLUG, STAPLE_ROLE } from "../dist/foods.js";
 import { hasFoodImage } from "../dist/food-images.js";
 import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
@@ -104,6 +104,14 @@ near("фото без числа: 110 г", twoFromPhoto?.parts?.[0]?.grams ?? 0,
 const threeNamed = macrosFromItems([{ name: "3 яйца", grams: 165 }]);
 check("если модель написала 3, оставляем 3", /3 яйца/i.test(threeNamed?.name ?? ""), threeNamed?.name);
 near("три по имени: 165 г", threeNamed?.parts?.[0]?.grams ?? 0, 165, 0.01);
+check("3 яйца берут кадр трёх", resolveMealThumb("3 яйца") === "yayca-3", resolveMealThumb("3 яйца"));
+check("2 яйца берут кадр двух", resolveMealThumb("2 яйца") === "yayca-2", resolveMealThumb("2 яйца"));
+check("яйца ~165 г это тройка", resolveMealThumb("Яйца ~165 г") === "yayca-3", resolveMealThumb("Яйца ~165 г"));
+check("банан 1 шт один в кадре", pieceImageSlug("Банан", 120) === "banan-1", pieceImageSlug("Банан", 120));
+check("банан 2 шт два в кадре", pieceImageSlug("Банан", 240) === "banan-2", pieceImageSlug("Банан", 240));
+check("сырники 120 г это два", pieceImageSlug("Сырники жареные", 120) === "syrniki-zharenye-2");
+check("хлеб 60 г это два ломтя", pieceImageSlug("Хлеб", 60) === "hleb-2");
+check("коктейль не берёт кадр банана", resolveMealThumb("Протеин ~30 г, Банан ~120 г") === SHAKE_SLUG);
 grams("500 мл молока", 515);
 grams("1 кг картошки", 1000);
 grams("2 ст.л. меда", 42);

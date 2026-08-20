@@ -89,6 +89,12 @@ for (const name of used) {
   check(`${name}: слаг картинки`, foodSlug(name) === APP.slugOf(name), `бот ${foodSlug(name)}, приложение ${APP.slugOf(name)}`);
 }
 
+check("3 яйца: кадр трёх", APP.slugOf("Яйца", 165) === "yayca-3", APP.slugOf("Яйца", 165));
+check("2 яйца: кадр двух", APP.slugOf("Яйца", 110) === "yayca-2", APP.slugOf("Яйца", 110));
+check("банан 1 шт: один в кадре", APP.slugOf("Банан", 120) === "banan-1", APP.slugOf("Банан", 120));
+check("хлеб 30 г: один ломоть", APP.slugOf("Хлеб", 30) === "hleb-1");
+check("сырники 120 г: два в кадре", APP.slugOf("Сырники жареные", 120) === "syrniki-zharenye-2");
+
 /* ── Картинки: они и есть смысл затеи ──────────────────────────────────────── */
 
 const dir = path.join("webapp", "img", "food");

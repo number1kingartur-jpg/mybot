@@ -2299,7 +2299,7 @@
       var proteinG = Math.round((f.p100 * g) / 100);
       return (
         '<li class="food">' +
-        thumb(f.slug, f.name) +
+        thumb(typeof KM_MENUS !== "undefined" && KM_MENUS.slugOf ? KM_MENUS.slugOf(f.name, g) : f.slug, f.name) +
         '<span class="food__text">' +
         '<span class="food__name">' +
         esc(f.name) +

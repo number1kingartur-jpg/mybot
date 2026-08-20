@@ -444,6 +444,44 @@ export function imageSlug(food: FoodItem): string {
   return own;
 }
 
+/** У скольких штук есть свой кадр: иначе 3 яйца получают фото двух. */
+export const PIECE_THUMB_COUNTS: Record<string, number[]> = {
+  "Яйца": [1, 2, 3],
+  "Яйца отварные": [2, 3],
+  "Банан": [1, 2],
+  "Хлеб": [1, 2],
+  "Сырники жареные": [2, 3],
+};
+
+export function pieceImageSlug(name: string, grams: number): string | undefined {
+  const food = matchFood(name) ?? FOODS.find((f) => f.name === name);
+  if (!food) return undefined;
+  const base = imageSlug(food);
+  const counts = PIECE_THUMB_COUNTS[food.name];
+  if (!counts || !food.pieceG) return hasFoodImage(base) ? base : undefined;
+  const n = Math.max(1, Math.round(grams / food.pieceG));
+  const own = `${foodSlug(food.name)}-${n}`;
+  if (counts.includes(n) && hasFoodImage(own)) return own;
+  let best = counts[0];
+  for (const c of counts) {
+    if (Math.abs(c - n) < Math.abs(best - n)) best = c;
+  }
+  const near = `${foodSlug(food.name)}-${best}`;
+  if (hasFoodImage(near)) return near;
+  return hasFoodImage(base) ? base : undefined;
+}
+
+function gramsHint(name: string): number | undefined {
+  const food = matchFood(name);
+  const eggs = eggCountInName(name);
+  if (eggs && food?.pieceG) return eggs * food.pieceG;
+  const pcs = name.match(/(\d+)\s*шт/i);
+  if (pcs && food?.pieceG) return Number(pcs[1]) * food.pieceG;
+  const g = name.match(/~(\d+)\s*г/i);
+  if (g) return Number(g[1]);
+  return undefined;
+}
+
 /** Картинка шейкера: у коктейля нет одного продукта, тяжёлая позиция врёт. */
 export const SHAKE_SLUG = "proteinovyy-kokteyl";
 
@@ -528,6 +566,14 @@ export function matchFood(name: string): FoodItem | null {
  * Иначе буква. Будущие блюда без картинки остаются без миниатюры, не с буквой.
  */
 export function resolveMealThumb(name: string, slug?: string): string | undefined {
+  const preferShake = mealImageSlug(name, slug);
+  if (preferShake === SHAKE_SLUG && hasFoodImage(SHAKE_SLUG)) return SHAKE_SLUG;
+  const combo = /,\s*| и ещё \d+/.test(name);
+  const grams = combo ? undefined : gramsHint(name);
+  if (grams) {
+    const counted = pieceImageSlug(name, grams);
+    if (counted) return counted;
+  }
   const prefer = mealImageSlug(name, slug);
   const parts = String(name)
     .split(/,\s*| и ещё \d+/)

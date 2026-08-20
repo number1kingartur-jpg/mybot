@@ -145,8 +145,23 @@ window.KM_MENUS = (function () {
     ю: "yu", я: "ya"
   };
 
+  var PIECE_THUMBS = {
+    "Яйца": [1, 2, 3],
+    "Яйца отварные": [2, 3],
+    "Банан": [1, 2],
+    "Хлеб": [1, 2],
+    "Сырники жареные": [2, 3]
+  };
+  var PIECE_G = {
+    "Яйца": 55,
+    "Яйца отварные": 55,
+    "Банан": 120,
+    "Хлеб": 30,
+    "Сырники жареные": 60
+  };
+
   /** Имя файла картинки: та же формула, что в справочнике бота. */
-  function slugOf(name) {
+  function slugBase(name) {
     return String(name)
       .toLowerCase()
       .replace(/ё/g, "е")
@@ -160,6 +175,22 @@ window.KM_MENUS = (function () {
       .join("")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
+  }
+
+  function slugOf(name, g) {
+    var base = slugBase(name);
+    var food = FOOD[name];
+    var counts = PIECE_THUMBS[name];
+    var piece = (food && food.piece) || PIECE_G[name];
+    if (!piece || !counts || g == null || !(g > 0)) return base;
+    var n = Math.max(1, Math.round(g / piece));
+    var i, best;
+    if (counts.indexOf(n) !== -1) return base + "-" + n;
+    best = counts[0];
+    for (i = 0; i < counts.length; i++) {
+      if (Math.abs(counts[i] - n) < Math.abs(best - n)) best = counts[i];
+    }
+    return base + "-" + best;
   }
 
   function nutr(food, g) {
@@ -202,7 +233,7 @@ window.KM_MENUS = (function () {
     var n = nutr(food, g);
     return {
       food: name,
-      slug: slugOf(name),
+      slug: slugOf(name, g),
       g: g,
       amount: amountText(food, g),
       kcal: n.kcal,
