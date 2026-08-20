@@ -704,7 +704,7 @@
           '" /></div>'
         : "") +
       '<div class="confirm__head">' +
-        (state.photoPreview ? "" : thumb(m.slug, m.name)) +
+        thumb(m.slug, m.name, "food", m.photoUrl) +
         '<span class="confirm__title">' +
         esc(m.name) +
         '<span class="confirm__kcal">' +
@@ -1814,17 +1814,30 @@
    * по картинке нужно в списке, но пустой квадрат хуже монограммы, а грузить
    * сотню файлов ради проверки существования нельзя.
    */
-  function thumb(slug, title, folder) {
+  function isOffImage(url) {
+    try {
+      var u = new URL(String(url || ""), location.href);
+      return (
+        u.protocol === "https:" &&
+        (u.hostname === "images.openfoodfacts.org" || u.hostname === "static.openfoodfacts.org")
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function thumb(slug, title, folder, photoUrl) {
     var letter = esc(String(title || "?").trim().charAt(0).toUpperCase());
+    var src = "";
+    if (photoUrl && isOffImage(photoUrl)) src = photoUrl;
+    else if (slug) src = "img/" + esc(folder || "food") + "/" + esc(slug) + ".webp";
     return (
       '<span class="thumb" aria-hidden="true">' +
       letter +
-      (slug
-        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="img/' +
-          esc(folder || "food") +
-          "/" +
-          esc(slug) +
-          '.webp" onerror="this.remove()" />'
+      (src
+        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
+          esc(src) +
+          '" onerror="this.remove()" />'
         : "") +
       "</span>"
     );
@@ -1848,7 +1861,7 @@
           .map(function (m) {
             return (
               '<li class="log--thumbed">' +
-              thumb(m.slug, m.name) +
+              thumb(m.slug, m.name, "food", m.photoUrl) +
               '<span class="meal__name">' +
               esc(m.name) +
               '<span class="meal__macro">' +

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import https from "https";
 import { macrosFromItems, macrosFromText } from "./foods";
 import { analyzeMealFromTextLocal } from "./meal-fallback";
-import { factsByBarcode, productDbEnabled, validGtin } from "./product-db";
+import { factsByBarcode, isOffImage, productDbEnabled, validGtin } from "./product-db";
 
 /**
  * Модель не считает КБЖУ — она называет блюдо и граммы, числа берёт справочник.
@@ -69,6 +69,10 @@ export const IDENTIFY_PROMPT =
   "овощи, яйцо, сухарики, соус. Чипсы — только если это пакет чипсов.\n" +
   "17. Картинка в дневнике берётся из названия. Называй готовое блюдо блюдом: " +
   "«курица на гриле», не просто «курица», если на кадре готовая тарелка.\n" +
+  "18. Магазинная полка: 7-Eleven, Tops, Lotus, Big C, Макро, Магнит, Пятёрочка, " +
+  "ВкусВилл, Лента, Перекрёсток. Этикетка может быть на тайском, русском или английском: " +
+  "марку спиши как есть латиницей, если так на упаковке. Штрихкод (EAN, цифры под полосами) " +
+  "перепиши в barcode целиком: по нему находится точный продукт и фото упаковки.\n" +
   '\nЕсли не еда: {"items":[],"note":"не еда: что на кадре"}';
 
 const GEMINI_MODELS = [
@@ -135,6 +139,8 @@ export interface MealPart {
   carbsG: number;
   /** Картинка позиции: нужна, чтобы после правки состава сменить миниатюру приёма. */
   slug?: string;
+  /** Живое фото упаковки из открытой базы, если продукт найден по штрихкоду. */
+  photoUrl?: string;
   /**
    * Откуда цифра: `catalog` — из справочника, `barcode` — из открытой базы по
    * штрихкоду, `label` — с упаковки по словам модели, `similar` — марки нет
@@ -152,6 +158,8 @@ export interface MealAnalysis {
   note?: string;
   /** Картинка главного продукта приёма: имя файла в `webapp/img/food`. */
   slug?: string;
+  /** Официальное фото упаковки, если главный продукт найден по штрихкоду. */
+  photoUrl?: string;
   /** Состав расчёта — для объяснения человеку перед записью. */
   parts?: MealPart[];
   /** Своими словами модели: способ приготовления и допущения. */
@@ -292,6 +300,7 @@ export function editMeal(meal: MealAnalysis, edit: MealEdit): MealAnalysis | nul
     carbsG: Math.round(sum((p) => p.carbsG)),
     note: noteFromParts(parts, meal.note),
     slug: main.slug ?? meal.slug,
+    photoUrl: main.photoUrl ?? meal.photoUrl,
     parts,
   };
 }
@@ -375,6 +384,8 @@ interface IdentifiedItem {
   barcode?: string;
   /** Цифры пришли из открытой базы по штрихкоду, а не с этикетки на глаз. */
   fromDb?: boolean;
+  /** Фото упаковки из открытой базы. Модель его не присылает: только база. */
+  photoUrl?: string;
 }
 
 /** Цифра с этикетки: за пределами диапазона — значит модель ошиблась, не берём. */
@@ -468,6 +479,10 @@ async function fillFromBarcodes(items: IdentifiedItem[]): Promise<void> {
         item.f100 = facts.f100;
         item.c100 = facts.c100;
         item.fromDb = true;
+        if (facts.imageUrl && isOffImage(facts.imageUrl)) item.photoUrl = facts.imageUrl;
+        // Объём с этикетки точнее глазомера: модель часто ставит 100 г на бутылку 500 мл.
+        // Две бутылки не затираем: если модель уже дала больше пачки, ей виднее.
+        if (facts.servingG && item.grams < facts.servingG * 1.3) item.grams = facts.servingG;
       })
   );
 }

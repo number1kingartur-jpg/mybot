@@ -58,6 +58,8 @@ export interface FoodItem {
    * картинки у марки нет, а миниатюру категории показать можно.
    */
   variantOf?: string;
+  /** Фото упаковки из открытой базы, если продукт найден по штрихкоду. */
+  photoUrl?: string;
 }
 
 /**
@@ -231,6 +233,33 @@ export const FOODS: FoodItem[] = [
   { aliases: ["snickers", "сникерс"], name: "Snickers", kcal100: 484, p100: 8.2, f100: 24, c100: 59.6, defaultG: 50, category: "other", pieceG: 50, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
   { aliases: ["twix", "твикс"], name: "Twix", kcal100: 495, p100: 4.6, f100: 24.4, c100: 64.8, defaultG: 50, category: "other", pieceG: 50, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
   { aliases: ["mars", "марс"], name: "Mars", kcal100: 449, p100: 3.8, f100: 17.4, c100: 69, defaultG: 51, category: "other", pieceG: 51, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
+  { aliases: ["kitkat", "kit kat", "киткат"], name: "KitKat", kcal100: 518, p100: 6.5, f100: 26, c100: 65, defaultG: 42, category: "other", pieceG: 42, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
+  { aliases: ["bounty", "баунти"], name: "Bounty", kcal100: 488, p100: 3.7, f100: 26, c100: 56, defaultG: 57, category: "other", pieceG: 57, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
+  { aliases: ["picnic", "пикник"], name: "Picnic", kcal100: 500, p100: 6, f100: 26, c100: 60, defaultG: 52, category: "other", pieceG: 52, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
+  { aliases: ["milka", "милка"], name: "Milka", kcal100: 530, p100: 6, f100: 30, c100: 59, defaultG: 80, category: "other", pieceG: 80, minG: 15, brand: true, variantOf: "Шоколад" },
+  { aliases: ["оиши", "oishi"], name: "Oishi", kcal100: 14, p100: 0, f100: 0, c100: 3.6, defaultG: 500, category: "other", densityGml: 1, pieceG: 500, minG: 50, brand: true, variantOf: "Чай без сахара" },
+  { aliases: ["dutch mill", "датч милл", "dutchmill"], name: "Dutch Mill", kcal100: 80, p100: 2.8, f100: 1.6, c100: 14, defaultG: 180, category: "other", densityGml: 1.04, pieceG: 180, minG: 50, brand: true, variantOf: "Йогурт питьевой" },
+  { aliases: ["est cola", "эст кола"], name: "Est Cola", kcal100: 44, p100: 0, f100: 0, c100: 10.8, defaultG: 250, category: "other", densityGml: 1.04, pieceG: 250, minG: 50, brand: true, variantOf: "Кола" },
+  { aliases: ["mama noodles", "лапша mama", "instant mama"], name: "Mama", kcal100: 450, p100: 10, f100: 18, c100: 62, defaultG: 60, category: "other", pieceG: 60, minG: 30, brand: true, variantOf: "Лапша" },
+  { aliases: ["m-150", "m150", "м150", "м-150"], name: "M-150", kcal100: 45, p100: 0, f100: 0, c100: 11, defaultG: 150, category: "other", densityGml: 1.04, pieceG: 150, minG: 50, brand: true, variantOf: "Энергетик" },
+  { aliases: ["birdy", "берди"], name: "Birdy", kcal100: 56, p100: 1.5, f100: 1.2, c100: 10, defaultG: 180, category: "other", densityGml: 1.03, pieceG: 180, minG: 50, brand: true, variantOf: "Латте" },
+  { aliases: ["foremost", "фомост"], name: "Foremost", kcal100: 60, p100: 3.2, f100: 3.2, c100: 4.7, defaultG: 200, category: "other", densityGml: 1.03, pieceG: 200, minG: 50, brand: true, variantOf: "Молоко" },
+  { aliases: ["yakult", "якульт"], name: "Yakult", kcal100: 65, p100: 1.4, f100: 0.1, c100: 15, defaultG: 80, category: "other", densityGml: 1.04, pieceG: 80, minG: 40, brand: true, variantOf: "Йогурт питьевой" },
+  { aliases: ["meiji", "мейджи"], name: "Meiji", kcal100: 64, p100: 3.2, f100: 3.4, c100: 4.8, defaultG: 200, category: "other", densityGml: 1.03, pieceG: 200, minG: 50, brand: true, variantOf: "Молоко" },
+  { aliases: ["tipco", "типко"], name: "Tipco", kcal100: 46, p100: 0.3, f100: 0, c100: 11, defaultG: 200, category: "other", densityGml: 1.04, pieceG: 200, minG: 50, brand: true, variantOf: "Сок" },
+  { aliases: ["betagen", "бетаген"], name: "Betagen", kcal100: 72, p100: 2.5, f100: 1.2, c100: 13, defaultG: 110, category: "other", densityGml: 1.04, pieceG: 110, minG: 40, brand: true, variantOf: "Йогурт питьевой" },
+  { aliases: ["простоквашино", "prostokvashino"], name: "Простоквашино", kcal100: 60, p100: 3, f100: 3.2, c100: 4.7, defaultG: 200, category: "other", densityGml: 1.03, pieceG: 200, minG: 50, brand: true, variantOf: "Молоко" },
+  { aliases: ["домик в деревне", "домик в деревне молоко"], name: "Домик в деревне", kcal100: 58, p100: 2.8, f100: 3.2, c100: 4.7, defaultG: 200, category: "other", densityGml: 1.03, pieceG: 200, minG: 50, brand: true, variantOf: "Молоко" },
+  { aliases: ["добрый сок", "сок добрый"], name: "Добрый", kcal100: 42, p100: 0.3, f100: 0, c100: 10.5, defaultG: 200, category: "other", densityGml: 1.04, pieceG: 200, minG: 50, brand: true, variantOf: "Сок" },
+  { aliases: ["j7", "джи7", "сок j7"], name: "J7", kcal100: 45, p100: 0.3, f100: 0, c100: 11, defaultG: 200, category: "other", densityGml: 1.04, pieceG: 200, minG: 50, brand: true, variantOf: "Сок" },
+  { aliases: ["чудо молочное", "йогурт чудо"], name: "Чудо", kcal100: 85, p100: 2.8, f100: 3.2, c100: 12, defaultG: 200, category: "other", densityGml: 1.04, pieceG: 200, minG: 50, brand: true, variantOf: "Йогурт питьевой" },
+  { aliases: ["danone", "данон"], name: "Danone", kcal100: 75, p100: 3.2, f100: 2.5, c100: 10, defaultG: 125, category: "other", densityGml: 1.04, pieceG: 125, minG: 40, brand: true, variantOf: "Йогурт" },
+  { aliases: ["super rich", "супер рич"], name: "Super Rich", kcal100: 48, p100: 1.2, f100: 1.4, c100: 7.5, defaultG: 180, category: "other", densityGml: 1.03, pieceG: 180, minG: 50, brand: true, variantOf: "Латте" },
+  { aliases: ["koh kae", "ко кэ"], name: "Koh Kae", kcal100: 560, p100: 18, f100: 42, c100: 22, defaultG: 40, category: "other", pieceG: 40, minG: 10, brand: true, variantOf: "Орехи" },
+  { aliases: ["7 select", "7-select", "семь селект"], name: "7-Select", kcal100: 45, p100: 0, f100: 0, c100: 11, defaultG: 250, category: "other", densityGml: 1.03, pieceG: 250, minG: 50, brand: true, variantOf: "Лимонад" },
+  { aliases: ["растишка", "rastishka"], name: "Растишка", kcal100: 90, p100: 3, f100: 2.8, c100: 13, defaultG: 110, category: "other", densityGml: 1.04, pieceG: 110, minG: 40, brand: true, variantOf: "Йогурт" },
+  { aliases: ["агуша", "agusha"], name: "Агуша", kcal100: 68, p100: 2.8, f100: 3, c100: 8, defaultG: 200, category: "other", densityGml: 1.03, pieceG: 200, minG: 50, brand: true, variantOf: "Йогурт" },
+  { aliases: ["аленка", "алёнка", "alenka"], name: "Алёнка", kcal100: 550, p100: 8, f100: 34, c100: 52, defaultG: 20, category: "other", pieceG: 20, minG: 10, brand: true, variantOf: "Шоколад" },
   { aliases: ["чипсы", "chips", "lay's", "lays"], name: "Чипсы", kcal100: 530, p100: 6, f100: 30, c100: 53, defaultG: 90, category: "other", pieceG: 90, minG: 15 },
   { aliases: ["сухарики", "гренки", "крутоны", "crouton", "croutons"], name: "Сухарики", kcal100: 380, p100: 11, f100: 8, c100: 68, defaultG: 20, category: "carb", pieceG: 5, minG: 5 },
   { aliases: ["виноград", "grapes", "кишмиш", "красный виноград", "виноградинки"], name: "Виноград", kcal100: 69, p100: 0.7, f100: 0.2, c100: 17, defaultG: 200, category: "carb", minG: 30 },
@@ -610,6 +639,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
       fatG: Math.round(food.f100 * mul * 10) / 10,
       carbsG: Math.round(food.c100 * mul * 10) / 10,
       slug: imageSlug(food),
+      photoUrl: food.photoUrl,
       source: similar ? "similar" : food.fromBarcode ? "barcode" : food.fromLabel ? "label" : "catalog",
     });
   }
@@ -636,6 +666,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
     // У марки своей картинки нет: показываем миниатюру её категории, иначе на
     // месте фото остаётся монограмма.
     slug: imageSlug(main.food),
+    photoUrl: main.food.photoUrl,
     parts: detail,
   };
 }
@@ -652,6 +683,8 @@ export interface IdentifiedFood {
   packaged?: boolean;
   /** Цифры взяты из открытой базы по штрихкоду: спорить с ними справочнику нечем. */
   fromDb?: boolean;
+  /** Фото упаковки из открытой базы. */
+  photoUrl?: string;
 }
 
 /**
@@ -681,6 +714,7 @@ function labelFood(item: IdentifiedFood): FoodItem | null {
     minG: 5,
     fromLabel: true,
     fromBarcode: item.fromDb,
+    photoUrl: item.photoUrl,
   };
 }
 

@@ -17,6 +17,7 @@ import {
 } from "./meal";
 import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood } from "./foods";
+import { isOffImage } from "./product-db";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { plansFor, type Place } from "./simple";
@@ -232,6 +233,7 @@ function dayState(userId: number, date: string) {
       fatG: m.fatG,
       carbsG: m.carbsG,
       slug: m.slug,
+      photoUrl: m.photoUrl && isOffImage(m.photoUrl) ? m.photoUrl : undefined,
     })),
     totals: mealTotals(userId, date),
     // Серия и частые блюда считаются всегда от сегодняшнего дня, а не от
@@ -726,7 +728,7 @@ async function handleApi(
     const meal = found.meal;
     const row = addMeal({
       userId: user.id, date: found.date,
-      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: meal.photoUrl && isOffImage(meal.photoUrl) ? meal.photoUrl : undefined,
     });
     console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
     json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, found.date) });
@@ -795,7 +797,7 @@ async function handleApi(
     }
     const row = addMeal({
       userId: user.id, date,
-      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: meal.photoUrl && isOffImage(meal.photoUrl) ? meal.photoUrl : undefined,
     });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
@@ -827,6 +829,7 @@ async function handleApi(
       fatG: prev.fatG,
       carbsG: prev.carbsG,
       slug: prev.slug,
+      photoUrl: prev.photoUrl && isOffImage(prev.photoUrl) ? prev.photoUrl : undefined,
     };
     const row = addMeal({ userId: user.id, date, ...meal });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });

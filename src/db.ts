@@ -112,6 +112,8 @@ export interface MealEntry {
   carbsG: number;
   /** Картинка главного продукта: имя файла в `webapp/img/food`. */
   slug?: string;
+  /** Официальное фото упаковки из открытой базы. */
+  photoUrl?: string;
 }
 
 export interface Challenge {

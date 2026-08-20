@@ -8,7 +8,8 @@
 import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug } from "../dist/foods.js";
 import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
-import { factsFromOffJson, validGtin } from "../dist/product-db.js";
+import { factsFromOffJson, isOffImage, validGtin } from "../dist/product-db.js";
+import { shelfByCode, STORE_SHELF } from "../dist/store-shelf.js";
 
 let failed = 0;
 
@@ -142,13 +143,13 @@ check("коктейль из молока не приносит молочный
 
 // ── Продукт не из справочника: цифры с этикетки, а не отказ ──────────────────
 const label = macrosFromItems([
-  { name: "напиток yakult", grams: 100, kcal100: 65, p100: 1.2, f100: 0.1, c100: 15 },
+  { name: "напиток zyntra", grams: 100, kcal100: 65, p100: 1.2, f100: 0.1, c100: 15 },
 ]);
 check("незнакомый продукт принят по этикетке", label !== null);
 check("этикетка: калории взяты", (label?.kcal ?? 0) === 65, String(label?.kcal));
 check("этикетка: сказано, откуда цифры", /упаковк/i.test(label?.note ?? ""), label?.note);
 
-const noNumbers = macrosFromItems([{ name: "напиток yakult", grams: 100 }]);
+const noNumbers = macrosFromItems([{ name: "напиток zyntra", grams: 100 }]);
 check("без цифр на этикетке продукт не выдумывается", noNumbers === null);
 
 // ── Штрихкод: точный ключ вместо похожего по смыслу ──────────────────────────
@@ -176,6 +177,48 @@ const zero = factsFromOffJson(
   '{"status":1,"product":{"product_name":"cola zero","brands":"Coca-Cola","nutriments":{"energy-kcal_100g":0,"proteins_100g":0,"fat_100g":0,"carbohydrates_100g":0}}}'
 );
 check("ноль калорий из базы принимается", zero !== null && zero.kcal100 === 0, String(zero?.kcal100));
+
+const offPhoto = factsFromOffJson(
+  '{"status":1,"product":{"product_name":"C-vitt Lemon","brands":"C-vitt","nutriments":{"energy-kcal_100g":28.6,"proteins_100g":0,"fat_100g":0,"carbohydrates_100g":7.1},"image_front_small_url":"https://images.openfoodfacts.org/images/products/885/112/323/7000/front_th.4.200.jpg","quantity":"140 ml"}}'
+);
+check("фото упаковки из базы принято", offPhoto?.imageUrl?.includes("openfoodfacts.org"), offPhoto?.imageUrl);
+check("объём с этикетки разобран", offPhoto?.servingG === 140, String(offPhoto?.servingG));
+check(
+  "чужой хост фото отвергается",
+  factsFromOffJson(
+    '{"status":1,"product":{"product_name":"x","nutriments":{"energy-kcal_100g":42,"carbohydrates_100g":10},"image_url":"https://evil.example/x.jpg"}}'
+  )?.imageUrl === undefined
+);
+check("хост Open Food Facts разрешён", isOffImage("https://images.openfoodfacts.org/images/products/1.jpg"));
+check("http фото отвергается", !isOffImage("http://images.openfoodfacts.org/images/products/1.jpg"));
+
+const shelf = shelfByCode("8851123237000");
+check("полка C-vitt без сети", shelf?.name === "C-vitt Lemon", shelf?.name);
+check(
+  "все коды полки валидны",
+  STORE_SHELF.every((p) => validGtin(p.code) === p.code),
+  STORE_SHELF.filter((p) => validGtin(p.code) !== p.code)
+    .map((p) => p.code)
+    .join(",")
+);
+check("oishi в справочнике", matchFood("oishi")?.name === "Oishi", matchFood("oishi")?.name);
+check("простоквашино в справочнике", matchFood("простоквашино")?.name === "Простоквашино", matchFood("простоквашино")?.name);
+check("yakult теперь марка", matchFood("yakult")?.name === "Yakult", matchFood("yakult")?.name);
+
+const packShot = macrosFromItems([
+  {
+    name: "C-vitt Lemon",
+    grams: 140,
+    kcal100: 28.6,
+    p100: 0,
+    f100: 0,
+    c100: 7.1,
+    fromDb: true,
+    photoUrl: "https://images.openfoodfacts.org/images/products/885/112/323/7000/front_th.4.200.jpg",
+  },
+]);
+check("фото упаковки доходит до записи", /openfoodfacts/.test(packShot?.photoUrl ?? ""), packShot?.photoUrl);
+check("фото упаковки у позиции", /openfoodfacts/.test(packShot?.parts?.[0]?.photoUrl ?? ""), packShot?.parts?.[0]?.photoUrl);
 
 // Цифры из базы сильнее проверенной позиции справочника: у неё они средние, а
 // по коду известен конкретный рецепт этой упаковки.
@@ -323,7 +366,7 @@ if (explained?.parts?.length === 2) {
 
 const labelParts = macrosFromItems([
   { name: "курица отварная", grams: 150 },
-  { name: "напиток yakult", grams: 80, kcal100: 65, p100: 1.2, f100: 0.1, c100: 15 },
+  { name: "напиток zyntra", grams: 80, kcal100: 65, p100: 1.2, f100: 0.1, c100: 15 },
 ]);
 check(
   "цифры с упаковки честно помечены",
@@ -336,15 +379,15 @@ check(
   JSON.stringify(labelParts?.parts?.map((p) => p.source))
 );
 
-const unknownJar = fromModel('{"items":[{"name":"напиток yakult","grams":80,"kcal100":65,"p100":1.2,"f100":0.1,"c100":15}],"note":"по этикетке"}');
+const unknownJar = fromModel('{"items":[{"name":"напиток zyntra","grams":80,"kcal100":65,"p100":1.2,"f100":0.1,"c100":15}],"note":"по этикетке"}');
 check("незнакомая упаковка с этикеткой записывается", unknownJar.meal !== undefined, String(unknownJar.error?.message));
 near("этикетка: 80 мл × 65 ккал", unknownJar.meal?.kcal ?? 0, 52, 0.1);
 
-const unknownNoNumbers = fromModel('{"items":[{"name":"напиток yakult","grams":80}]}');
+const unknownNoNumbers = fromModel('{"items":[{"name":"напиток zyntra","grams":80}]}');
 check("без цифр отказ остаётся отказом", unknownNoNumbers.error !== undefined);
 check(
   "в отказе видно, что модель разглядела",
-  /yakult/i.test(unknownNoNumbers.error?.seen ?? ""),
+  /zyntra/i.test(unknownNoNumbers.error?.seen ?? ""),
   unknownNoNumbers.error?.seen
 );
 

@@ -1,4 +1,5 @@
 import https from "https";
+import { shelfByCode } from "./store-shelf";
 
 /**
  * Открытая база продуктов: цифры по штрихкоду, а не по смыслу.
@@ -35,6 +36,10 @@ export interface ProductFacts {
   p100: number;
   f100: number;
   c100: number;
+  /** Живое фото упаковки из открытой базы, не наш рисунок. */
+  imageUrl?: string;
+  /** Порция с этикетки: бутылка 140 мл, банка 330 мл. */
+  servingG?: number;
 }
 
 /**
@@ -105,13 +110,45 @@ export function factsFromOffJson(raw: string): ProductFacts | null {
   const name = productName(json.product as { product_name?: unknown; brands?: unknown });
   if (!name) return null;
 
+  const image = offImageUrl(json.product);
+  const servingG = servingFromQuantity(json.product.quantity);
+
   return {
     name: name.slice(0, 60),
     kcal100,
     p100: num(n.proteins_100g, 100) ?? 0,
     f100: num(n.fat_100g, 100) ?? 0,
     c100,
+    imageUrl: image,
+    servingG: servingG ?? undefined,
   };
+}
+
+/** Только хосты Open Food Facts: чужой URL в карточке не показываем. */
+export function offImageUrl(product: Record<string, unknown>): string | undefined {
+  for (const key of ["image_front_small_url", "image_front_url", "image_url"]) {
+    const raw = String(product[key] ?? "").trim();
+    if (isOffImage(raw)) return raw;
+  }
+  return undefined;
+}
+
+export function isOffImage(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && (u.hostname === "images.openfoodfacts.org" || u.hostname === "static.openfoodfacts.org");
+  } catch {
+    return false;
+  }
+}
+
+function servingFromQuantity(value: unknown): number | null {
+  const s = String(value ?? "");
+  const m = s.match(/(\d+(?:[.,]\d+)?)\s*(ml|мл|g|г)\b/i);
+  if (!m) return null;
+  const n = Number(m[1].replace(",", "."));
+  if (!(n >= 30 && n <= 2000)) return null;
+  return Math.round(n);
 }
 
 function httpsGetJson(path: string): Promise<string> {
@@ -145,10 +182,16 @@ export async function factsByBarcode(code: string): Promise<ProductFacts | null>
   if (!gtin || !productDbEnabled()) return null;
   if (cache.has(gtin)) return cache.get(gtin) ?? null;
 
+  const local = shelfByCode(gtin);
+  if (local) {
+    cache.set(gtin, local);
+    return local;
+  }
+
   let facts: ProductFacts | null = null;
   try {
     const raw = await httpsGetJson(
-      `/api/v2/product/${gtin}.json?fields=product_name,brands,nutriments`
+      `/api/v2/product/${gtin}.json?fields=product_name,brands,nutriments,image_front_small_url,image_front_url,image_url,quantity`
     );
     facts = factsFromOffJson(raw);
   } catch (e) {
