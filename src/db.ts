@@ -114,6 +114,8 @@ export interface MealEntry {
   slug?: string;
   /** Официальное фото упаковки из открытой базы. */
   photoUrl?: string;
+  /** Час Бангкока, когда записали. Нужен, чтобы утром предлагать вчерашний завтрак. */
+  hour?: number;
 }
 
 export interface Challenge {

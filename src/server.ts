@@ -18,6 +18,7 @@ import {
 import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood } from "./foods";
 import { isOffImage } from "./product-db";
+import { bangkokHour, sameAsYesterday, yesterdayOf } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { plansFor, type Place } from "./simple";
@@ -83,6 +84,10 @@ const MIME: Record<string, string> = {
 
 function today(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
+}
+
+function mealHour(date: string): number | undefined {
+  return date === today() ? bangkokHour() : undefined;
 }
 
 function weekKey(dateStr: string): string {
@@ -240,6 +245,9 @@ function dayState(userId: number, date: string) {
     // открытого в календаре: это состояние человека, а не свойство даты
     streak: mealStreak(userId, today()),
     frequent: frequentMeals(userId, today()),
+    sameAs: date === today()
+      ? sameAsYesterday(getMeals(userId, yesterdayOf(date)), getMeals(userId, date), bangkokHour())
+      : null,
     photo: photoQuota(userId),
     visionEnabled: mealVisionEnabled(),
     // Всё остальное состояние человека — одним ответом, чтобы приложение не делало
@@ -730,6 +738,7 @@ async function handleApi(
     const row = addMeal({
       userId: user.id, date: found.date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: meal.photoUrl && isOffImage(meal.photoUrl) ? meal.photoUrl : undefined,
+      hour: mealHour(found.date),
     });
     console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
     json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, found.date) });
@@ -799,6 +808,7 @@ async function handleApi(
     const row = addMeal({
       userId: user.id, date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: meal.photoUrl && isOffImage(meal.photoUrl) ? meal.photoUrl : undefined,
+      hour: mealHour(date),
     });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
@@ -810,30 +820,39 @@ async function handleApi(
    * ничего не уточнит, а фото и текст стоят запроса к модели.
    */
   if (req.method === "POST" && urlPath === "/api/meal/repeat") {
-    const body = JSON.parse(await readBody(req)) as { name?: string };
-    const name = String(body.name ?? "").trim().toLowerCase();
-    if (!name) {
+    const body = JSON.parse(await readBody(req)) as { name?: string; names?: string[] };
+    const names = (Array.isArray(body.names) ? body.names : body.name ? [body.name] : [])
+      .map((n) => String(n ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    if (!names.length) {
       json(res, 400, { error: "no_name" });
       return;
     }
-    const prev = getMeals(user.id)
-      .filter((m) => m.name.trim().toLowerCase() === name)
-      .pop();
-    if (!prev) {
+    const history = getMeals(user.id);
+    const added: { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; slug?: string }[] = [];
+    for (const raw of names) {
+      const key = raw.toLowerCase();
+      const prev = [...history].reverse().find((m) => m.name.trim().toLowerCase() === key);
+      if (!prev) continue;
+      const meal = {
+        name: prev.name,
+        kcal: prev.kcal,
+        proteinG: prev.proteinG,
+        fatG: prev.fatG,
+        carbsG: prev.carbsG,
+        slug: prev.slug,
+        photoUrl: prev.photoUrl && isOffImage(prev.photoUrl) ? prev.photoUrl : undefined,
+        hour: mealHour(date),
+      };
+      addMeal({ userId: user.id, date, ...meal });
+      added.push(meal);
+    }
+    if (!added.length) {
       json(res, 404, { error: "not_found", message: "Такого блюда нет в истории." });
       return;
     }
-    const meal = {
-      name: prev.name,
-      kcal: prev.kcal,
-      proteinG: prev.proteinG,
-      fatG: prev.fatG,
-      carbsG: prev.carbsG,
-      slug: prev.slug,
-      photoUrl: prev.photoUrl && isOffImage(prev.photoUrl) ? prev.photoUrl : undefined,
-    };
-    const row = addMeal({ userId: user.id, date, ...meal });
-    json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
+    json(res, 200, { ...dayState(user.id, date), meal: added[0], copied: added });
     return;
   }
 
@@ -853,7 +872,7 @@ async function handleApi(
     // творог и получит картинку — иначе ручная запись выглядит безымянной.
     const known = matchFood(name);
     const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? imageSlug(known) : undefined };
-    const row = addMeal({ userId: user.id, date, ...meal });
+    const row = addMeal({ userId: user.id, date, ...meal, hour: mealHour(date) });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
   }

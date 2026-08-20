@@ -286,7 +286,8 @@ window.KM_API = (function () {
       return request("POST", "/api/meal/manual", meal);
     },
     repeat: function (name) {
-      return request("POST", "/api/meal/repeat", { name: name });
+      var names = Array.isArray(name) ? name : [name];
+      return request("POST", "/api/meal/repeat", { names: names });
     },
     scaleMeal: function (id, factor) {
       return request("PATCH", "/api/meal", { id: id, factor: factor });

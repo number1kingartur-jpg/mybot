@@ -55,7 +55,9 @@
     lastOrm: null,
     result: null,
     restDays: {},
-    photoPreview: null
+    photoPreview: null,
+    sameAsSkip: null,
+    repeatAsk: null
   };
 
   /**
@@ -117,7 +119,8 @@
           migrated: state.migrated,
           theme: state.theme,
           goalWeightKg: state.goalWeightKg,
-          restDays: state.restDays
+          restDays: state.restDays,
+          sameAsSkip: state.sameAsSkip
         })
       );
     } catch (e) {
@@ -140,6 +143,7 @@
       if (THEMES[saved.theme]) state.theme = saved.theme;
       if (saved.goalWeightKg) state.goalWeightKg = saved.goalWeightKg;
       if (saved.restDays && typeof saved.restDays === "object") state.restDays = saved.restDays;
+      if (saved.sameAsSkip && typeof saved.sameAsSkip === "object") state.sameAsSkip = saved.sameAsSkip;
       state.setupDone = Boolean(saved.setupDone);
       state.migrated = Boolean(saved.migrated);
       hadSavedProfile = Boolean(saved.profile);
@@ -1022,21 +1026,91 @@
     );
   }
 
-  /** Частые блюда: повтор в одно касание, без нового распознавания. */
+  function sameAsOffered() {
+    var s = state.day && state.day.sameAs;
+    return s && s.meals && s.meals.length ? s : null;
+  }
+
+  function sameAsSkipped() {
+    var s = sameAsOffered();
+    var skip = state.sameAsSkip;
+    return !!(s && skip && skip.date === serverToday() && skip.slot === s.slot);
+  }
+
+  /**
+   * Вчера в этот час: спросить, то же ли блюдо, и не писать в дневник сразу.
+   * Слот берётся с сервера по часу Бангкока: утром завтрак, днём обед.
+   */
+  function sameAsCard() {
+    var s = sameAsOffered();
+    if (!s || sameAsSkipped()) return "";
+    var kcal = s.meals.reduce(function (a, m) {
+      return a + m.kcal;
+    }, 0);
+    var list = s.meals
+      .map(function (m) {
+        return esc(m.name) + ", " + m.kcal + " ккал";
+      })
+      .join("; ");
+    var when = s.title === "вчера" ? "Вчера было то же?" : "Вчера на " + esc(s.title) + " было то же?";
+    return card(
+      '<p class="lead">' +
+        when +
+        "</p>" +
+        '<p class="muted">' +
+        list +
+        " · " +
+        kcal +
+        " ккал</p>" +
+        '<div class="btn-stack">' +
+        '<button class="btn btn--primary" data-action="same-as-yes">Да, записать</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="same-as-no">Нет, другое</button>' +
+        "</div>"
+    );
+  }
+
+  function repeatAskCard() {
+    var a = state.repeatAsk;
+    if (!a) return "";
+    return card(
+      '<p class="lead">Записать ещё раз?</p>' +
+        '<p class="muted">' +
+        esc(a.name) +
+        ", " +
+        a.kcal +
+        " ккал</p>" +
+        '<div class="btn-stack">' +
+        '<button class="btn btn--primary" data-action="repeat-yes">Да, записать</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="repeat-no">Нет</button>' +
+        "</div>"
+    );
+  }
+
+  /** Частые блюда: сначала вопрос, потом запись. Иначе повтор уезжает в дневник с одного касания. */
   function frequentRow() {
     var list = state.day && state.day.frequent ? state.day.frequent : [];
+    var offered = sameAsOffered();
+    var skip = {};
+    if (offered && !sameAsSkipped()) {
+      offered.meals.forEach(function (m) {
+        skip[String(m.name).trim().toLowerCase()] = true;
+      });
+    }
+    list = list.filter(function (f) {
+      return !skip[String(f.name).trim().toLowerCase()];
+    });
     if (!list.length) return "";
     return (
       '<div class="chips chips--wrap" style="margin-bottom:12px">' +
       list
         .slice(0, 3)
         .map(function (f) {
-          // Полное название блюда занимает всю строку, и три кнопки превращаются
-          // в три этажа. Внутри кнопки — короткая подпись, в data-repeat — точное имя.
           var short = f.name.length > 22 ? f.name.slice(0, 21).replace(/[ ,]+$/, "") + "…" : f.name;
           return (
-            '<button type="button" class="chip" data-repeat="' +
+            '<button type="button" class="chip" data-repeat-ask="' +
             esc(f.name) +
+            '" data-kcal="' +
+            f.kcal +
             '">↺ ' +
             esc(short) +
             " · " +
@@ -1140,6 +1214,7 @@
       noticeHtml() +
       heroCard +
       routeCard() +
+      (!state.busy && !state.pending && !state.repeatAsk ? sameAsCard() : "") +
       '<div class="tiles">' +
       // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
       // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
@@ -1805,8 +1880,9 @@
     // рядом с неотвеченным вопросом стоят четыре кнопки нового ввода, и человек
     // добавляет второй приём вместо подтверждения первого. Выход из вопроса —
     // кнопка «Не то», она же открывает ввод текстом.
+    if (state.repeatAsk) return repeatAskCard();
     if (state.pending) return pendingCard();
-    return portionCard() + addBlock(quota);
+    return sameAsCard() + portionCard() + addBlock(quota);
   }
 
   /**
@@ -3447,6 +3523,16 @@
     if (wat) return addWater(parseInt(wat.getAttribute("data-water"), 10));
 
     // Повтор частого блюда — тоже раньше .chip, по той же причине
+    var ask = t.closest("[data-repeat-ask]");
+    if (ask) {
+      state.repeatAsk = {
+        name: ask.getAttribute("data-repeat-ask"),
+        kcal: Number(ask.getAttribute("data-kcal")) || 0,
+      };
+      state.notice = null;
+      haptic("light");
+      return render();
+    }
     var rep = t.closest("[data-repeat]");
     if (rep) return repeatMeal(rep.getAttribute("data-repeat"));
 
@@ -3583,6 +3669,29 @@
         return confirmPending();
       case "meal-reject":
         return rejectPending();
+      case "same-as-yes": {
+        var same = sameAsOffered();
+        if (!same) return;
+        return repeatMeals(
+          same.meals.map(function (m) {
+            return m.name;
+          })
+        );
+      }
+      case "same-as-no": {
+        var off = sameAsOffered();
+        state.sameAsSkip = off ? { date: serverToday(), slot: off.slot } : null;
+        persist();
+        haptic("light");
+        return render();
+      }
+      case "repeat-yes":
+        if (!state.repeatAsk) return;
+        return repeatMeals([state.repeatAsk.name]);
+      case "repeat-no":
+        state.repeatAsk = null;
+        haptic("light");
+        return render();
       case "portion-done":
         state.lastMeal = null;
         state.notice = null;
@@ -3872,13 +3981,27 @@
 
   /** Повтор блюда из истории: сервер копирует последнюю запись с этим названием. */
   function repeatMeal(name) {
-    if (!name || !state.day) return;
+    return repeatMeals(name ? [name] : []);
+  }
+
+  function repeatMeals(names) {
+    if (!names || !names.length || !state.day) return;
     state.busy = "food";
+    state.repeatAsk = null;
     state.notice = null;
     render();
-    KM_API.repeat(name)
+    KM_API.repeat(names)
       .then(function (data) {
-        applyMealResult(data, "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
+        var extra = data.copied && data.copied.length > 1 ? data.copied : null;
+        var kcal = extra
+          ? extra.reduce(function (a, m) {
+              return a + m.kcal;
+            }, 0)
+          : data.meal.kcal;
+        var text = extra
+          ? "Записал " + extra.length + " " + plural(extra.length, "приём", "приёма", "приёмов") + ", " + kcal + " ккал."
+          : "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.";
+        applyMealResult(data, text);
       })
       .catch(mealError);
   }
