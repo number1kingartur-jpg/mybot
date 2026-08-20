@@ -82,12 +82,15 @@ export const MENUS: Record<MenuId, DayMenu> = {
         { food: "Паста отварная", g: 180, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
         { food: "Яблоко", g: 180, alt: ["Банан", "Сок", "Молоко российское"] },
         { food: "Сок", g: 250, alt: ["Кефир", "Молоко российское", "Банан"] },
+        { food: "Курица отварная", g: 150, alt: ["Индейка", "Тунец", "Рыба на пару"] },
         { food: "Орехи", g: 20, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] },
       ],
       dinner: [
         { food: "Рыба на пару", g: 150, alt: ["Лосось", "Тунец", "Креветки"] },
+        { food: "Курица отварная", g: 150, alt: ["Индейка", "Тунец", "Креветки"] },
         { food: "Рис отварной", g: 180, alt: ["Гречка отварная", "Картофель отварной", "Паста отварная"] },
         { food: "Салат", g: 150, alt: ["Овощи", "Овощи тушёные", "Суп"] },
+        { food: "Сок", g: 0, alt: ["Кефир", "Молоко российское", "Банан"] },
       ],
     },
   },
@@ -102,6 +105,8 @@ export const MENUS: Record<MenuId, DayMenu> = {
       lunch: [
         { food: "Пад Тай", g: 300, alt: ["Том Ям", "Суши", "Паста отварная"] },
         { food: "Курица запечённая", g: 120, alt: ["Креветки", "Индейка", "Шашлык куриный"] },
+        { food: "Индейка", g: 150, alt: ["Курица отварная", "Креветки", "Рыба на пару"] },
+        { food: "Масло растительное", g: 10, alt: ["Авокадо", "Орехи", "Арахисовая паста"] },
       ],
       snack: [
         { food: "Сом Там", g: 200, alt: ["Салат", "Овощи", "Яблоко"] },
@@ -109,12 +114,15 @@ export const MENUS: Record<MenuId, DayMenu> = {
         { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Хлеб"] },
         { food: "Сок", g: 200, alt: ["Молоко таиландское", "Кефир", "Яблоко"] },
         { food: "Хлеб", g: 30, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
+        { food: "Курица отварная", g: 150, alt: ["Индейка", "Креветки", "Рыба на пару"] },
+        { food: "Орехи", g: 20, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] },
       ],
       dinner: [
         { food: "Том Ям", g: 350, alt: ["Суп", "Пад Тай", "Сом Там"] },
         { food: "Рис отварной", g: 150, alt: ["Гречка отварная", "Картофель отварной", "Хлеб"] },
         { food: "Паста отварная", g: 120, alt: ["Рис отварной", "Гречка отварная", "Хлеб"] },
         { food: "Креветки", g: 120, alt: ["Рыба на пару", "Тунец", "Курица отварная"] },
+        { food: "Курица отварная", g: 150, alt: ["Индейка", "Креветки", "Рыба на пару"] },
       ],
     },
   },
@@ -310,7 +318,7 @@ const PORTION_MAX: Record<string, number> = {
   "Паста отварная": 300,
   "Картофель отварной": 300,
   Хлеб: 90,
-  Сок: 600,
+  Сок: 400,
   "Пад Тай": 500,
   "Том Ям": 500,
   "Сом Там": 300,
@@ -366,25 +374,136 @@ function inferredMacros(kcal: number): MenuMacros {
   return { proteinG, fatG, carbsG };
 }
 
-/** Обычная порция из справочника. Белок не режу и не досыпаю граммами: продукт либо на тарелке, либо нет. */
-function applyProteinPlate(slots: MenuSlot[], macros: MenuMacros) {
-  for (const slot of slots) {
-    const name = slot.def.food;
-    const p = macros.proteinG;
-    if (name === "Творог") {
-      slot.g = slot.key === "breakfast" ? (p >= 185 ? 150 : 0) : p >= 170 ? 150 : 0;
-    } else if (name === "Яйца") slot.g = p >= 85 ? 110 : 0;
-    else if (name === "Рыба на пару") slot.g = p >= 125 ? 150 : 0;
-    else if (name === "Омлет") slot.g = p >= 85 ? 150 : 0;
-    else if (name === "Сате") slot.g = p >= 155 ? 120 : 0;
-    else if (name === "Креветки") slot.g = p >= 145 ? 120 : 0;
+const PROTEIN_PORTION: Record<string, number> = {
+  Яйца: 110,
+  Творог: 150,
+  "Рыба на пару": 150,
+  Омлет: 150,
+  Сате: 120,
+  Креветки: 120,
+  "Курица отварная": 150,
+  "Курица запечённая": 120,
+  Индейка: 150,
+};
+
+function slotFood(slot: MenuSlot): string {
+  return slot.def.food;
+}
+
+function isAnchorProtein(slot: MenuSlot): boolean {
+  const name = slotFood(slot);
+  return (
+    (name === "Курица отварная" && slot.key === "lunch") || name === "Курица запечённая"
+  );
+}
+
+function isOptionalProtein(slot: MenuSlot): boolean {
+  return Boolean(PROTEIN_PORTION[slotFood(slot)]) && !isAnchorProtein(slot);
+}
+
+const MEAL_RANK: Record<MealKey, number> = { lunch: 0, dinner: 1, breakfast: 2, snack: 3 };
+
+function sharePenalty(slots: MenuSlot[], targetKcal: number): number {
+  let s = 0;
+  for (const key of MEAL_KEYS) {
+    const have = slots.filter((x) => x.key === key).reduce((n, x) => n + nutr(x.def.food, x.g).kcal, 0);
+    const want = Math.round(targetKcal * MEAL_SHARE[key]);
+    s += Math.max(0, Math.abs(have - want) - 70) / 10;
   }
+  return s;
+}
+
+function carbsHaveRoom(slots: MenuSlot[], macros: MenuMacros): boolean {
+  return slots.some((slot) => {
+    const lim = flexLimit(slotFood(slot), slot.g, macros, slot.key);
+    return Boolean(lim && slot.g + lim.step <= lim.max && CARB_FLEX.has(slotFood(slot)));
+  });
+}
+
+function plateScore(slots: MenuSlot[], macros: MenuMacros, targetKcal: number, relax = false): number {
+  const now = slotNutr(slots);
+  let s =
+    Math.abs(now.proteinG - macros.proteinG) +
+    Math.max(0, now.fatG - macros.fatG) * 1.2 +
+    Math.max(0, macros.fatG - now.fatG) * 0.15;
+  if (!relax) {
+    s += Math.max(0, targetKcal - now.kcal) / 8 + sharePenalty(slots, targetKcal);
+  }
+  return s;
+}
+
+function isStarterProtein(slot: MenuSlot): boolean {
+  const name = slotFood(slot);
+  return isAnchorProtein(slot) || name === "Яйца" || name === "Омлет" || name === "Рыба на пару";
+}
+
+/** Обычная порция или нет. Какой продукт включить, считает норма, а не порог веса. */
+function resetProteinPlate(slots: MenuSlot[]) {
+  for (const slot of slots) {
+    const name = slotFood(slot);
+    const cat = PROTEIN_PORTION[name];
+    if (!cat) continue;
+    slot.g = isStarterProtein(slot) ? cat : 0;
+  }
+}
+
+function chooseProtein(slots: MenuSlot[], macros: MenuMacros, targetKcal: number) {
+  const opts = slots.filter(isOptionalProtein);
+  for (let n = 0; n < 24; n++) {
+    const now = slotNutr(slots);
+    const relax = now.proteinG - macros.proteinG > 12 && carbsHaveRoom(slots, macros);
+    const score = plateScore(slots, macros, targetKcal, relax);
+    let best: { slot: MenuSlot; g: number; score: number } | null = null;
+    for (const slot of opts) {
+      const name = slotFood(slot);
+      const cat = PROTEIN_PORTION[name];
+      const prev = slot.g;
+      if (prev === 0 && now.proteinG >= macros.proteinG - 8) continue;
+      if (prev > 0 && isStarterProtein(slot) && now.proteinG - macros.proteinG <= 12) continue;
+      if (
+        prev === 0 &&
+        name === "Курица отварная" &&
+        slot.key === "snack" &&
+        opts.some((s) => s.key === "dinner" && slotFood(s) === "Курица отварная" && s.g === 0)
+      ) {
+        continue;
+      }
+      slot.g = prev > 0 ? 0 : cat;
+      const next = plateScore(slots, macros, targetKcal, relax);
+      slot.g = prev;
+      const betterMeal = !best || MEAL_RANK[slot.key] < MEAL_RANK[best.slot.key];
+      if (
+        next + 0.35 < score &&
+        (!best || next < best.score - 0.05 || (Math.abs(next - best.score) < 0.05 && betterMeal))
+      ) {
+        best = { slot, g: prev > 0 ? 0 : cat, score: next };
+      }
+    }
+    if (!best) break;
+    best.slot.g = best.g;
+  }
+}
+
+function snackCarbCap(name: string, mealKey?: MealKey): number | undefined {
+  if (mealKey !== "snack") return undefined;
+  if (
+    name === "Паста отварная" ||
+    name === "Рис отварной" ||
+    name === "Гречка отварная" ||
+    name === "Картофель отварной"
+  ) {
+    return 180;
+  }
+  if (name === "Сок") return 250;
+  if (name === "Хлеб") return 60;
+  return undefined;
 }
 
 function flexLimit(
   name: string,
   g: number,
-  macros?: MenuMacros | null
+  macros?: MenuMacros | null,
+  mealKey?: MealKey
 ): { min: number; max: number; step: number } | null {
   if (PROT_FLEX.has(name) || name === "Яйца") return null;
   if (macros && name === "Масло растительное") {
@@ -393,14 +512,15 @@ function flexLimit(
   }
   if (name === "Хлеб" || name === "Банан" || name === "Яблоко") {
     const piece = measureG(name) || 30;
-    const cap = name === "Хлеб" ? PORTION_MAX.Хлеб : piece;
+    const cap = snackCarbCap(name, mealKey) ?? (name === "Хлеб" ? PORTION_MAX.Хлеб : piece);
     return { min: 0, max: cap, step: piece };
   }
   if (!FLEX_FOODS.has(name) && !(macros && FAT_FLEX.has(name))) return null;
   if (measureG(name)) return null;
   const food = menuFood(name);
   const step = g < 50 ? 5 : 10;
-  const cap = PORTION_MAX[name] ?? Math.round(food.defaultG * 2.5);
+  const snackCap = snackCarbCap(name, mealKey);
+  const cap = Math.min(PORTION_MAX[name] ?? Math.round(food.defaultG * 2.5), snackCap ?? Infinity);
   return {
     min: OPTIONAL_CARB.has(name) ? 0 : Math.max(step, roundG(name, food.defaultG * 0.4)),
     max: cap,
@@ -434,7 +554,7 @@ function stepGroup(
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
     if (!pick(slot.def.food)) continue;
-    const lim = flexLimit(slot.def.food, slot.g, macros);
+    const lim = flexLimit(slot.def.food, slot.g, macros, slot.key);
     if (!lim) continue;
     const next = slot.g + dir * lim.step;
     if (next < lim.min || next > lim.max) continue;
@@ -465,7 +585,7 @@ function fitKcalOnly(slots: MenuSlot[], target: number, macros?: MenuMacros | nu
     let best: { i: number; g: number; err: number; p100: number } | null = null;
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
-      const lim = flexLimit(slot.def.food, slot.g, macros);
+      const lim = flexLimit(slot.def.food, slot.g, macros, slot.key);
       if (!lim) continue;
       const next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
       if (next < lim.min || next > lim.max) continue;
@@ -485,42 +605,22 @@ function fitKcalOnly(slots: MenuSlot[], target: number, macros?: MenuMacros | nu
   }
 }
 
-/** Если день уехал после подгонки приёмов, двигаю самый далёкий от своей доли. */
+/** Подгоняю приём к своей доле дня, даже если итог уже сошёлся. */
 function reconcileDay(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
+  const shareTol = Math.max(80, Math.round(target * 0.05));
   for (let n = 0; n < 80; n++) {
-    const now = slotNutr(slots);
-    const kGap = target - now.kcal;
-    const pGap = macros ? now.proteinG - macros.proteinG : 0;
-    const cGap = macros ? macros.carbsG - now.carbsG : 0;
-    const fGap = macros ? now.fatG - macros.fatG : 0;
-    if (
-      Math.abs(kGap) <= FIT.kcal &&
-      (!macros ||
-        (pGap <= FIT.protein &&
-          pGap >= -FIT.protein &&
-          Math.abs(cGap) <= FIT.carbs &&
-          Math.abs(fGap) <= FIT.fat))
-    ) {
-      return;
-    }
     let worst: MealKey | null = null;
     let worstErr = -1;
     for (const key of MEAL_KEYS) {
       const have = slots.filter((s) => s.key === key).reduce((s, x) => s + nutr(x.def.food, x.g).kcal, 0);
       const want = Math.round(target * MEAL_SHARE[key]);
-      const signed = want - have;
-      if (kGap > 25 && signed <= 0) continue;
-      if (kGap < -25 && signed >= 0) continue;
-      const err = Math.abs(signed);
+      const err = Math.abs(want - have);
       if (err > worstErr) {
         worstErr = err;
         worst = key;
       }
     }
-    if (!worst) {
-      fitSlots(slots, target, macros);
-      return;
-    }
+    if (!worst || worstErr <= shareTol) break;
     const part = slots.filter((s) => s.key === worst);
     const share = MEAL_SHARE[worst];
     const before = part.map((s) => s.g).join();
@@ -533,8 +633,9 @@ function reconcileDay(slots: MenuSlot[], target: number, macros?: MenuMacros | n
     } else {
       fitKcalOnly(part, Math.round(target * share));
     }
-    if (part.map((s) => s.g).join() === before) return;
+    if (part.map((s) => s.g).join() === before) break;
   }
+  fitSlots(slots, target, macros);
 }
 
 /** Без БЖУ добиваю только ккал. С нормой: белковые порции уже выбраны, двигаю крупы и жир. */
@@ -590,7 +691,14 @@ export function dayMenu(
       slots.push({ key, def, g: def.g });
     }
   }
-  applyProteinPlate(slots, macros ?? inferredMacros(target));
+  const plate = macros ?? inferredMacros(target);
+  resetProteinPlate(slots);
+  fitSlots(slots, target, macros);
+  chooseProtein(slots, plate, target);
+  fitSlots(slots, target, macros);
+  chooseProtein(slots, plate, target);
+  reconcileDay(slots, target, macros);
+  chooseProtein(slots, plate, target);
   fitSlots(slots, target, macros);
   const meals: MenuMeal[] = MEAL_KEYS.map((key) => {
     const items = slots.filter((s) => s.key === key && s.g > 0).map((s) => buildItem(s.def, s.g));

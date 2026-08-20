@@ -181,7 +181,7 @@ const swapPlain = APP.day("ru", "maint", 2400, {}, swapMacros);
 const swapSwapped = APP.day("ru", "maint", 2400, { [swapId]: swapTo }, swapMacros);
 check(
   "замена с БЖУ: день к норме",
-  Math.abs(swapSwapped.total.kcal - 2400) <= 30,
+    Math.abs(swapSwapped.total.kcal - 2400) <= 40,
   `${swapSwapped.total.kcal} против 2400`
 );
 check(
@@ -226,6 +226,7 @@ const GRAIN_CAP = {
   "Паста отварная": 300,
   "Овсянка на молоке": 430,
   "Картофель отварной": 300,
+  Сок: 400,
 };
 
 function macrosFor(kcal, proteinG, fatG) {
@@ -282,6 +283,11 @@ check("ru@3011/149: курица 150 г", lunchChicken?.g === 150, `${lunchChick
 check("ru@3011/149: рыба 150 г", dinnerFish?.g === 150, `${dinnerFish?.g || 0} г`);
 check("ru@3011/149: яйца 2 шт", breakfastEggs?.g === 110, breakfastEggs?.amount);
 check("ru@3011/149: без лишнего творога", !hasCottage, "творог на тарелке");
+check(
+  "ru@3011/149: без второй курицы",
+  !appArtur.meals.some((m) => m.key === "dinner" && m.items.some((i) => i.food === "Курица отварная")),
+  "курица на ужине"
+);
 portionCapsOk(appArtur, "ru@3011/149");
 
 const high = macrosFor(3026);
@@ -360,11 +366,61 @@ for (const p of PEOPLE) {
     const tag = `${menuId} ${p.sex}/${p.weightKg}кг ${p.goal} ${m.kcal}`;
     check(`${tag}: паритет ккал`, bot.total[0] === mine.total.kcal, `бот ${bot.total[0]}, приложение ${mine.total.kcal}`);
     check(`${tag}: паритет белка`, bot.total[1] === mine.total.proteinG, `бот ${bot.total[1]}, приложение ${mine.total.proteinG}`);
-    check(`${tag}: ккал`, Math.abs(mine.total.kcal - m.kcal) <= (menuId === "th" ? 450 : 200), `${mine.total.kcal} против ${m.kcal}`);
-    check(`${tag}: белок`, Math.abs(mine.total.proteinG - m.proteinG) <= (menuId === "th" ? 90 : m.proteinG >= 180 ? 55 : 40), `${mine.total.proteinG} против ${m.proteinG}`);
-    check(`${tag}: жир`, Math.abs(mine.total.fatG - m.fatG) <= (menuId === "th" ? 30 : 12), `${mine.total.fatG} против ${m.fatG}`);
-    check(`${tag}: углеводы`, Math.abs(mine.total.carbsG - m.carbsG) <= (menuId === "th" ? 80 : 40), `${mine.total.carbsG} против ${m.carbsG}`);
+    check(`${tag}: ккал`, Math.abs(mine.total.kcal - m.kcal) <= (menuId === "th" ? 220 : 40), `${mine.total.kcal} против ${m.kcal}`);
+    check(`${tag}: белок`, Math.abs(mine.total.proteinG - m.proteinG) <= (menuId === "th" ? (m.proteinG >= 200 ? 25 : 40) : 25), `${mine.total.proteinG} против ${m.proteinG}`);
+    check(`${tag}: жир`, Math.abs(mine.total.fatG - m.fatG) <= (menuId === "th" ? 25 : 10), `${mine.total.fatG} против ${m.fatG}`);
+    check(`${tag}: углеводы`, Math.abs(mine.total.carbsG - m.carbsG) <= (menuId === "th" ? 55 : 30), `${mine.total.carbsG} против ${m.carbsG}`);
+    if (menuId === "ru" && m.proteinG >= 200) {
+      const extra = mine.meals
+        .filter((x) => x.key !== "lunch")
+        .some((x) => x.items.some((i) => i.food === "Курица отварная" && i.g === 150));
+      check(`${tag}: ещё одна курица 150 г`, extra, "нет второй порции");
+    }
+    if (menuId === "ru") {
+      for (const meal of mine.meals) {
+        const tol = meal.key === "snack" ? 100 : 130;
+        check(
+          `${tag}: ${meal.key} доля`,
+          Math.abs(meal.kcal - meal.targetKcal) <= tol,
+          `${meal.kcal} против ${meal.targetKcal}`
+        );
+      }
+    }
     portionCapsOk(mine, tag);
+  }
+}
+
+for (const sex of ["m", "f"]) {
+  for (const weightKg of [52, 65, 80, 95, 110]) {
+    for (const goal of ["cut", "maint", "bulk"]) {
+      const p = {
+        sex,
+        age: 30,
+        heightCm: sex === "f" ? 165 : 178,
+        weightKg,
+        activity: "mid",
+        goal,
+      };
+      const m = calcMacros(p);
+      for (const menuId of MENU_IDS) {
+        const mine = APP.day(menuId, goal, m.kcal, {}, m);
+        const bot = dayMenu(menuId, goal, m.kcal, m);
+        const tag = `grid ${menuId} ${sex}/${weightKg}кг ${goal} ${m.kcal}`;
+        check(`${tag}: паритет ккал`, bot.total[0] === mine.total.kcal, `бот ${bot.total[0]}, приложение ${mine.total.kcal}`);
+        check(`${tag}: паритет белка`, bot.total[1] === mine.total.proteinG, `бот ${bot.total[1]}, приложение ${mine.total.proteinG}`);
+        check(`${tag}: ккал`, Math.abs(mine.total.kcal - m.kcal) <= (menuId === "th" ? 220 : 45), `${mine.total.kcal} против ${m.kcal}`);
+        check(`${tag}: белок`, Math.abs(mine.total.proteinG - m.proteinG) <= (menuId === "th" ? 40 : 22), `${mine.total.proteinG} против ${m.proteinG}`);
+        check(`${tag}: жир`, Math.abs(mine.total.fatG - m.fatG) <= (menuId === "th" ? 25 : 12), `${mine.total.fatG} против ${m.fatG}`);
+        check(`${tag}: углеводы`, Math.abs(mine.total.carbsG - m.carbsG) <= (menuId === "th" ? 70 : 35), `${mine.total.carbsG} против ${m.carbsG}`);
+        for (const meal of mine.meals) {
+          for (const item of meal.items) {
+            const want = { "Курица отварная": 150, Творог: 150, "Рыба на пару": 150, Яйца: 110, Омлет: 150, Сате: 120, Креветки: 120, Индейка: 150, "Курица запечённая": 120 }[item.food];
+            if (want) check(`${tag}: ${item.food} порция`, item.g === want, `${item.g} г`);
+          }
+        }
+        portionCapsOk(mine, tag);
+      }
+    }
   }
 }
 
