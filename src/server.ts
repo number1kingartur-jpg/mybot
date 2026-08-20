@@ -4,7 +4,7 @@ import path from "path";
 import { verifyInitData, type WebAppUser } from "./webapp-auth";
 import {
   registerUser, getUser, updateUser, setNutrition,
-  addMeal, removeMeal, scaleMeal, getMeals, mealTotals, mealStreak, frequentMeals,
+  addMeal, removeMeal, scaleMeal, getMeals, mealTotals, mealStreak, frequentMeals, progressSnapshot,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, getMealsForDays,
@@ -252,6 +252,7 @@ function dayState(userId: number, date: string) {
     // Серия и частые блюда считаются всегда от сегодняшнего дня, а не от
     // открытого в календаре: это состояние человека, а не свойство даты
     streak: mealStreak(userId, today()),
+    progress: progressSnapshot(userId, today()),
     frequent: frequentMeals(userId, today()),
     sameAs:
       date === today()

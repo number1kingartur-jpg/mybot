@@ -1052,6 +1052,244 @@
     );
   }
 
+  function progressData() {
+    return state.day && state.day.progress ? state.day.progress : null;
+  }
+
+  /** Главная карточка экрана «Прогресс»: серия и зачем не бросать. */
+  function progressHeroCard() {
+    var p = progressData();
+    var s = p ? p.streak : state.day && state.day.streak;
+    if (!s) return "";
+    var days = s.days || 0;
+    var sub =
+      days >= 14
+        ? "Дневник стал привычкой. Бросить сейчас: выкинешь " + days + " " + plural(days, "день", "дня", "дней") + " истории."
+        : days >= 7
+          ? "Неделя подряд. Прогноз и тренд уже опираются на твои данные, а не на анкету."
+          : days >= 1
+            ? "Не прерывай сегодня: одна запись еды сохраняет серию."
+            : "Запиши любой приём: серия начнётся с сегодняшнего дня.";
+    var dots = (s.last7 || [])
+      .map(function (on) {
+        return '<span class="streak__dot' + (on ? " streak__dot--on" : "") + '"></span>';
+      })
+      .join("");
+    return card(
+      cardHead(
+        days ? days + " " + plural(days, "день", "дня", "дней") + " подряд" : "Серия не начата",
+        "Дневник еды",
+        days ? "серия" : "мотивация"
+      ) +
+        '<div class="progress-hero">' +
+        figure(String(days || "0"), "", "дней подряд с записью") +
+        '<div class="streak__dots progress-hero__dots">' +
+        dots +
+        "</div></div>" +
+        '<p class="lead">' +
+        esc(sub) +
+        "</p>",
+      { gold: true }
+    );
+  }
+
+  /** Семь дней: еда и тренировки. Видно, где человек срывается. */
+  function weekMomentumCard() {
+    var p = progressData();
+    if (!p || !p.week) return "";
+    var today = state.day && state.day.date ? state.day.date : new Date().toISOString().slice(0, 10);
+    var dayNames = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+    var shiftDay = function (base, back) {
+      var d = new Date(base + "T12:00:00");
+      d.setDate(d.getDate() - back);
+      return d;
+    };
+    var mealDots = (p.streak.last7 || [])
+      .map(function (on, i) {
+        var d = shiftDay(today, 6 - i);
+        var label = dayNames[d.getDay()];
+        var wo = p.week.last7Workouts && p.week.last7Workouts[i];
+        return (
+          '<div class="week-day"><span class="week-day__label">' +
+          label +
+          '</span><span class="week-day__meal' +
+          (on ? " week-day__meal--on" : "") +
+          '" title="Еда"></span><span class="week-day__wo' +
+          (wo ? " week-day__wo--on" : "") +
+          '" title="Тренировка"></span></div>'
+        );
+      })
+      .join("");
+    return card(
+      cardHead(
+        "Последние 7 дней",
+        p.week.mealDays +
+          "/7 с едой · " +
+          p.week.workoutDays +
+          " " +
+          plural(p.week.workoutDays, "тренировка", "тренировки", "тренировок"),
+        p.week.proteinHitDays
+          ? "белок в норме " + p.week.proteinHitDays + " " + plural(p.week.proteinHitDays, "день", "дня", "дней")
+          : null
+      ) +
+        '<div class="week-grid">' +
+        mealDots +
+        "</div>" +
+        '<p class="note note--plain">Золотой кружок: запись еды. Полоска: тренировка.</p>'
+    );
+  }
+
+  /** Прогноз по цели или честный счётчик до него. */
+  function forecastProgressCard() {
+    var entries = sortedEntries();
+    var advice = KM.weightTrendAdvice(entries, state.profile.goal);
+    var goal = num(state.goalWeightKg);
+    var last = sortedEntries().slice(-1)[0];
+    var w = progressData() && progressData().weigh;
+
+    if (advice && last && goal >= 30 && goal <= 250) {
+      var delta = goal - last.weightKg;
+      if (Math.abs(delta) < 0.3) {
+        return card(
+          cardHead("Цель достигнута", goal + " кг") +
+            '<p class="lead">Держи норму и наблюдай тренд. Новую цель задаёшь ниже.</p>',
+          { gold: true }
+        );
+      }
+      var rate = advice.rateKgWeek;
+      if (rate && delta * rate > 0) {
+        var weeks = Math.abs(delta / rate);
+        if (weeks <= 104) {
+          var when = new Date();
+          when.setDate(when.getDate() + Math.round(weeks * 7));
+          return card(
+            cardHead(
+              "Прогноз по факту",
+              String(when.getDate()).padStart(2, "0") +
+                "." +
+                String(when.getMonth() + 1).padStart(2, "0") +
+                "." +
+                when.getFullYear(),
+              (rate > 0 ? "+" : "") + rate + " кг/нед"
+            ) +
+              figure(
+                (delta > 0 ? "+" : "") + delta.toFixed(1),
+                " кг",
+                "до цели " + goal + " кг"
+              ) +
+              '<p class="lead">' +
+              esc(advice.verdict || advice.text) +
+              "</p>" +
+              '<p class="note note--plain">Считается только по взвешиваниям, не по обещаниям из анкеты.</p>',
+            { gold: true }
+          );
+        }
+      }
+      return card(
+        cardHead("Вес идёт не к цели", "Цель " + goal + " кг") +
+          '<p class="lead">Тренд ' +
+          (rate > 0 ? "+" : "") +
+          rate +
+          " кг/нед, до цели " +
+          (delta > 0 ? "+" : "") +
+          delta.toFixed(1) +
+          " кг. Правь калории в «Питании».</p>"
+      );
+    }
+
+    if (!w) return "";
+    if (w.trendReady) {
+      return card(
+        cardHead("Тренд считается", w.count28 + " взвешивания") +
+            '<p class="lead">Задай цель по весу ниже: покажу дату при текущем темпе.</p>'
+      );
+    }
+    var lines = [];
+    if (w.need > 0) {
+      lines.push(
+        "Ещё <strong>" +
+          w.need +
+          "</strong> " +
+          plural(w.need, "взвешивание", "взвешивания", "взвешиваний") +
+          " за 28 дней, и откроется прогноз."
+      );
+    }
+    if (w.count28 >= 4 && w.spanDays !== null && w.spanDays < 10) {
+      lines.push(
+        "Между первым и последним взвешиванием нужно <strong>10 дней</strong>, сейчас " +
+          w.spanDays +
+          ". Иначе тренд врёт из‑за воды."
+      );
+    }
+    if (!lines.length) {
+      lines.push("Взвешивайся 3–4 раза в неделю утром: прогноз строится только из факта.");
+    }
+    return card(
+      cardHead("До прогноза", w.count28 + " из 4 взвешиваний") +
+        '<p class="lead">' +
+        lines.join(" ") +
+        "</p>" +
+        '<div class="btn-stack"><button class="btn btn--outline btn--slim" data-action="scroll-diary">Записать вес</button></div>'
+    );
+  }
+
+  /** Сильнейшие подходы по оценке 1ПМ — повод вернуться в зал. */
+  function topLiftsCard() {
+    var p = progressData();
+    var lifts = p && p.topLifts ? p.topLifts : [];
+    if (!lifts.length) {
+      return card(
+        cardHead("Сила", "Пока нет записей") +
+          '<p class="lead">Отметь тренировку с весами: здесь появятся твои сильнейшие движения.</p>' +
+          '<div class="btn-stack"><button class="btn btn--outline btn--slim" data-go="workout">К тренировке</button></div>'
+      );
+    }
+    return card(
+      cardHead("Сильнейшие движения", "по оценке 1ПМ", String(p.workoutsTotal || lifts.length) + " тренировок всего") +
+        '<ul class="log">' +
+        lifts
+          .map(function (l) {
+            return (
+              '<li><span class="log__date">' +
+              esc(formatDate(l.date)) +
+              '</span><span class="log__value">' +
+              esc(l.exercise) +
+              " · " +
+              l.weightKg +
+              " кг × " +
+              l.reps +
+              ' <span class="muted">(~' +
+              l.e1rm +
+              " кг 1ПМ)</span></span></li>"
+            );
+          })
+          .join("") +
+        "</ul>"
+    );
+  }
+
+  /** На «Сегодня» — одна строка, почему зайти в прогресс. */
+  function progressTeaserCard() {
+    var p = progressData();
+    if (!p) return "";
+    var days = p.streak.days || 0;
+    var head =
+      days >= 1
+        ? "Серия " + days + " " + plural(days, "день", "дня", "дней")
+        : "Начни серию сегодня";
+    var sub =
+      p.weigh && !p.weigh.trendReady && p.weigh.need > 0
+        ? "До прогноза " + p.weigh.need + " " + plural(p.weigh.need, "взвешивание", "взвешивания", "взвешиваний")
+        : p.week.mealDays + "/7 дней с едой на этой неделе";
+    return (
+      '<button type="button" class="card card--tap' +
+      (days >= 7 ? " card--gold" : "") +
+      '" data-action="go-progress">' +
+      cardHead(head, sub, "прогресс") +
+      '<p class="lead">Открой, чтобы увидеть неделю, прогноз и силовые рекорды.</p></button>'
+    );
+  }
+
   function sameAsOffered() {
     var s = state.day && state.day.sameAs;
     return s && s.meals && s.meals.length ? s : null;
@@ -1281,6 +1519,7 @@
           : portionCard()) +
       frequentRow() +
       streakStrip() +
+      progressTeaserCard() +
       '<div class="grid-2">' +
       waterMetric() +
       metric(
@@ -3006,7 +3245,61 @@
       "</p>" +
       '<p class="note">' +
       esc(KM_PLANS.sexNote) +
-      "</p>"
+      "</p>" +
+      (wk.place === "gym" ? extraGymHtml() : "")
+    );
+  }
+
+  function extraClipHtml(e) {
+    var slug = KM_PLANS.slug(e);
+    var local = e.video || KM_PLANS.localVideo(e);
+    var media = local
+      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="img/ex/' +
+        esc(slug) +
+        '.webp" src="' +
+        esc(local) +
+        '"></video></div>'
+      : "";
+    return (
+      '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
+      thumb(slug, e.name, "ex") +
+      '<span class="acc__text"><span class="acc__title">' +
+      esc(e.name) +
+      '</span><span class="acc__sub">' +
+      esc(e.short) +
+      '</span></span><span class="acc__sign">+</span></button>' +
+      '<div class="acc__body">' +
+      media +
+      '<span class="eyebrow section__label">Как делать</span><ol class="steps-list">' +
+      e.steps
+        .map(function (s) {
+          return "<li>" + esc(s) + "</li>";
+        })
+        .join("") +
+      "</ol>" +
+      '<span class="eyebrow section__label">Частые ошибки</span><ul class="bullets">' +
+      e.mistakes
+        .map(function (s) {
+          return "<li>" + esc(s) + "</li>";
+        })
+        .join("") +
+      "</ul>" +
+      '<p class="note"><strong>Тяжело?</strong> ' +
+      esc(e.easier) +
+      "</p></div></div>"
+    );
+  }
+
+  function extraGymHtml() {
+    var extras = KM_PLANS.gymClips();
+    if (!extras || !extras.length) return "";
+    return (
+      card(
+        cardHead(
+          "Ещё из зала",
+          "Не часть плана A/B и не пишется в журнал. Техника с тех клипов, что уже сняты."
+        )
+      ) + extras.map(extraClipHtml).join("")
     );
   }
 
@@ -3174,6 +3467,7 @@
     var advice = KM.weightTrendAdvice(entries, state.profile.goal);
 
     return (
+      '<div id="diary-section">' +
       card(
         cardHead("Записать вес", "Утром натощак, 3–4 раза в неделю") +
           '<div class="row">' +
@@ -3250,7 +3544,8 @@
                 .join("") +
               "</ul>"
           )
-        : "")
+        : "") +
+      "</div>"
     );
   }
 
@@ -3463,7 +3758,17 @@
       "</div>";
 
     if (state.profTab === "progress") {
-      return noticeHtml() + tabs + goalWeightCard() + recentWorkoutsCard() + renderDiary();
+      return (
+        noticeHtml() +
+        tabs +
+        progressHeroCard() +
+        weekMomentumCard() +
+        forecastProgressCard() +
+        topLiftsCard() +
+        goalWeightCard() +
+        recentWorkoutsCard() +
+        renderDiary()
+      );
     }
     if (state.profTab === "look") {
       return noticeHtml() + tabs + themeCard() + aboutCard();
@@ -4098,6 +4403,17 @@
       case "route-weight":
         state.profTab = "progress";
         return go("profile");
+      case "go-progress":
+        state.profTab = "progress";
+        return go("profile");
+      case "scroll-diary":
+        state.profTab = "progress";
+        go("profile");
+        setTimeout(function () {
+          var el = document.getElementById("diary-section");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 80);
+        return;
       case "workout-done":
         return markWorkoutDone();
       case "program-activate":

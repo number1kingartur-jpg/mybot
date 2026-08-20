@@ -1734,6 +1734,60 @@ label.btn {
   flex: 1;
 }
 
+.progress-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 8px 0 4px;
+}
+
+.progress-hero__dots {
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.week-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.week-day__label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.week-day__meal {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+}
+
+.week-day__meal--on {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.week-day__wo {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.week-day__wo--on {
+  background: var(--accent, #4ade80);
+}
+
 /* ── Футер ──────────────────────────────────────────────────────────────── */
 
 .foot {

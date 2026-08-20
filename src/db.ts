@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { calcMacros } from "./nutrition";
 
 // Railway Volume mounts at /data; locally falls back to project root
 const DB_PATH = process.env.DATA_PATH ?? path.join(__dirname, "..", "data.json");
@@ -666,6 +667,94 @@ export function mealStreak(userId: number, todayStr: string): { days: number; la
   const last7: boolean[] = [];
   for (let back = 6; back >= 0; back--) last7.push(filled.has(shift(todayStr, back)));
   return { days, last7 };
+}
+
+export interface ProgressLift {
+  exercise: string;
+  weightKg: number;
+  reps: number;
+  e1rm: number;
+  date: string;
+}
+
+/** Сводка для экрана «Прогресс»: серия, неделя, путь к прогнозу, сильнейшие подходы. */
+export function progressSnapshot(userId: number, todayStr: string) {
+  const streak = mealStreak(userId, todayStr);
+  const u = getUser(userId);
+  const shift = (base: string, back: number): string => {
+    const d = new Date(base + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - back);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const weekStart = shift(todayStr, 6);
+  const meals7 = getMealsForDays(userId, 7);
+  const mealDays = streak.last7.filter(Boolean).length;
+
+  const workoutDates = new Set(
+    load()
+      .workouts.filter((w) => w.userId === userId && w.date >= weekStart)
+      .map((w) => w.date)
+  );
+  const last7Workouts: boolean[] = [];
+  for (let back = 6; back >= 0; back--) last7Workouts.push(workoutDates.has(shift(todayStr, back)));
+
+  const proteinTarget =
+    u?.nutrition ? calcMacros(u.nutrition, getBodyweight(userId, 1).slice(-1)[0]?.weightKg).proteinG : 0;
+  let proteinHitDays = 0;
+  if (proteinTarget > 0) {
+    const byDay = new Map<string, number>();
+    for (const m of meals7) {
+      byDay.set(m.date, (byDay.get(m.date) || 0) + m.proteinG);
+    }
+    for (const p of byDay.values()) {
+      if (p >= proteinTarget * 0.9) proteinHitDays++;
+    }
+  }
+
+  const cutoff28 = shift(todayStr, 28);
+  const weights = getBodyweight(userId, 60)
+    .filter((b) => b.source !== "profile" && b.date >= cutoff28)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const count28 = weights.length;
+  let spanDays: number | null = null;
+  if (weights.length >= 2) {
+    spanDays = Math.round(
+      (new Date(weights[weights.length - 1].date).getTime() - new Date(weights[0].date).getTime()) /
+        86400000
+    );
+  }
+  const trendReady = count28 >= 4 && spanDays !== null && spanDays >= 10;
+
+  const byEx = new Map<string, ProgressLift>();
+  for (const w of load().workouts.filter((row) => row.userId === userId)) {
+    if (!w.weightKg || w.notes === "simple") continue;
+    const e1rm = Math.round(est1rm(w.weightKg, w.reps) * 10) / 10;
+    const prev = byEx.get(w.exercise);
+    if (!prev || e1rm > prev.e1rm) {
+      byEx.set(w.exercise, {
+        exercise: w.exercise,
+        weightKg: w.weightKg,
+        reps: w.reps,
+        e1rm,
+        date: w.date,
+      });
+    }
+  }
+  const topLifts = [...byEx.values()].sort((a, b) => b.e1rm - a.e1rm).slice(0, 3);
+
+  return {
+    streak,
+    week: { mealDays, workoutDays: workoutDates.size, proteinHitDays, last7Workouts },
+    weigh: {
+      count28,
+      need: Math.max(0, 4 - count28),
+      spanDays,
+      trendReady,
+    },
+    topLifts,
+    workoutsTotal: load().workouts.filter((w) => w.userId === userId).length,
+  };
 }
 
 /**
