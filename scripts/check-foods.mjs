@@ -256,8 +256,31 @@ const plate = macrosFromText("курица жареная 200 г, рис 150 г"
 check("картинка приёма — по главному продукту", plate?.slug === "kurica-zharenaya", plate?.slug);
 check("зелёное яблоко не красное", matchFood("яблоко зелёное")?.name === "Яблоко зелёное", matchFood("яблоко зелёное")?.name);
 check("зелёное яблоко: слаг", foodSlug("Яблоко зелёное") === "yabloko-zelenoe", foodSlug("Яблоко зелёное"));
+const greenShot = macrosFromItems([{ name: "яблоко зелёное", grams: 120 }]);
+check("картинка зелёного яблока не красная", greenShot?.slug === "yabloko-zelenoe", greenShot?.slug);
 check("просто яблоко остаётся красным", matchFood("яблоко")?.name === "Яблоко", matchFood("яблоко")?.name);
 check("груша не яблоко", matchFood("груша")?.name === "Груша", matchFood("груша")?.name);
+
+const saladShot = macrosFromItems([
+  {
+    name: "салат из зелени, помидоров черри, кукурузы, моркови, перепелиных яиц, сухариков и соуса",
+    grams: 350,
+  },
+]);
+check("салат не чипсы", !/чипс/i.test(saladShot?.name ?? ""), saladShot?.name);
+check("салат не сухарики пакетом", !/^Сухарик/i.test(saladShot?.name ?? ""), saladShot?.name);
+check("салат не 1800 ккал", (saladShot?.kcal ?? 9999) < 600, String(saladShot?.kcal));
+
+const colaZero = macrosFromItems([{ name: "кола", grams: 330, kcal100: 0.3, p100: 0, f100: 0, c100: 0 }]);
+check("0 ккал на этикетке это кола без сахара", /без сахара/i.test(colaZero?.name ?? ""), colaZero?.name);
+near("кола без сахара почти 0 ккал", colaZero?.kcal ?? 99, 1, 3);
+
+const colaSugar = macrosFromItems([{ name: "кола", grams: 325 }]);
+check("обычная кола остаётся с сахаром", colaSugar?.name?.toLowerCase().includes("кола") && !/без сахара/i.test(colaSugar?.name ?? ""), colaSugar?.name);
+near("обычная кола 325 мл ≈ 136 ккал", colaSugar?.kcal ?? 0, 136, 0.1);
+
+const colaNamed = macrosFromItems([{ name: "coca cola zero", grams: 330 }]);
+check("zero в названии это кола без сахара", /без сахара/i.test(colaNamed?.name ?? ""), colaNamed?.name);
 
 // ── Ответ модели по фото упаковки: раньше это был отказ ──────────────────────
 function fromModel(json) {

@@ -16,7 +16,7 @@ import {
   analyzeMealPhoto, analyzeMealText, editMeal, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError,
 } from "./meal";
 import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
-import { FOODS, foodSlug, macrosFromItems, matchFood } from "./foods";
+import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood } from "./foods";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { plansFor, type Place } from "./simple";
@@ -848,7 +848,7 @@ async function handleApi(
     // Своё название тоже стоит попробовать узнать: «Творог с орехами» найдёт
     // творог и получит картинку — иначе ручная запись выглядит безымянной.
     const known = matchFood(name);
-    const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? foodSlug(known.name) : undefined };
+    const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? imageSlug(known) : undefined };
     const row = addMeal({ userId: user.id, date, ...meal });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;

@@ -54,7 +54,8 @@
     entries: [],
     lastOrm: null,
     result: null,
-    restDays: {}
+    restDays: {},
+    photoPreview: null
   };
 
   /**
@@ -567,6 +568,7 @@
     KM_API.confirmMeal(p.token)
       .then(function (data) {
         state.pending = null;
+        clearPhotoPreview();
         applyMealResult(data, "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
       })
       .catch(function (err) {
@@ -634,6 +636,7 @@
     state.notice = null;
     if (online) KM_API.rejectMeal(p.token).catch(function () {});
     state.pending = null;
+    clearPhotoPreview();
     haptic("light");
     render();
   }
@@ -695,8 +698,13 @@
     });
 
     return card(
+      (state.photoPreview
+        ? '<div class="shot shot--meal"><img class="shot__img" alt="" src="' +
+          esc(state.photoPreview) +
+          '" /></div>'
+        : "") +
       '<div class="confirm__head">' +
-        thumb(m.slug, m.name) +
+        (state.photoPreview ? "" : thumb(m.slug, m.name)) +
         '<span class="confirm__title">' +
         esc(m.name) +
         '<span class="confirm__kcal">' +
@@ -811,6 +819,7 @@
   }
 
   function mealError(err) {
+    clearPhotoPreview();
     state.busy = null;
     state.notice = {
       kind: "err",
@@ -1146,6 +1155,11 @@
       (state.addMode === "manual" ? card(manualForm()) : "") +
       (state.busy
         ? card(
+            (state.photoPreview
+              ? '<div class="shot shot--meal"><img class="shot__img" alt="" src="' +
+                esc(state.photoPreview) +
+                '" /></div>'
+              : "") +
             '<p class="lead">' +
               (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
               '</p><p class="muted">Обычно 3–10 секунд.</p>'
@@ -1473,22 +1487,25 @@
           return [id, KM_MENUS.titles[id]];
         })
       ) +
+      '<p class="note"><strong>Это не дневник.</strong> Завтрак, обед и перекус ниже это образец под норму' +
+      (target ? " " + target.kcal + " ккал" : "") +
+      ". То, что уже съел, во вкладке «Съедено». Кнопка «Съел» запишет этот приём, если хочешь есть по плану.</p>" +
       card(
         cardHead(
           d.title,
           d.personal && target
-            ? "Меню " +
+            ? "План " +
               d.total.kcal +
               " ккал при норме " +
               target.kcal +
-              ". БЖУ от состава блюд, норма от веса"
+              ". Это не то, что уже в дневнике"
             : "Порции под " + d.basedOn + " ккал. Задай свои данные в «Норме», и пересчитаю точнее",
           GOAL_WORD[state.profile.goal]
         ) +
           figure(
             d.total.kcal,
             " ккал",
-            target ? "меню · норма " + target.kcal : "за день по всем приёмам"
+            target ? "план меню, норма " + target.kcal : "за день по всем приёмам"
           ) +
           '<div class="bars">' +
           (target
@@ -1774,6 +1791,11 @@
   function addOrBusy(quota) {
     if (state.busy) {
       return card(
+        (state.photoPreview
+          ? '<div class="shot shot--meal"><img class="shot__img" alt="" src="' +
+            esc(state.photoPreview) +
+            '" /></div>'
+          : "") +
         '<p class="lead">' +
           (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
           '</p><p class="muted">Обычно 3–10 секунд.</p>'
@@ -3357,6 +3379,7 @@
     // Неотвеченный разбор уходит вместе с экраном: уход с экрана — это и есть
     // «нет». В дневник он не попал, а на сервере протухнет сам.
     state.pending = null;
+    clearPhotoPreview();
     haptic("light");
     // Уходя из «Съедено», возвращаемся к сегодняшнему дню: иначе «Сегодня»
     // покажет итоги вчерашнего
@@ -3857,7 +3880,20 @@
     loadDay(true);
   }
 
+  function clearPhotoPreview() {
+    if (state.photoPreview && String(state.photoPreview).indexOf("blob:") === 0) {
+      try {
+        URL.revokeObjectURL(state.photoPreview);
+      } catch (e) {
+        /* старый WebView */
+      }
+    }
+    state.photoPreview = null;
+  }
+
   function addMealPhoto(file) {
+    clearPhotoPreview();
+    state.photoPreview = URL.createObjectURL(file);
     state.busy = "photo";
     state.notice = null;
     render();

@@ -193,8 +193,8 @@ export const FOODS: FoodItem[] = [
   // любой бутылки заканчивалось ответом «не разобрал, что на фото».
   { aliases: ["витаминный напиток", "витамин с напиток", "vitamin drink"], name: "Витаминный напиток", kcal100: 32, p100: 0, f100: 0, c100: 8, defaultG: 140, category: "other", densityGml: 1.03, pieceG: 140, minG: 50 },
   { aliases: ["сок", "сока", "соку", "соком", "juice", "нектар"], name: "Сок", kcal100: 45, p100: 0.5, f100: 0.1, c100: 11, defaultG: 250, category: "other", densityGml: 1.04, pieceG: 200, minG: 50 },
-  { aliases: ["кола без сахара", "кола зеро", "cola zero", "coca cola zero", "pepsi max", "напиток без сахара"], name: "Кола без сахара", kcal100: 0.4, p100: 0, f100: 0, c100: 0, defaultG: 330, category: "other", densityGml: 1, pieceG: 330, minG: 50 },
-  { aliases: ["кола", "колы", "колу", "колой", "coca cola", "кокакола", "пепси", "pepsi"], name: "Кола", kcal100: 42, p100: 0, f100: 0, c100: 10.6, defaultG: 330, category: "other", densityGml: 1.04, pieceG: 330, minG: 50 },
+  { aliases: ["кола без сахара", "кола зеро", "кола zero", "кола лайт", "кола light", "cola zero", "cola light", "coca cola zero", "coca cola light", "кока кола зеро", "кока кола zero", "diet coke", "diet cola", "pepsi max", "pepsi zero", "напиток без сахара"], name: "Кола без сахара", kcal100: 0.4, p100: 0, f100: 0, c100: 0, defaultG: 330, category: "other", densityGml: 1, pieceG: 330, minG: 50 },
+  { aliases: ["кола", "колы", "колу", "колой", "coca cola", "кокакола", "кока кола", "пепси", "pepsi"], name: "Кола", kcal100: 42, p100: 0, f100: 0, c100: 10.6, defaultG: 330, category: "other", densityGml: 1.04, pieceG: 330, minG: 50 },
   { aliases: ["энергетик", "энергетический напиток"], name: "Энергетик", kcal100: 45, p100: 0, f100: 0, c100: 11, defaultG: 250, category: "other", densityGml: 1.04, pieceG: 250, minG: 50 },
   { aliases: ["изотоник", "спортивный напиток"], name: "Изотоник", kcal100: 25, p100: 0, f100: 0, c100: 6, defaultG: 500, category: "other", densityGml: 1.02, pieceG: 500, minG: 50 },
   { aliases: ["лимонад", "морс", "компот", "квас"], name: "Лимонад", kcal100: 40, p100: 0, f100: 0, c100: 10, defaultG: 330, category: "other", densityGml: 1.04, pieceG: 330, minG: 50 },
@@ -231,7 +231,8 @@ export const FOODS: FoodItem[] = [
   { aliases: ["snickers", "сникерс"], name: "Snickers", kcal100: 484, p100: 8.2, f100: 24, c100: 59.6, defaultG: 50, category: "other", pieceG: 50, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
   { aliases: ["twix", "твикс"], name: "Twix", kcal100: 495, p100: 4.6, f100: 24.4, c100: 64.8, defaultG: 50, category: "other", pieceG: 50, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
   { aliases: ["mars", "марс"], name: "Mars", kcal100: 449, p100: 3.8, f100: 17.4, c100: 69, defaultG: 51, category: "other", pieceG: 51, minG: 15, brand: true, variantOf: "Шоколадный батончик" },
-  { aliases: ["чипсы", "chips", "сухарики", "снек"], name: "Чипсы", kcal100: 530, p100: 6, f100: 30, c100: 53, defaultG: 90, category: "other", pieceG: 90, minG: 15 },
+  { aliases: ["чипсы", "chips", "lay's", "lays"], name: "Чипсы", kcal100: 530, p100: 6, f100: 30, c100: 53, defaultG: 90, category: "other", pieceG: 90, minG: 15 },
+  { aliases: ["сухарики", "гренки", "крутоны", "crouton", "croutons"], name: "Сухарики", kcal100: 380, p100: 11, f100: 8, c100: 68, defaultG: 20, category: "carb", pieceG: 5, minG: 5 },
   { aliases: ["виноград", "grapes", "кишмиш", "красный виноград", "виноградинки"], name: "Виноград", kcal100: 69, p100: 0.7, f100: 0.2, c100: 17, defaultG: 200, category: "carb", minG: 30 },
   // Тайская / ресторанная кухня
   { aliases: ["pad thai", "пад тай", "padthai"], name: "Пад Тай", kcal100: 180, p100: 8, f100: 7, c100: 22, defaultG: 300, category: "other" },
@@ -269,6 +270,16 @@ export function foodSlug(name: string): string {
     .join("")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Файл картинки. У марки своей картинки часто нет, тогда берём категорию.
+ * У варианта вроде зелёного яблока картинка своя: variantOf здесь нельзя,
+ * иначе слот всегда красный.
+ */
+export function imageSlug(food: FoodItem): string {
+  if (food.brand && food.variantOf) return foodSlug(food.variantOf);
+  return foodSlug(food.name);
 }
 
 function norm(s: string): string {
@@ -338,7 +349,12 @@ export function matchFoodBy(name: string): FoodMatch | null {
       if (t === alias) score = 10000;
       // Марка выигрывает у категории, даже если её алиас короче: «c vitt» — это
       // ровно один продукт, «витаминный напиток» — полка магазина.
-      else if (aliasRe(raw).test(t)) score = (food.brand ? 5000 : 1000) + alias.length;
+      else if (aliasRe(raw).test(t)) {
+        // Салат с сухариками раньше уезжал в чипсы: алиас «сухарики» длиннее
+        // «салат» и набирал больше очков на той же фразе.
+        if ((food.name === "Чипсы" || food.name === "Сухарики") && /салат|зелен|перепелин/.test(t)) continue;
+        score = (food.brand ? 5000 : 1000) + alias.length;
+      }
       else if (alias.includes(t) && t.length >= 4) score = 100 + t.length; // «котлет» → «котлета»
       if (score > bestScore) {
         best = { food, alias };
@@ -593,7 +609,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
       proteinG: Math.round(food.p100 * mul * 10) / 10,
       fatG: Math.round(food.f100 * mul * 10) / 10,
       carbsG: Math.round(food.c100 * mul * 10) / 10,
-      slug: foodSlug(food.variantOf ?? food.name),
+      slug: imageSlug(food),
       source: similar ? "similar" : food.fromBarcode ? "barcode" : food.fromLabel ? "label" : "catalog",
     });
   }
@@ -619,7 +635,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
     note,
     // У марки своей картинки нет: показываем миниатюру её категории, иначе на
     // месте фото остаётся монограмма.
-    slug: foodSlug(main.food.variantOf ?? main.food.name),
+    slug: imageSlug(main.food),
     parts: detail,
   };
 }
@@ -715,6 +731,17 @@ function resolveItem(item: IdentifiedFood): { food: FoodItem; similar?: boolean 
   if (!m) return label ? { food: label } : null;
   // Марка в справочнике проверена и повторяема: одно фото даёт одно число.
   if (m.food.brand) return { food: m.food };
+
+  if (m.food.name === "Кола" || m.food.name === "Кола без сахара") {
+    const diet = FOODS.find((f) => f.name === "Кола без сахара");
+    const zeroName = /zero|diet|без сахара|без калорий|лайт|light|\bmax\b|зеро/i.test(item.name);
+    const zeroKcal = item.kcal100 !== undefined && item.kcal100 < 5;
+    if (diet && (zeroName || zeroKcal)) return { food: diet };
+    if (m.food.name === "Кола без сахара" && !zeroName && item.kcal100 !== undefined && item.kcal100 >= 15) {
+      const sugared = FOODS.find((f) => f.name === "Кола");
+      if (sugared) return { food: sugared };
+    }
+  }
 
   const branded = brandLeft(item.name, m.alias);
   // Домашняя еда: тут справочник сильнее модели — он знает способ приготовления,
