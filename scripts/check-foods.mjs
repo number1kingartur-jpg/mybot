@@ -73,7 +73,8 @@ check("кадры молока TH и RU разные", imageSlug(matchFood("мо
 check("foremost берёт кадр таиландского", imageSlug(matchFood("foremost")) === "moloko-tailandskoe");
 check("простоквашино берёт кадр российского", imageSlug(matchFood("простоквашино")) === "moloko-rossiyskoe");
 check("молоко 1.5% берёт кадр российского", imageSlug(matchFood("молоко 1.5%")) === "moloko-rossiyskoe");
-check("нет файла — нет миниатюры, не буква", resolveMealThumb("Киноа ~100 г", "kinoa") === undefined);
+check("нет файла — нет миниатюры, не буква", resolveMealThumb("Тофу ~100 г", "tofu") === undefined);
+check("киноа получила свой кадр", resolveMealThumb("Киноа ~100 г", "kinoa") === "kinoa");
 check(
   "resolve не отдаёт слаг без файла",
   FOODS.filter((f) => f.role).every((f) => {

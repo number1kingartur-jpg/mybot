@@ -2311,7 +2311,7 @@
         " г · Б " +
         proteinG +
         "</span></span>" +
-        '<button class="btn btn--outline food__add" data-action="add-food" data-food="' +
+        '<button class="btn btn--outline food__add" style="width:auto" data-action="add-food" data-food="' +
         esc(f.name) +
         '" data-grams="' +
         g +
