@@ -4,7 +4,7 @@ import path from "path";
 import { verifyInitData, type WebAppUser } from "./webapp-auth";
 import {
   registerUser, getUser, updateUser, setNutrition,
-  addMeal, removeMeal, scaleMeal, getMeals, mealTotals, mealStreak, frequentMeals, progressSnapshot,
+  addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, getMealsForDays,
@@ -15,7 +15,7 @@ import {
 import {
   analyzeMealPhoto, analyzeMealText, editMeal, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError,
 } from "./meal";
-import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
+import { dropPending, latestPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, imageSlug, macrosFromItems, matchFood, resolveMealThumb } from "./foods";
 import { hasFoodImage } from "./food-images";
 import { isOffImage } from "./product-db";
@@ -154,7 +154,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 /** Приложение может жить на другом домене (GitHub Pages) — CORS нужен, куки не используются. */
 function cors(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data");
   res.setHeader("Access-Control-Max-Age", "86400");
 }
@@ -315,6 +315,15 @@ function dayState(userId: number, date: string) {
         volume: w.log ? w.log.reduce((s, x) => s + x.kg * x.reps, 0) : w.weightKg * w.reps * w.sets,
       })),
     restDate: u?.restDate && u.restDate === today() ? u.restDate : null,
+    pending: (() => {
+      const live = latestPending(userId);
+      if (!live) return null;
+      return {
+        token: live.token,
+        meal: live.pending.meal,
+        parts: mealPartLines(live.pending.meal),
+      };
+    })(),
   };
 }
 
@@ -807,7 +816,7 @@ async function handleApi(
       // Снимок в квоту идёт здесь: запрос к модели уже оплачен независимо от ответа.
       bumpPhotoCount(user.id, wk, date);
       const token = putPending(user.id, meal, date, "photo");
-      json(res, 200, { pending: { token, meal, parts: mealPartLines(meal) }, ...dayState(user.id, date) });
+      json(res, 200, dayState(user.id, date));
     } catch (e) {
       if (e instanceof MealPhotoUnreadableError) {
         // Если модель что-то увидела, но в цифры это не перевелось — отдаём
@@ -842,7 +851,7 @@ async function handleApi(
       // Текст тоже догадка: «8 ложек овсянки» превращаются в граммы правилами,
       // а «салат» — в порцию по умолчанию. Показываем разбор до записи.
       const token = putPending(user.id, meal, date, "text");
-      json(res, 200, { pending: { token, meal, parts: mealPartLines(meal) }, ...dayState(user.id, date) });
+      json(res, 200, dayState(user.id, date));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       json(res, 422, {
@@ -916,7 +925,7 @@ async function handleApi(
       `api meal edit: ${body.drop !== undefined ? `убрана позиция ${body.drop}` : `вес ${body.grams} г`}` +
         `, стало ${meal.kcal} ккал, user=${user.id}`
     );
-    json(res, 200, { pending: { token, meal, parts: mealPartLines(meal) }, ...dayState(user.id, found.date) });
+    json(res, 200, dayState(user.id, found.date));
     return;
   }
 
@@ -1038,8 +1047,10 @@ async function handleApi(
 
   if (req.method === "DELETE" && urlPath === "/api/meal") {
     const id = query.get("id") ?? "";
+    const row = getMeal(user.id, id);
     const ok = removeMeal(user.id, id);
-    json(res, ok ? 200 : 404, { ok, ...dayState(user.id, date) });
+    const viewDate = row?.date ?? safeDate(query.get("date")) ?? date;
+    json(res, ok ? 200 : 404, { ok, ...dayState(user.id, viewDate) });
     return;
   }
 

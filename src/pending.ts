@@ -87,3 +87,17 @@ export function updatePending(userId: number, token: string, meal: MealAnalysis)
 export function dropPending(userId: number, token: string): void {
   store.delete(key(userId, token));
 }
+
+/** Неподтверждённый разбор пользователя, если ещё не протух (для восстановления в UI). */
+export function latestPending(userId: number): { token: string; pending: PendingMeal } | null {
+  sweep();
+  const prefix = `${userId}:`;
+  let best: { token: string; pending: PendingMeal } | null = null;
+  for (const [k, v] of store) {
+    if (!k.startsWith(prefix)) continue;
+    if (!best || v.createdAt > best.pending.createdAt) {
+      best = { token: k.slice(prefix.length), pending: v };
+    }
+  }
+  return best;
+}

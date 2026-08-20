@@ -608,6 +608,11 @@ export function removeMeal(userId: number, mealId: string): boolean {
   return true;
 }
 
+export function getMeal(userId: number, mealId: string): MealEntry | null {
+  const db = load();
+  return db.meals.find((m) => m.id === mealId && m.userId === userId) ?? null;
+}
+
 /**
  * Пересчёт записи под другую порцию. Оценка по фото всегда приблизительна, и
  * ошибается она чаще всего в размере порции, а не в составе блюда: состав модель

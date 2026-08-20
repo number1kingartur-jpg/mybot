@@ -481,6 +481,7 @@
       .then(function (data) {
         state.day = data;
         state.linkError = null;
+        if (data.pending !== undefined) state.pending = data.pending;
         // План тренировки ведёт бот: в чате и в приложении должна быть одна
         // очередь A/B. Ручное переключение в этой сессии не перетираем.
         if (!workoutTouched && data.simple) {
@@ -624,7 +625,7 @@
         applyMealResult(data, "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
       })
       .catch(function (err) {
-        state.pending = null;
+        if (pendingGone(err)) state.pending = null;
         mealError(err);
       });
   }
@@ -651,7 +652,7 @@
         render();
       })
       .catch(function (err) {
-        state.pending = null;
+        if (pendingGone(err)) state.pending = null;
         mealError(err);
       });
   }
@@ -727,6 +728,20 @@
           '" aria-label="Убрать позицию">×</button>'
         : '<span class="edit__del edit__del--off" aria-hidden="true"></span>') +
       "</li>"
+    );
+  }
+
+  function pendingTeaserCard() {
+    var p = state.pending;
+    if (!p || !p.meal || state.screen === "nutrition") return "";
+    var m = p.meal;
+    return (
+      card(
+        cardHead("Ждёт подтверждения", m.kcal + " ккал") +
+          '<p class="muted">' +
+          esc(m.name) +
+          '</p><div class="btn-stack"><button class="btn btn--primary" data-action="open-pending">Посмотреть разбор</button></div>'
+      )
     );
   }
 
@@ -909,6 +924,11 @@
     }
     haptic("heavy");
     render();
+  }
+
+  /** Разбор протух на сервере — карточку больше не показываем. */
+  function pendingGone(err) {
+    return Boolean(err && (err.status === 410 || err.code === "pending_gone"));
   }
 
   /* ── Экран: анкета первого запуска ──────────────────────────────────────── */
@@ -1532,6 +1552,7 @@
 
     return (
       noticeHtml() +
+      pendingTeaserCard() +
       heroCard +
       routeCard() +
       (!state.busy && !state.pending && !state.repeatAsk ? sameAsCard() : "") +
@@ -4204,9 +4225,8 @@
     // Вопрос про порцию задаётся один раз, сразу после записи: на другом экране
     // он превращается в непонятную карточку без повода
     state.lastMeal = null;
-    // Неотвеченный разбор уходит вместе с экраном: уход с экрана — это и есть
-    // «нет». В дневник он не попал, а на сервере протухнет сам.
-    state.pending = null;
+    // Неподтверждённый разбор остаётся: вернёшься в «Съедено» или с «Сегодня» —
+    // карточка на месте. Явный отказ — кнопка «Поправить результат».
     clearPhotoPreview();
     haptic("light");
     // Уходя из «Съедено», возвращаемся к сегодняшнему дню: иначе «Сегодня»
@@ -4420,6 +4440,11 @@
       }
       case "water-250":
         return addWater(250);
+      case "open-pending":
+        state.screen = "nutrition";
+        state.nutTab = "eaten";
+        haptic("light");
+        return render();
       case "meal-confirm":
         return confirmPending();
       case "meal-reject":
