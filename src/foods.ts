@@ -115,7 +115,7 @@ export const FOODS: FoodItem[] = [
   { aliases: ["креатин", "creatine", "моногидрат"], name: "Креатин", kcal100: 0, p100: 0, f100: 0, c100: 0, defaultG: 5, category: "other", scoopG: 5, tbspG: 5, tspG: 3, minG: 1 },
   { aliases: ["bcaa", "бцаа", "аминокислот", "глютамин"], name: "Аминокислоты", kcal100: 320, p100: 80, f100: 0, c100: 0, defaultG: 10, category: "protein", scoopG: 7, tspG: 5, minG: 1 },
   // ── Яйца: варка и жарка различаются маслом ─────────────────────────────────
-  { aliases: ["яйцо отварное", "яйца отварные", "яйцо варёное", "яйцо вареное", "boiled egg"], name: "Яйца отварные", kcal100: 155, p100: 13, f100: 11, c100: 1, defaultG: 110, category: "protein" },
+  { aliases: ["яйцо отварное", "яйца отварные", "яйцо варёное", "яйцо вареное", "boiled egg"], name: "Яйца отварные", kcal100: 155, p100: 13, f100: 11, c100: 1, defaultG: 110, category: "protein", pieceG: 55, minG: 40 },
   { aliases: ["яичниц", "глазунья", "яйцо жареное", "яйца жареные", "fried egg"], name: "Яичница на масле", kcal100: 200, p100: 12, f100: 16, c100: 1, defaultG: 120, category: "protein", fatIncluded: true },
   { aliases: ["омлет", "omelet", "omelette", "скрэмбл"], name: "Омлет", kcal100: 185, p100: 11, f100: 14, c100: 3, defaultG: 150, category: "protein", fatIncluded: true },
   { aliases: ["egg", "яйц"], name: "Яйца", kcal100: 155, p100: 13, f100: 11, c100: 1, defaultG: 110, category: "protein", pieceG: 55, minG: 30 },
@@ -774,6 +774,48 @@ function measure(food: FoodItem, left: string, right: string): Amount {
   );
 }
 
+function isWholeEgg(food: FoodItem): boolean {
+  return food.name === "Яйца" || food.name === "Яйца отварные";
+}
+
+function eggCountInName(name: string): number | undefined {
+  const t = name.toLowerCase().replace(/ё/g, "е");
+  const digit = t.match(/(\d+)\s*(?:шт\.?\s*)?(?:яйц|egg)/) || t.match(/(?:яйц\w*|eggs?)\s*(\d+)/);
+  if (digit) {
+    const n = Number(digit[1]);
+    if (n >= 1 && n <= 12) return n;
+  }
+  const words: Record<string, number> = { один: 1, одно: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6 };
+  for (const [word, n] of Object.entries(words)) {
+    if (new RegExp(`${word}\\s+(?:шт\\.?\\s*)?(?:яйц|egg)`, "i").test(t)) return n;
+  }
+  return undefined;
+}
+
+/** Два яйца в названии, не «яйца ~165 г»: иначе штуки не проверить. */
+function eggCountLabel(food: FoodItem, grams: number): string | undefined {
+  if (!isWholeEgg(food) || !food.pieceG) return undefined;
+  const n = Math.max(1, Math.round(grams / food.pieceG));
+  const base = food.name === "Яйца отварные" ? "яйца отварные" : "яйца";
+  return `${n} ${base}`;
+}
+
+/**
+ * Модель на фото яиц часто ставит 165 г (типичный завтрак из трёх),
+ * хотя в кадре два. Число в названии важнее. Без числа 150–180 г это
+ * не пересчёт, а подстановка, берём две штуки как в справочнике.
+ */
+export function normalizeEggItem(item: IdentifiedFood): IdentifiedFood {
+  const food = matchFood(item.name);
+  if (!food || !isWholeEgg(food) || /белок|жидк|white/i.test(item.name)) return item;
+  const piece = food.pieceG ?? 55;
+  const named = eggCountInName(item.name);
+  if (named) return { ...item, grams: named * piece };
+  if (item.grams >= 145 && item.grams <= 180) return { ...item, grams: 2 * piece };
+  const n = Math.max(1, Math.round(item.grams / piece));
+  return { ...item, grams: n * piece };
+}
+
 /**
  * Название для записи: своё слово — со строчной, марку не трогаем.
  *
@@ -823,9 +865,10 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
     proteinG += food.p100 * mul;
     fatG += food.f100 * mul;
     carbsG += food.c100 * mul;
-    parts.push(`${displayName(food)} ~${Math.round(grams)} г`);
+    const shownName = eggCountLabel(food, grams) ?? displayName(food);
+    parts.push(`${shownName} ~${Math.round(grams)} г`);
     detail.push({
-      name: displayName(food),
+      name: eggCountLabel(food, grams) ?? displayName(food),
       grams: Math.round(grams),
       kcal: Math.round(food.kcal100 * mul),
       proteinG: Math.round(food.p100 * mul * 10) / 10,
@@ -987,7 +1030,7 @@ function resolveItem(item: IdentifiedFood): { food: FoodItem; similar?: boolean 
 
 export function macrosFromItems(items: IdentifiedFood[]): MealAnalysis | null {
   const matched: { food: FoodItem; grams: number; similar?: boolean }[] = [];
-  for (const item of items) {
+  for (const item of items.map(normalizeEggItem)) {
     const hit = resolveItem(item);
     if (!hit) continue;
     matched.push({ ...hit, grams: sane(hit.food, item.grams) ?? hit.food.defaultG });

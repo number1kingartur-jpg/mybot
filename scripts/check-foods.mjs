@@ -94,6 +94,15 @@ function grams(text, expected, tolerance = 0.05) {
 
 grams("3 банана", 360);
 grams("2 яйца", 110);
+grams("3 яйца отварные", 165);
+grams("яйца 3 шт", 165);
+
+const twoFromPhoto = macrosFromItems([{ name: "яйца отварные", grams: 165 }]);
+check("фото без числа 165 г это два яйца, не три", /2 яйца/i.test(twoFromPhoto?.name ?? ""), twoFromPhoto?.name);
+near("фото без числа: 110 г", twoFromPhoto?.parts?.[0]?.grams ?? 0, 110, 0.01);
+const threeNamed = macrosFromItems([{ name: "3 яйца", grams: 165 }]);
+check("если модель написала 3, оставляем 3", /3 яйца/i.test(threeNamed?.name ?? ""), threeNamed?.name);
+near("три по имени: 165 г", threeNamed?.parts?.[0]?.grams ?? 0, 165, 0.01);
 grams("500 мл молока", 515);
 grams("1 кг картошки", 1000);
 grams("2 ст.л. меда", 42);
