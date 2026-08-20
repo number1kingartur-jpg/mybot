@@ -78,6 +78,7 @@ export const FOODS: FoodItem[] = [
   { aliases: ["курица жареная", "жареная курица", "куриная грудка жареная", "курица на масле", "fried chicken breast"], name: "Курица жареная", kcal100: 210, p100: 28, f100: 10, c100: 1, defaultG: 150, category: "protein", fatIncluded: true },
   { aliases: ["курица запечённая", "курица запеченная", "курица в духовке", "курица гриль", "куриная ножка", "куриное бедро", "grilled chicken", "baked chicken"], name: "Курица запечённая", kcal100: 235, p100: 26, f100: 14, c100: 0, defaultG: 150, category: "protein", fatIncluded: true },
   { aliases: ["chicken", "курица", "куриц", "курин"], name: "Курица", kcal100: 190, p100: 29, f100: 7, c100: 0, defaultG: 150, category: "protein" },
+  { aliases: ["куриная грудка", "грудка куриная", "грудка", "chicken breast"], name: "Куриная грудка", kcal100: 165, p100: 31, f100: 3.6, c100: 0, defaultG: 150, category: "protein" },
   { aliases: ["котлета куриная", "куриная котлета", "котлета из курицы", "котлета из индейки", "котлета индейки", "chicken cutlet", "chicken patty"], name: "Котлета куриная жареная", kcal100: 220, p100: 16, f100: 14, c100: 8, defaultG: 100, category: "protein", fatIncluded: true, pieceG: 100, minG: 40 },
   { aliases: ["котлета", "котлета мясная", "котлета свиная", "котлета говяжья", "котлета домашняя", "биток", "cutlet", "meat patty"], name: "Котлета мясная жареная", kcal100: 265, p100: 15, f100: 20, c100: 9, defaultG: 100, category: "protein", fatIncluded: true, pieceG: 100, minG: 40 },
   { aliases: ["котлета рыбная", "рыбная котлета", "котлета из рыбы", "fish cake"], name: "Котлета рыбная жареная", kcal100: 185, p100: 14, f100: 10, c100: 9, defaultG: 100, category: "protein", fatIncluded: true, pieceG: 100, minG: 40 },
@@ -97,6 +98,7 @@ export const FOODS: FoodItem[] = [
   { aliases: ["рыба жареная", "жареная рыба", "рыба в панировке", "fried fish"], name: "Рыба жареная", kcal100: 200, p100: 20, f100: 12, c100: 4, defaultG: 150, category: "protein", fatIncluded: true },
   { aliases: ["fish", "рыб", "треска", "cod", "tilapia", "тиляпия"], name: "Рыба", kcal100: 120, p100: 22, f100: 2, c100: 0, defaultG: 150, category: "protein" },
   { aliases: ["tuna", "тунец", "тунц"], name: "Тунец", kcal100: 132, p100: 28, f100: 1, c100: 0, defaultG: 120, category: "protein" },
+  { aliases: ["тунец консервированный", "тунец в банке", "тунец в собственном соку", "canned tuna"], name: "Тунец консервированный", kcal100: 116, p100: 26, f100: 1, c100: 0, defaultG: 120, category: "protein" },
   { aliases: ["shrimp", "prawn", "креветк", "креветки"], name: "Креветки", kcal100: 99, p100: 24, f100: 0.3, c100: 0.2, defaultG: 120, category: "protein" },
   { aliases: ["tofu", "тофу"], name: "Тофу", kcal100: 76, p100: 8, f100: 4.8, c100: 1.9, defaultG: 150, category: "protein" },
   { aliases: ["protein", "протеин", "whey", "изолят", "сывороточный белок", "shake"], name: "Протеин", kcal100: 400, p100: 80, f100: 5, c100: 8, defaultG: 30, category: "protein", scoopG: 30, tbspG: 15, tspG: 5, minG: 3 },
@@ -113,10 +115,13 @@ export const FOODS: FoodItem[] = [
   { aliases: ["сырник", "сырники", "творожник", "творожники", "cheese pancake"], name: "Сырники жареные", kcal100: 220, p100: 14, f100: 10, c100: 20, defaultG: 120, category: "protein", fatIncluded: true, pieceG: 60, minG: 30 },
   { aliases: ["запеканка", "запеканка творожная", "творожная запеканка", "casserole"], name: "Запеканка творожная", kcal100: 170, p100: 15, f100: 6, c100: 16, defaultG: 150, category: "protein" },
   { aliases: ["творог", "cottage", "cottage cheese", "творож"], name: "Творог", kcal100: 121, p100: 17, f100: 5, c100: 3, defaultG: 150, category: "protein" },
-  { aliases: ["yogurt", "йогурт", "greek yogurt"], name: "Йогурт", kcal100: 95, p100: 10, f100: 3, c100: 8, defaultG: 150, category: "protein", tbspG: 25, densityGml: 1.03 },
+  { aliases: ["творог обезжиренный", "обезжиренный творог", "творог 0", "творог 0%", "творог 1%", "low fat cottage"], name: "Творог обезжиренный", kcal100: 79, p100: 16.5, f100: 0.5, c100: 3.3, defaultG: 150, category: "protein" },
+  { aliases: ["yogurt", "йогурт"], name: "Йогурт", kcal100: 95, p100: 10, f100: 3, c100: 8, defaultG: 150, category: "protein", tbspG: 25, densityGml: 1.03 },
+  { aliases: ["греческий йогурт", "йогурт греческий", "greek yogurt", "skyr", "скир"], name: "Греческий йогурт", kcal100: 66, p100: 9, f100: 2, c100: 3.6, defaultG: 150, category: "protein", tbspG: 25, densityGml: 1.04 },
   { aliases: ["молоко миндальное", "миндальное молоко", "almond milk"], name: "Молоко миндальное", kcal100: 25, p100: 0.5, f100: 1.5, c100: 2.5, defaultG: 200, category: "other", densityGml: 1, minG: 20 },
   { aliases: ["молоко овсяное", "овсяное молоко", "oat milk"], name: "Молоко овсяное", kcal100: 45, p100: 1, f100: 1.5, c100: 7, defaultG: 200, category: "other", densityGml: 1.03, minG: 20 },
   { aliases: ["молок", "milk"], name: "Молоко", kcal100: 60, p100: 3, f100: 3.2, c100: 4.7, defaultG: 200, category: "other", densityGml: 1.03, tbspG: 15, minG: 20 },
+  { aliases: ["молоко 1.5", "молоко 1,5", "молоко маложирное", "молоко 0.5", "low fat milk"], name: "Молоко 1.5%", kcal100: 45, p100: 3, f100: 1.5, c100: 4.8, defaultG: 200, category: "other", densityGml: 1.03, tbspG: 15, minG: 20 },
   { aliases: ["кефир", "ряженка", "айран"], name: "Кефир", kcal100: 50, p100: 3, f100: 2, c100: 4, defaultG: 200, category: "other", densityGml: 1.03, minG: 20 },
   { aliases: ["сливк", "сливок", "cream"], name: "Сливки", kcal100: 205, p100: 2.5, f100: 20, c100: 4, defaultG: 50, category: "fat", densityGml: 1, tbspG: 15, tspG: 5, minG: 5 },
   { aliases: ["сметана", "sour cream"], name: "Сметана", kcal100: 200, p100: 2.5, f100: 20, c100: 3.4, defaultG: 30, category: "fat", tbspG: 25, tspG: 8, minG: 5 },
@@ -125,6 +130,12 @@ export const FOODS: FoodItem[] = [
   { aliases: ["рис жареный", "жареный рис", "fried rice"], name: "Рис жареный", kcal100: 180, p100: 4, f100: 6, c100: 28, defaultG: 200, category: "carb", fatIncluded: true },
   { aliases: ["рис с маслом", "рис со сливочным маслом"], name: "Рис с маслом", kcal100: 155, p100: 2.7, f100: 3.5, c100: 28, defaultG: 180, category: "carb", fatIncluded: true },
   { aliases: ["rice", "рис", "рис отварной", "jasmine", "basmati"], name: "Рис отварной", kcal100: 130, p100: 2.7, f100: 0.3, c100: 28, defaultG: 180, category: "carb" },
+  { aliases: ["коричневый рис", "бурый рис", "рис бурый", "brown rice"], name: "Рис коричневый", kcal100: 111, p100: 2.6, f100: 0.9, c100: 23, defaultG: 180, category: "carb" },
+  { aliases: ["киноа", "quinoa"], name: "Киноа", kcal100: 120, p100: 4.4, f100: 1.9, c100: 21, defaultG: 180, category: "carb" },
+  { aliases: ["чечевица", "чечевиц", "lentils", "lentil"], name: "Чечевица", kcal100: 116, p100: 9, f100: 0.4, c100: 20, defaultG: 180, category: "protein" },
+  { aliases: ["нут", "нут варёный", "нут вареный", "chickpea", "chickpeas"], name: "Нут", kcal100: 139, p100: 8.9, f100: 2.6, c100: 22, defaultG: 150, category: "protein" },
+  { aliases: ["фасоль", "фасоли", "beans", "bean"], name: "Фасоль", kcal100: 127, p100: 8.7, f100: 0.5, c100: 22, defaultG: 150, category: "protein" },
+  { aliases: ["горох", "горошек", "зеленый горошек", "peas", "green peas"], name: "Горох", kcal100: 81, p100: 5.4, f100: 0.4, c100: 14, defaultG: 150, category: "protein" },
   { aliases: ["макароны с маслом", "паста с маслом", "макароны со сливочным маслом", "макароны с сыром"], name: "Макароны с маслом", kcal100: 165, p100: 5, f100: 5.5, c100: 25, defaultG: 180, category: "carb", fatIncluded: true },
   { aliases: ["pasta", "макарон", "spaghetti", "паста", "рожки", "спираль", "фузилли", "радиаторе"], name: "Паста отварная", kcal100: 131, p100: 5, f100: 1.1, c100: 25, defaultG: 180, category: "carb" },
   { aliases: ["noodle", "лапша", "noodles", "rice noodle", "udon", "ramen", "фо", "pho"], name: "Лапша", kcal100: 138, p100: 4, f100: 2, c100: 25, defaultG: 200, category: "carb" },
@@ -139,7 +150,10 @@ export const FOODS: FoodItem[] = [
   { aliases: ["картофель жареный", "жареная картошка", "картошка жареная", "картофель на масле"], name: "Картофель жареный", kcal100: 190, p100: 2.5, f100: 9, c100: 23, defaultG: 200, category: "carb", fatIncluded: true },
   { aliases: ["пюре", "картофельное пюре", "mashed potato"], name: "Картофельное пюре", kcal100: 110, p100: 2, f100: 4, c100: 15, defaultG: 200, category: "carb", fatIncluded: true },
   { aliases: ["potato", "картоф", "картошк", "картофель отварной", "картошка варёная"], name: "Картофель отварной", kcal100: 85, p100: 2, f100: 0.4, c100: 17, defaultG: 200, category: "carb" },
+  { aliases: ["батат", "сладкий картофель", "sweet potato"], name: "Батат", kcal100: 90, p100: 2, f100: 0.2, c100: 21, defaultG: 180, category: "carb", pieceG: 180 },
   { aliases: ["bread", "хлеб", "toast", "булк", "baguette", "лаваш"], name: "Хлеб", kcal100: 265, p100: 9, f100: 3, c100: 49, defaultG: 60, category: "carb", pieceG: 30, minG: 15 },
+  { aliases: ["хлеб цельнозерновой", "цельнозерновой хлеб", "хлеб ржаной", "ржаной хлеб", "whole wheat", "wholegrain bread"], name: "Хлеб цельнозерновой", kcal100: 247, p100: 13, f100: 4.2, c100: 41, defaultG: 40, category: "carb", pieceG: 40, minG: 15 },
+  { aliases: ["хлебцы", "хлебец", "хлебц", "crispbread", "хлебцы ржаные"], name: "Хлебцы", kcal100: 320, p100: 11, f100: 2.5, c100: 60, defaultG: 20, category: "carb", pieceG: 10, minG: 5 },
   { aliases: ["бутерброд", "сэндвич", "sandwich", "тост с сыром"], name: "Бутерброд с сыром", kcal100: 300, p100: 12, f100: 14, c100: 32, defaultG: 100, category: "other" },
   { aliases: ["banana", "банан"], name: "Банан", kcal100: 89, p100: 1.1, f100: 0.3, c100: 23, defaultG: 120, category: "carb", pieceG: 120, minG: 30 },
   { aliases: ["mango", "манго"], name: "Манго", kcal100: 60, p100: 0.8, f100: 0.4, c100: 15, defaultG: 150, category: "carb", pieceG: 200 },
@@ -149,6 +163,11 @@ export const FOODS: FoodItem[] = [
   { aliases: ["финик", "dates"], name: "Финики", kcal100: 280, p100: 2.5, f100: 0.4, c100: 75, defaultG: 40, category: "carb", pieceG: 8, minG: 5 },
   { aliases: ["изюм", "курага", "чернослив", "сухофрукт"], name: "Изюм", kcal100: 300, p100: 3, f100: 0.5, c100: 79, defaultG: 40, category: "carb", tbspG: 15, minG: 5 },
   { aliases: ["ягод", "черник", "клубник", "малин", "смородин", "berries"], name: "Ягоды", kcal100: 50, p100: 0.8, f100: 0.4, c100: 11, defaultG: 100, category: "carb", tbspG: 20, minG: 20 },
+  { aliases: ["апельсин", "orange", "мандарин"], name: "Апельсин", kcal100: 47, p100: 0.9, f100: 0.1, c100: 12, defaultG: 150, category: "carb", pieceG: 150 },
+  { aliases: ["киви", "kiwi"], name: "Киви", kcal100: 61, p100: 1.1, f100: 0.5, c100: 15, defaultG: 80, category: "carb", pieceG: 75, minG: 30 },
+  { aliases: ["ананас", "pineapple"], name: "Ананас", kcal100: 50, p100: 0.5, f100: 0.1, c100: 13, defaultG: 150, category: "carb" },
+  { aliases: ["папайя", "papaya"], name: "Папайя", kcal100: 43, p100: 0.5, f100: 0.3, c100: 11, defaultG: 150, category: "carb" },
+  { aliases: ["арбуз", "watermelon"], name: "Арбуз", kcal100: 30, p100: 0.6, f100: 0.2, c100: 8, defaultG: 250, category: "carb" },
   // ── Домашние составные блюда ───────────────────────────────────────────────
   { aliases: ["плов", "pilaf", "плов с курицей"], name: "Плов", kcal100: 190, p100: 9, f100: 7, c100: 22, defaultG: 250, category: "other", fatIncluded: true },
   { aliases: ["пельмен", "dumplings", "мант", "хинкали"], name: "Пельмени", kcal100: 250, p100: 12, f100: 8, c100: 34, defaultG: 250, category: "other", pieceG: 12, minG: 40 },
@@ -165,6 +184,14 @@ export const FOODS: FoodItem[] = [
   { aliases: ["овощи тушёные", "овощи тушеные", "овощи жареные", "рагу овощное", "овощи на масле"], name: "Овощи тушёные", kcal100: 90, p100: 2, f100: 6, c100: 7, defaultG: 180, category: "veg", fatIncluded: true },
   { aliases: ["vegetable", "vegetables", "veggies", "овощ", "овощи", "овощи на пару"], name: "Овощи", kcal100: 40, p100: 2, f100: 0.3, c100: 7, defaultG: 150, category: "veg" },
   { aliases: ["broccoli", "брокколи"], name: "Брокколи", kcal100: 34, p100: 2.8, f100: 0.4, c100: 7, defaultG: 120, category: "veg" },
+  { aliases: ["шпинат", "spinach"], name: "Шпинат", kcal100: 23, p100: 2.9, f100: 0.4, c100: 3.6, defaultG: 80, category: "veg" },
+  { aliases: ["капуста", "капусты", "cabbage"], name: "Капуста", kcal100: 25, p100: 1.3, f100: 0.1, c100: 6, defaultG: 120, category: "veg" },
+  { aliases: ["цветная капуста", "цветной капусты", "cauliflower"], name: "Цветная капуста", kcal100: 25, p100: 1.9, f100: 0.3, c100: 5, defaultG: 150, category: "veg" },
+  { aliases: ["морковь", "моркови", "carrot", "carrots"], name: "Морковь", kcal100: 41, p100: 0.9, f100: 0.2, c100: 10, defaultG: 100, category: "veg", pieceG: 80 },
+  { aliases: ["перец болгарский", "болгарский перец", "сладкий перец", "bell pepper"], name: "Перец болгарский", kcal100: 31, p100: 1, f100: 0.3, c100: 6, defaultG: 100, category: "veg", pieceG: 120 },
+  { aliases: ["кабачок", "кабачк", "цукини", "zucchini"], name: "Кабачок", kcal100: 17, p100: 1.2, f100: 0.3, c100: 3.1, defaultG: 150, category: "veg" },
+  { aliases: ["грибы", "шампиньон", "mushroom", "mushrooms"], name: "Грибы", kcal100: 22, p100: 3.1, f100: 0.3, c100: 3.3, defaultG: 100, category: "veg" },
+  { aliases: ["свекла", "свёкла", "beet", "beetroot"], name: "Свёкла", kcal100: 43, p100: 1.6, f100: 0.2, c100: 10, defaultG: 100, category: "veg" },
   { aliases: ["cucumber", "огурц", "огурец", "огурцы"], name: "Огурец", kcal100: 15, p100: 0.7, f100: 0.1, c100: 3.6, defaultG: 100, category: "veg", pieceG: 100 },
   { aliases: ["tomato", "помидор", "помидоры"], name: "Помидоры", kcal100: 18, p100: 0.9, f100: 0.2, c100: 3.9, defaultG: 100, category: "veg", pieceG: 110 },
   // ── Жиры и соусы ──────────────────────────────────────────────────────────
@@ -175,6 +202,7 @@ export const FOODS: FoodItem[] = [
   { aliases: ["cheese", "сыр"], name: "Сыр", kcal100: 350, p100: 25, f100: 28, c100: 1, defaultG: 40, category: "fat" },
   { aliases: ["avocado", "авокадо"], name: "Авокадо", kcal100: 160, p100: 2, f100: 15, c100: 9, defaultG: 80, category: "fat" },
   { aliases: ["арахисовая паста", "арахисовой пасты", "паста арахисовая", "арахисовое масло", "ореховая паста", "миндальная паста", "peanut butter"], name: "Арахисовая паста", kcal100: 600, p100: 25, f100: 50, c100: 20, defaultG: 30, category: "fat", tbspG: 16, tspG: 6, minG: 3 },
+  { aliases: ["хумус", "хумуса", "hummus"], name: "Хумус", kcal100: 166, p100: 8, f100: 10, c100: 14, defaultG: 50, category: "fat", tbspG: 20, minG: 10 },
   { aliases: ["nuts", "орех", "орехи", "almond", "миндаль", "кешью", "грецкий"], name: "Орехи", kcal100: 580, p100: 21, f100: 50, c100: 20, defaultG: 30, category: "fat", tbspG: 15, minG: 5 },
   { aliases: ["семена чиа", "чиа", "льняное семя", "семена льна", "chia"], name: "Семена чиа", kcal100: 490, p100: 17, f100: 31, c100: 42, defaultG: 15, category: "fat", tbspG: 12, tspG: 4, minG: 3 },
   { aliases: ["какао", "какао порошок", "cocoa"], name: "Какао порошок", kcal100: 230, p100: 20, f100: 14, c100: 58, defaultG: 10, category: "other", tbspG: 6, tspG: 2, minG: 2 },
@@ -186,6 +214,7 @@ export const FOODS: FoodItem[] = [
   { aliases: ["мёд", "мед", "honey"], name: "Мёд", kcal100: 320, p100: 0.3, f100: 0, c100: 80, defaultG: 20, category: "other", tbspG: 21, tspG: 7, minG: 3 },
   { aliases: ["варенье", "джем", "jam", "сгущёнка", "сгущенка"], name: "Варенье", kcal100: 250, p100: 0.3, f100: 0, c100: 62, defaultG: 30, category: "other", tbspG: 20, tspG: 7, minG: 3 },
   { aliases: ["шоколад", "chocolate", "конфет"], name: "Шоколад", kcal100: 550, p100: 6, f100: 32, c100: 58, defaultG: 30, category: "other" },
+  { aliases: ["темный шоколад", "тёмный шоколад", "шоколад 70", "шоколад 85", "dark chocolate"], name: "Шоколад тёмный", kcal100: 580, p100: 8, f100: 43, c100: 46, defaultG: 20, category: "other", minG: 5 },
   { aliases: ["печенье", "cookie", "вафли", "пряник"], name: "Печенье", kcal100: 450, p100: 6, f100: 17, c100: 68, defaultG: 50, category: "other" },
   { aliases: ["мороженое", "ice cream"], name: "Мороженое", kcal100: 210, p100: 3.5, f100: 11, c100: 25, defaultG: 100, category: "other" },
   { aliases: ["торт", "пирожное", "cake", "чизкейк"], name: "Торт", kcal100: 380, p100: 5, f100: 20, c100: 45, defaultG: 100, category: "other" },
@@ -381,7 +410,18 @@ export function matchFoodBy(name: string): FoodMatch | null {
       else if (aliasRe(raw).test(t)) {
         // Салат с сухариками раньше уезжал в чипсы: алиас «сухарики» длиннее
         // «салат» и набирал больше очков на той же фразе.
-        if ((food.name === "Чипсы" || food.name === "Сухарики") && /салат|зелен|перепелин/.test(t)) continue;
+        if (
+          (food.name === "Чипсы" ||
+            food.name === "Сухарики" ||
+            food.name === "Морковь" ||
+            food.name === "Шпинат" ||
+            food.name === "Капуста" ||
+            food.name === "Перец болгарский") &&
+          /салат|зелен|перепелин/.test(t)
+        ) {
+          continue;
+        }
+        if (food.name === "Грибы" && /суп|борщ|уха/.test(t)) continue;
         score = (food.brand ? 5000 : 1000) + alias.length;
       }
       else if (alias.includes(t) && t.length >= 4) score = 100 + t.length; // «котлет» → «котлета»

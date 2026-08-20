@@ -304,6 +304,23 @@ check("картинка зелёного яблока не красная", gree
 check("просто яблоко остаётся красным", matchFood("яблоко")?.name === "Яблоко", matchFood("яблоко")?.name);
 check("груша не яблоко", matchFood("груша")?.name === "Груша", matchFood("груша")?.name);
 
+check("куриная грудка не просто курица", matchFood("куриная грудка")?.name === "Куриная грудка", matchFood("куриная грудка")?.name);
+check("греческий йогурт не обычный", matchFood("греческий йогурт")?.name === "Греческий йогурт", matchFood("греческий йогурт")?.name);
+check("обычный йогурт остаётся", matchFood("йогурт")?.name === "Йогурт", matchFood("йогурт")?.name);
+check("творог обезжиренный находится", matchFood("творог обезжиренный")?.name === "Творог обезжиренный", matchFood("творог обезжиренный")?.name);
+check("просто творог не уезжает в 0%", matchFood("творог")?.name === "Творог", matchFood("творог")?.name);
+check("киноа в справочнике", matchFood("киноа")?.name === "Киноа", matchFood("киноа")?.name);
+check("чечевица в справочнике", matchFood("чечевица")?.name === "Чечевица", matchFood("чечевица")?.name);
+check("батат не картофель", matchFood("батат")?.name === "Батат", matchFood("батат")?.name);
+check("хлебцы не хлеб", matchFood("хлебцы")?.name === "Хлебцы", matchFood("хлебцы")?.name);
+check("цельнозерновой хлеб находится", matchFood("хлеб цельнозерновой")?.name === "Хлеб цельнозерновой", matchFood("хлеб цельнозерновой")?.name);
+check("папайя не сом там", matchFood("папайя")?.name === "Папайя", matchFood("папайя")?.name);
+check("хумус в справочнике", matchFood("хумус")?.name === "Хумус", matchFood("хумус")?.name);
+check("тёмный шоколад не молочный", matchFood("тёмный шоколад")?.name === "Шоколад тёмный", matchFood("тёмный шоколад")?.name);
+const saladCarrot = macrosFromItems([{ name: "салат из зелени и моркови", grams: 180 }]);
+check("салат с морковью остаётся салатом", /салат/i.test(saladCarrot?.name ?? ""), saladCarrot?.name);
+near("куриная грудка 150 г ≈ 248 ккал", macrosFromItems([{ name: "куриная грудка", grams: 150 }])?.kcal ?? 0, 248, 0.05);
+
 const saladShot = macrosFromItems([
   {
     name: "салат из зелени, помидоров черри, кукурузы, моркови, перепелиных яиц, сухариков и соуса",
