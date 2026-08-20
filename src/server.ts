@@ -2,6 +2,7 @@ import fs from "fs";
 import http from "http";
 import path from "path";
 import { verifyInitData, type WebAppUser } from "./webapp-auth";
+import { accessEnabled, accessChatId, checkAccess } from "./access";
 import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
@@ -9,7 +10,7 @@ import {
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, getMealsForDays,
   saveProgram, getActiveProgram, advanceProgramDay,
-  photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium,
+  photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium, isOwner,
   type NutritionProfile, type Lift, type Program,
 } from "./db";
 import {
@@ -22,7 +23,7 @@ import { isOffImage } from "./product-db";
 import { bangkokHour, sameAsYesterday, shiftDate, usualNames } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
-import { plansFor, type Place } from "./simple";
+import { parseSplit, plansForProgram, splitLevel, type Place, type SplitId } from "./simple";
 import { adaptiveTarget } from "./nutrition";
 
 /**
@@ -38,6 +39,25 @@ import { adaptiveTarget } from "./nutrition";
  */
 
 const WEBAPP_DIR = path.join(__dirname, "..", "webapp");
+
+function resolveSimple(
+  u: ReturnType<typeof getUser>,
+  body?: { place?: string; level?: string; split?: string }
+) {
+  const place: Place =
+    body?.place === "gym" ? "gym" : body?.place === "home" ? "home" : u?.simplePlace === "gym" ? "gym" : "home";
+  const levelGuess =
+    body?.level === "train" || body?.level === "start"
+      ? body.level
+      : u?.simpleLevel === "train" || u?.simpleLevel === "start"
+        ? u.simpleLevel
+        : u?.nutrition?.activity === "high"
+          ? "train"
+          : "start";
+  const split = parseSplit(body?.split ?? u?.simpleSplit, levelGuess);
+  const level = splitLevel(split);
+  return { place, level, split, plan: plansForProgram(place, split), idx: u?.simpleIdx ?? 0 };
+}
 
 /**
  * Метка версии: время последней правки кода — и приложения, и сервера.
@@ -173,7 +193,6 @@ function auth(req: http.IncomingMessage, botToken: string): WebAppUser | null {
     console.warn(`api auth: подпись не принята (${initData.length} симв.), ${req.method} ${req.url}`);
     return null;
   }
-  registerUser(user.id, user.firstName); // первый вход может быть из приложения, а не из чата
   return user;
 }
 
@@ -283,16 +302,10 @@ function dayState(userId: number, date: string) {
       source: b.source === "profile" ? "profile" : "user",
     })),
     program: programState(userId),
-    simple: {
-      idx: u?.simpleIdx ?? 0,
-      place: u?.simplePlace === "gym" ? "gym" : "home",
-      level:
-        u?.simpleLevel === "train" || u?.simpleLevel === "start"
-          ? u.simpleLevel
-          : u?.nutrition?.activity === "high"
-            ? "train"
-            : "start",
-    },
+    simple: (() => {
+      const s = resolveSimple(u);
+      return { idx: s.idx, place: s.place, level: s.level, split: s.split };
+    })(),
     targets: u?.nutrition
       ? adaptiveTarget(
           u.nutrition,
@@ -479,6 +492,19 @@ async function handleApi(
     json(res, 401, { error: "unauthorized", message: "Открой приложение из Telegram." });
     return;
   }
+  const gate = await checkAccess({
+    userId: user.id,
+    botToken,
+    owner: isOwner(user.id),
+    refresh: query.get("access") === "1",
+  });
+  if (!gate.ok) {
+    console.log(`api ${req.method} ${urlPath} user=${user.id} join-gate`);
+    json(res, 403, gate.body);
+    return;
+  }
+  // В базу только после замка: иначе в дневнике копятся люди, которым вход закрыт.
+  registerUser(user.id, user.firstName);
   // Один запрос — одна строка. Пустой лог раньше не отличал «приложение молчит»
   // от «приложение работает»: жалобу нечем было проверить.
   console.log(`api ${req.method} ${urlPath} user=${user.id}`);
@@ -609,6 +635,7 @@ async function handleApi(
     const body = JSON.parse(await readBody(req)) as {
       place?: string;
       level?: string;
+      split?: string;
       lifts?: { name?: string; sets?: { kg?: number; reps?: number }[] }[];
     };
     const raw = Array.isArray(body.lifts) ? body.lifts : [];
@@ -649,22 +676,13 @@ async function handleApi(
       return;
     }
     const u = getUser(user.id);
-    const place: Place =
-      body.place === "gym" ? "gym" : body.place === "home" ? "home" : u?.simplePlace === "gym" ? "gym" : "home";
-    const level =
-      body.level === "train" || body.level === "start"
-        ? body.level
-        : u?.simpleLevel === "train" || u?.simpleLevel === "start"
-          ? u.simpleLevel
-          : u?.nutrition?.activity === "high"
-            ? "train"
-            : "start";
-    const idx = u?.simpleIdx ?? 0;
-    const plan = plansFor(place, level);
+    const s = resolveSimple(u, body);
+    const { place, level, split, plan, idx } = s;
     updateUser(user.id, {
       simpleIdx: idx + 1,
       simplePlace: place,
       simpleLevel: level,
+      simpleSplit: split,
       restDate: "",
     });
     json(res, 200, {
@@ -681,24 +699,13 @@ async function handleApi(
 
   // ── Готовая тренировка (дом/зал): та же отметка, что кнопка в чате ─────────
   if (req.method === "POST" && urlPath === "/api/workout/simple") {
-    const body = JSON.parse(await readBody(req)) as { place?: string; level?: string };
+    const body = JSON.parse(await readBody(req)) as { place?: string; level?: string; split?: string };
     const u = getUser(user.id);
-    const place: Place =
-      body.place === "gym" ? "gym" : body.place === "home" ? "home" : u?.simplePlace === "gym" ? "gym" : "home";
-    const level =
-      body.level === "train" || body.level === "start"
-        ? body.level
-        : u?.simpleLevel === "train" || u?.simpleLevel === "start"
-          ? u.simpleLevel
-          : u?.nutrition?.activity === "high"
-            ? "train"
-            : "start";
-    const idx = u?.simpleIdx ?? 0;
-    const plan = plansFor(place, level);
+    const { place, level, split, plan, idx } = resolveSimple(u, body);
     const w = plan[idx % plan.length];
     addWorkout({
       userId: user.id, date,
-      exercise: `Тренировка ${w.label} (фулбоди)`,
+      exercise: `Тренировка ${w.label}`,
       sets: 1, reps: 1, weightKg: 0,
       notes: "simple",
     });
@@ -706,6 +713,7 @@ async function handleApi(
       simpleIdx: idx + 1,
       simplePlace: place,
       simpleLevel: level,
+      simpleSplit: split,
       restDate: "",
     });
     json(res, 200, {
@@ -721,11 +729,24 @@ async function handleApi(
     const body = JSON.parse(await readBody(req)) as {
       place?: string;
       level?: string;
+      split?: string;
       rest?: boolean;
     };
-    const patch: { simplePlace?: Place; simpleLevel?: "start" | "train"; restDate?: string } = {};
+    const u = getUser(user.id);
+    const patch: {
+      simplePlace?: Place;
+      simpleLevel?: "start" | "train";
+      simpleSplit?: SplitId;
+      simpleIdx?: number;
+      restDate?: string;
+    } = {};
     if (body.place === "home" || body.place === "gym") patch.simplePlace = body.place;
     if (body.level === "start" || body.level === "train") patch.simpleLevel = body.level;
+    if (body.split === "fb-start" || body.split === "fb-train" || body.split === "ppl" || body.split === "ul") {
+      patch.simpleSplit = body.split;
+      patch.simpleLevel = splitLevel(body.split);
+      if ((u?.simpleSplit || "") !== body.split) patch.simpleIdx = 0;
+    }
     if (body.rest === true) patch.restDate = date;
     if (body.rest === false) patch.restDate = "";
     if (Object.keys(patch).length) updateUser(user.id, patch);
@@ -1106,6 +1127,11 @@ export function startWebappServer(botToken: string): http.Server | null {
   server.listen(port, () => {
     const hasApp = fs.existsSync(path.join(WEBAPP_DIR, "index.html"));
     console.log(`🌐 HTTP :${port} — Mini App ${hasApp ? "раздаётся" : "НЕ НАЙДЕН (" + WEBAPP_DIR + ")"}`);
+    if (accessEnabled()) {
+      console.log(`   Access gate: on (${accessChatId()})`);
+    } else {
+      console.log("   Access gate: OFF");
+    }
   });
   server.on("error", (e) => console.error("HTTP server:", e instanceof Error ? e.message : e));
 

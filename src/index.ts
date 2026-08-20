@@ -14,12 +14,13 @@ import {
 } from "./db";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { startWebappServer } from "./server";
+import { accessEnabled, accessChatId, accessChatTitle } from "./access";
 import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError, type MealAnalysis } from "./meal";
 import { putPending, takePending } from "./pending";
 import { calcMacros, weightTrendAdvice, adaptiveTarget } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
 import {
-  plansFor, type Place, type Level, type SimpleExercise, type Goal as SimpleGoal,
+  parseSplit, plansForProgram, programById, type Place, type Level, type SimpleExercise, type Goal as SimpleGoal,
   schemeFor, restFor, doseLabel, progressionRule, enduranceNote, SEX_NOTE,
   exerciseHarder, exerciseVideoUrl, isDirectVideo,
 } from "./simple";
@@ -927,9 +928,10 @@ function currentSimpleWorkout(userId: number) {
       : u?.nutrition?.activity === "high"
         ? "train"
         : "start";
+  const split = parseSplit(u?.simpleSplit, level);
   const idx = u?.simpleIdx ?? 0;
-  const plan = plansFor(place, level);
-  return { place, level, idx, w: plan[idx % plan.length] };
+  const plan = plansForProgram(place, split);
+  return { place, level, split, idx, w: plan[idx % plan.length], plan };
 }
 
 /** Цель из анкеты: дозировка плана, а не набор упражнений. */
@@ -954,7 +956,8 @@ function diffAdvice(userId: number, place: Place): string {
 }
 
 function buildSimpleWorkoutText(userId: number): string {
-  const { place, level, w } = currentSimpleWorkout(userId);
+  const { place, w, split } = currentSimpleWorkout(userId);
+  const prog = programById(split);
   const goal = simpleGoal(userId);
   const items = w.items
     .map((e, i) =>
@@ -964,7 +967,7 @@ function buildSimpleWorkoutText(userId: number): string {
     .join("\n\n");
 
   return (
-    `🏋️ <b>ТРЕНИРОВКА ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"} ${DOT} ${level === "train" ? "уже тренируюсь" : "с нуля"}\n${HR}\n\n` +
+    `🏋️ <b>${esc(prog.title)} · ${w.label}</b> ${DOT} ${place === "home" ? "дома" : "в зале"} ${DOT} ${prog.daysPerWeek} дн/нед\n${HR}\n\n` +
     `<i>Цель: ${esc(doseLabel(goal))}. Отдых между подходами: ${esc(restFor(goal))}.</i>\n\n` +
     `<i>Разминка: 5 минут быстрой ходьбы на месте + покрути руками и тазом.</i>\n\n` +
     items +
@@ -1175,13 +1178,13 @@ const FEEDBACK_KEYBOARD = {
 
 bot.callbackQuery("simple_done", async (ctx) => {
   const userId = ctx.from.id;
-  const { idx, w, place, level } = currentSimpleWorkout(userId);
-  const plan = plansFor(place, level);
+  const { idx, w, place, split } = currentSimpleWorkout(userId);
+  const plan = plansForProgram(place, split);
 
   addWorkout({
     userId,
     date: today(),
-    exercise: `Тренировка ${w.label} (фулбоди)`,
+    exercise: `Тренировка ${w.label} (${programById(split).title})`,
     sets: 1,
     reps: 1,
     weightKg: 0,
@@ -3672,6 +3675,30 @@ async function verifyChannelAccess() {
   }
 }
 
+async function verifyAccessChat() {
+  const id = accessChatId();
+  if (!accessEnabled() || !id) {
+    console.log("   Access gate: OFF");
+    return;
+  }
+  try {
+    const me = await bot.api.getMe();
+    const member = await bot.api.getChatMember(id, me.id);
+    const admin = member.status === "administrator" || member.status === "creator";
+    if (!admin) {
+      console.warn(
+        `   Access gate ${id}: bot status=${member.status}. Нужен admin, иначе все кроме владельца увидят стену входа.`
+      );
+    } else {
+      console.log(`   Access gate: on (${id}, ${accessChatTitle()})`);
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`   Access gate ${id}: бот не в чате. Добавь @Raschettbot админом.`);
+    console.warn(`   ${msg}`);
+  }
+}
+
 // ── Start polling ─────────────────────────────────────────────────────────
 async function main() {
   startWebappServer(bot.token); // раздаёт webapp/ и API дневника питания для приложения
@@ -3679,6 +3706,7 @@ async function main() {
   const branding = await applyBrandingFromEnv(bot.api);
   if (branding.length) console.log(`   Channel branding applied: ${branding.join(", ")}`);
   await verifyChannelAccess();
+  await verifyAccessChat();
 
   // В режиме лаунчера список команд короткий: длинный список — это второе меню,
   // которое обещает в чате то, что живёт в приложении.
@@ -3694,6 +3722,24 @@ async function main() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`setChatMenuButton: ${msg}`);
+    }
+    // Кнопка слева от поля ввода в конкретной группе. API принимает только личный
+    // чат; для супергруппы пробуем, отказ пишем в лог, замок от этого не зависит.
+    const gateChat = accessEnabled() ? accessChatId() : undefined;
+    if (gateChat && /^-?\d+$/.test(gateChat)) {
+      try {
+        await bot.api.setChatMenuButton({
+          chat_id: Number(gateChat),
+          menu_button: {
+            type: "web_app",
+            text: "KINGMODE",
+            web_app: { url: appUrl() },
+          },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`setChatMenuButton ${gateChat}: ${msg}`);
+      }
     }
   }
 

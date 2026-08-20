@@ -525,6 +525,119 @@ export function plansFor(place: Place, level: Level = "start"): SimpleWorkout[] 
   return (level === "train" ? TRAIN_PLANS : SIMPLE_PLANS)[place];
 }
 
+/**
+ * Именные программы. Не 13 SKU частей тела, а сплиты, которыми закрывается
+ * почти вся массовая работа: полное тело, жим-тяга-ноги одним кругом, верх/низ.
+ */
+export type SplitId = "fb-start" | "fb-train" | "ppl" | "ul";
+
+export interface ProgramInfo {
+  id: SplitId;
+  title: string;
+  shelf: "start" | "train";
+  daysPerWeek: number;
+  blurb: string;
+}
+
+export const PROGRAMS: ProgramInfo[] = [
+  {
+    id: "fb-start",
+    title: "Full Body",
+    shelf: "start",
+    daysPerWeek: 3,
+    blurb: "С нуля. Три дня в неделю, каждая мышца в каждой сессии.",
+  },
+  {
+    id: "fb-train",
+    title: "Full Body",
+    shelf: "train",
+    daysPerWeek: 3,
+    blurb: "Уже тренируюсь. Тот же сплит, движения уже не со стула.",
+  },
+  {
+    id: "ppl",
+    title: "Push / Pull / Squeeze",
+    shelf: "train",
+    daysPerWeek: 3,
+    blurb: "Один круг: Push, Pull, Squeeze. Squeeze это ноги. Пн ср пт, не шесть дней.",
+  },
+  {
+    id: "ul",
+    title: "Upper / Lower",
+    shelf: "train",
+    daysPerWeek: 4,
+    blurb: "Четыре дня: Upper, Lower, Upper, Lower. Каждая мышца два раза в неделю.",
+  },
+];
+
+function exercisePool(): SimpleExercise[] {
+  return [
+    ...HOME_A.items,
+    ...HOME_B.items,
+    ...HOME_TRAIN_A.items,
+    ...HOME_TRAIN_B.items,
+    ...GYM_A.items,
+    ...GYM_B.items,
+    ...GYM_TRAIN_A.items,
+    ...GYM_TRAIN_B.items,
+  ];
+}
+
+function ex(name: string): SimpleExercise {
+  const found = exercisePool().find((e) => e.name === name);
+  if (!found) throw new Error(`нет упражнения: ${name}`);
+  return found;
+}
+
+function day(label: string, names: string[]): SimpleWorkout {
+  return { label, items: names.map(ex) };
+}
+
+const PPL_HOME: SimpleWorkout[] = [
+  day("Push", ["Отжимания от пола", "Отжимания от опоры", "Планка"]),
+  day("Pull", ["«Супермен» с паузой", "«Супермен»", "Скручивания до седа"]),
+  day("Squeeze", ["Приседания до параллели", "Шагающие выпады", "Ягодичный мостик на одной ноге"]),
+];
+
+const PPL_GYM: SimpleWorkout[] = [
+  day("Push", ["Жим гантелей лёжа", "Жим гантелей стоя", "Планка"]),
+  day("Pull", ["Тяга двух гантелей в наклоне", "Тяга верхнего блока к груди", "«Супермен» с паузой"]),
+  day("Squeeze", ["Болгарские сплит-приседания", "Румынская тяга на одной ноге", "Выпады с гантелями"]),
+];
+
+const UL_HOME: SimpleWorkout[] = [
+  day("Upper", ["Отжимания от пола", "«Супермен» с паузой", "Планка"]),
+  day("Lower", ["Приседания до параллели", "Шагающие выпады", "Ягодичный мостик на одной ноге"]),
+  day("Upper-2", ["Отжимания от опоры", "«Супермен» с паузой", "Скручивания до седа"]),
+  day("Lower-2", ["Шагающие выпады", "Приседания до параллели", "Ягодичный мостик"]),
+];
+
+const UL_GYM: SimpleWorkout[] = [
+  day("Upper", ["Жим гантелей лёжа", "Тяга двух гантелей в наклоне", "Жим гантелей стоя", "Планка"]),
+  day("Lower", ["Болгарские сплит-приседания", "Румынская тяга на одной ноге", "Выпады с гантелями"]),
+  day("Upper-2", ["Жим гантелей вверх сидя", "Тяга верхнего блока к груди", "Тяга гантели в наклоне", "Планка"]),
+  day("Lower-2", ["Приседания с гантелью у груди", "Румынская тяга с гантелями", "Выпады с гантелями"]),
+];
+
+export function splitLevel(id: SplitId): Level {
+  return id === "fb-start" ? "start" : "train";
+}
+
+export function parseSplit(raw: string | undefined, level: Level = "start"): SplitId {
+  if (raw === "fb-start" || raw === "fb-train" || raw === "ppl" || raw === "ul") return raw;
+  return level === "train" ? "fb-train" : "fb-start";
+}
+
+export function programById(id: SplitId): ProgramInfo {
+  return PROGRAMS.find((p) => p.id === id) ?? PROGRAMS[0];
+}
+
+export function plansForProgram(place: Place, split: SplitId): SimpleWorkout[] {
+  if (split === "ppl") return place === "gym" ? PPL_GYM : PPL_HOME;
+  if (split === "ul") return place === "gym" ? UL_GYM : UL_HOME;
+  return plansFor(place, splitLevel(split));
+}
+
 export type Goal = "bulk" | "cut" | "maint";
 
 /**

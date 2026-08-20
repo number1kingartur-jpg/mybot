@@ -656,6 +656,106 @@ button {
   font-weight: 500;
 }
 
+/* Полка программ: карточки, не узкие чипы вперемешку */
+.shelf {
+  margin: 4px 0 14px;
+}
+
+.shelf__label {
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  margin: 12px 0 8px;
+}
+
+.shelf__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.shelf__grid .prog:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.prog {
+  position: relative;
+  min-height: 96px;
+  padding: 14px 14px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background-color: var(--graphite);
+  background-position: center;
+  background-size: cover;
+  color: var(--paper);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.prog__name {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.prog__meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--gold-light);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.prog__blurb {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.prog.is-on,
+.prog[aria-pressed="true"] {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold);
+}
+
+.acc__kicker {
+  display: block;
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+
+.acc__sub .ex-scheme,
+.acc__sub .ex-muscle {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.ex-scheme {
+  background: var(--gold);
+  color: #17130a;
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.ex-muscle {
+  color: var(--gold-light);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 /* ── Формы ──────────────────────────────────────────────────────────────── */
 
 .field {
@@ -748,6 +848,7 @@ select.input {
   font-size: 14.5px;
   font-weight: 500;
   cursor: pointer;
+  text-decoration: none;
   transition: transform 0.3s var(--ease), background-color 0.3s var(--ease),
     color 0.3s var(--ease), border-color 0.3s var(--ease);
   -webkit-tap-highlight-color: transparent;

@@ -93,6 +93,7 @@ export interface UserRecord {
   simpleIdx?: number;       // номер следующей тренировки в простом режиме (A/B чередование)
   simplePlace?: "home" | "gym";
   simpleLevel?: "start" | "train";
+  simpleSplit?: "fb-start" | "fb-train" | "ppl" | "ul";
   simpleDiff?: number;      // накопленная сложность по фидбэку: >0 легко, <0 тяжело
   lastReminderDate?: string;   // когда отправлено последнее напоминание (YYYY-MM-DD)
   remindersMissed?: number;    // сколько напоминаний подряд проигнорировано

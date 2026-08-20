@@ -795,14 +795,124 @@ var KM_PLANS = (function () {
     return "Кардио 2 раза в неделю по 20–30 минут, если хочется: на состав тела это не влияет.";
   }
 
+  function pool() {
+    return HOME_A.items
+      .concat(HOME_B.items)
+      .concat(HOME_TRAIN_A.items)
+      .concat(HOME_TRAIN_B.items)
+      .concat(GYM_A.items)
+      .concat(GYM_B.items)
+      .concat(GYM_TRAIN_A.items)
+      .concat(GYM_TRAIN_B.items);
+  }
+
+  function ex(name) {
+    var found = pool().filter(function (e) {
+      return e.name === name;
+    })[0];
+    if (!found) throw new Error("нет упражнения: " + name);
+    return found;
+  }
+
+  function day(label, names) {
+    return {
+      label: label,
+      items: names.map(ex)
+    };
+  }
+
+  var PPL_HOME = [
+    day("Push", ["Отжимания от пола", "Отжимания от опоры", "Планка"]),
+    day("Pull", ["«Супермен» с паузой", "«Супермен»", "Скручивания до седа"]),
+    day("Squeeze", ["Приседания до параллели", "Шагающие выпады", "Ягодичный мостик на одной ноге"])
+  ];
+  var PPL_GYM = [
+    day("Push", ["Жим гантелей лёжа", "Жим гантелей стоя", "Планка"]),
+    day("Pull", ["Тяга двух гантелей в наклоне", "Тяга верхнего блока к груди", "«Супермен» с паузой"]),
+    day("Squeeze", ["Болгарские сплит-приседания", "Румынская тяга на одной ноге", "Выпады с гантелями"])
+  ];
+  var UL_HOME = [
+    day("Upper", ["Отжимания от пола", "«Супермен» с паузой", "Планка"]),
+    day("Lower", ["Приседания до параллели", "Шагающие выпады", "Ягодичный мостик на одной ноге"]),
+    day("Upper-2", ["Отжимания от опоры", "«Супермен» с паузой", "Скручивания до седа"]),
+    day("Lower-2", ["Шагающие выпады", "Приседания до параллели", "Ягодичный мостик"])
+  ];
+  var UL_GYM = [
+    day("Upper", ["Жим гантелей лёжа", "Тяга двух гантелей в наклоне", "Жим гантелей стоя", "Планка"]),
+    day("Lower", ["Болгарские сплит-приседания", "Румынская тяга на одной ноге", "Выпады с гантелями"]),
+    day("Upper-2", ["Жим гантелей вверх сидя", "Тяга верхнего блока к груди", "Тяга гантели в наклоне", "Планка"]),
+    day("Lower-2", ["Приседания с гантелью у груди", "Румынская тяга с гантелями", "Выпады с гантелями"])
+  ];
+
+  var PROGRAMS = [
+    {
+      id: "fb-start",
+      title: "Full Body",
+      shelf: "start",
+      daysPerWeek: 3,
+      blurb: "С нуля. Три дня в неделю, каждая мышца в каждой сессии."
+    },
+    {
+      id: "fb-train",
+      title: "Full Body",
+      shelf: "train",
+      daysPerWeek: 3,
+      blurb: "Уже тренируюсь. Тот же сплит, движения уже не со стула."
+    },
+    {
+      id: "ppl",
+      title: "Push / Pull / Squeeze",
+      shelf: "train",
+      daysPerWeek: 3,
+      blurb: "Один круг: Push, Pull, Squeeze. Squeeze это ноги. Пн ср пт, не шесть дней."
+    },
+    {
+      id: "ul",
+      title: "Upper / Lower",
+      shelf: "train",
+      daysPerWeek: 4,
+      blurb: "Четыре дня: Upper, Lower, Upper, Lower. Каждая мышца два раза в неделю."
+    }
+  ];
+
+  function splitLevel(id) {
+    return id === "fb-start" ? "start" : "train";
+  }
+
+  function parseSplit(raw, level) {
+    if (raw === "fb-start" || raw === "fb-train" || raw === "ppl" || raw === "ul") return raw;
+    return level === "train" ? "fb-train" : "fb-start";
+  }
+
+  function programById(id) {
+    var i;
+    for (i = 0; i < PROGRAMS.length; i++) {
+      if (PROGRAMS[i].id === id) return PROGRAMS[i];
+    }
+    return PROGRAMS[0];
+  }
+
+  function forProgram(place, split) {
+    if (split === "ppl") return place === "gym" ? PPL_GYM : PPL_HOME;
+    if (split === "ul") return place === "gym" ? UL_GYM : UL_HOME;
+    return forPlace(place, splitLevel(split));
+  }
+
+  function forPlace(place, level) {
+    if (level === "train") {
+      return place === "gym" ? [GYM_TRAIN_A, GYM_TRAIN_B] : [HOME_TRAIN_A, HOME_TRAIN_B];
+    }
+    return place === "gym" ? [GYM_A, GYM_B] : [HOME_A, HOME_B];
+  }
+
   return {
     plans: { home: [HOME_A, HOME_B], gym: [GYM_A, GYM_B] },
-    forPlace: function (place, level) {
-      if (level === "train") {
-        return place === "gym" ? [GYM_TRAIN_A, GYM_TRAIN_B] : [HOME_TRAIN_A, HOME_TRAIN_B];
-      }
-      return place === "gym" ? [GYM_A, GYM_B] : [HOME_A, HOME_B];
-    },
+    programs: PROGRAMS,
+    forPlace: forPlace,
+    forProgram: forProgram,
+    parseSplit: parseSplit,
+    splitLevel: splitLevel,
+    programById: programById,
     slug: slug,
     gymClips: function () {
       return GYM_CLIPS;

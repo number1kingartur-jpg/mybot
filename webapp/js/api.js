@@ -241,8 +241,11 @@ window.KM_API = (function () {
     available: available,
     diag: diag,
     build: build,
-    state: function (date) {
-      return request("GET", "/api/state" + (date ? "?date=" + encodeURIComponent(date) : ""));
+    state: function (date, refresh) {
+      var q = [];
+      if (date) q.push("date=" + encodeURIComponent(date));
+      if (refresh) q.push("access=1");
+      return request("GET", "/api/state" + (q.length ? "?" + q.join("&") : ""));
     },
     foods: function () {
       return request("GET", "/api/foods");
@@ -314,11 +317,11 @@ window.KM_API = (function () {
     programDone: function () {
       return request("POST", "/api/program/done", {});
     },
-    workoutDone: function (place, level) {
-      return request("POST", "/api/workout/simple", { place: place, level: level });
+    workoutDone: function (place, level, split) {
+      return request("POST", "/api/workout/simple", { place: place, level: level, split: split });
     },
-    workoutLog: function (place, level, lifts) {
-      return request("POST", "/api/workout/log", { place: place, level: level, lifts: lifts });
+    workoutLog: function (place, level, lifts, split) {
+      return request("POST", "/api/workout/log", { place: place, level: level, lifts: lifts, split: split });
     },
     savePlace: function (place) {
       return request("POST", "/api/settings", { place: place });

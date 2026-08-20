@@ -11,7 +11,10 @@ import vm from "node:vm";
 import {
   SIMPLE_PLANS,
   TRAIN_PLANS,
+  PROGRAMS,
   plansFor,
+  plansForProgram,
+  parseSplit,
   schemeFor,
   restFor,
   doseLabel,
@@ -125,6 +128,52 @@ check(
   plansFor("home", "start")[0].items[0].name !== plansFor("home", "train")[0].items[0].name,
   plansFor("home", "train")[0].items[0].name
 );
+
+check("полка из 4 программ", PROGRAMS.length === 4, String(PROGRAMS.length));
+check("приложение отдаёт programs", Array.isArray(APP.programs) && APP.programs.length === 4);
+PROGRAMS.forEach((p, i) => {
+  const a = APP.programs[i] || {};
+  check(`${p.id}: заголовок`, p.title === a.title, a.title);
+  check(`${p.id}: полка`, p.shelf === a.shelf, a.shelf);
+  check(`${p.id}: дни в неделю`, p.daysPerWeek === a.daysPerWeek, String(a.daysPerWeek));
+  check(`${p.id}: текст`, p.blurb === a.blurb, a.blurb);
+});
+check(
+  "имена сплитов на полке",
+  PROGRAMS.map((p) => p.title).join(" | ") === "Full Body | Full Body | Push / Pull / Squeeze | Upper / Lower"
+);
+check("без split новичок = полное тело с нуля", parseSplit(undefined, "start") === "fb-start");
+check("без split уже тренируюсь = полное тело", parseSplit(undefined, "train") === "fb-train");
+
+const SPLITS = PROGRAMS.map((p) => p.id);
+for (const split of SPLITS) {
+  for (const place of PLACES) {
+    const bot = plansForProgram(place, split);
+    const app = APP.forProgram(place, split);
+    const meta = PROGRAMS.find((p) => p.id === split);
+    check(`${split}/${place}: дни`, bot.length === app.length, `${bot.length} vs ${app.length}`);
+    check(
+      `${split}: число дней`,
+      split.startsWith("fb") ? bot.length === 2 : bot.length === meta.daysPerWeek,
+      String(bot.length)
+    );
+    bot.forEach((plan, pi) => {
+      check(`${split}/${place}/${plan.label}: метка`, plan.label === app[pi].label, app[pi].label);
+      plan.items.forEach((e, i) => {
+        const a = app[pi].items[i];
+        const tag = `${split}/${place}/${plan.label}/${e.name}`;
+        check(`${tag}: имя`, e.name === a.name, a.name);
+        check(`${tag}: есть усложнение`, exerciseHarder(e).length > 0);
+        for (const goal of GOALS) {
+          check(`${tag}/${goal}: схема`, schemeFor(e, goal) === APP.scheme(a, goal));
+        }
+      });
+    });
+  }
+}
+
+check("ppl зал: три дня", plansForProgram("gym", "ppl").map((d) => d.label).join("/") === "Push/Pull/Squeeze");
+check("ul зал: четыре дня", plansForProgram("gym", "ul").length === 4);
 
 const squat = SIMPLE_PLANS.home[0].items[0];
 check("набор: 4 подхода", schemeFor(squat, "bulk").startsWith("4 подхода"), schemeFor(squat, "bulk"));

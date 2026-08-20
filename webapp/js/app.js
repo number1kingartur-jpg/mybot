@@ -50,7 +50,7 @@
     profile: { sex: "m", age: 30, heightCm: 180, weightKg: 80, activity: "mid", goal: "maint" },
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
-    workout: { place: "home", plan: 0, level: "" },
+    workout: { place: "home", plan: 0, level: "", split: "" },
     session: { key: "", startedAt: 0, restUntil: 0, lifts: {} },
     diary: { date: today(), weightKg: "" },
     entries: [],
@@ -61,6 +61,9 @@
     sameAsSkip: null,
     repeatAsk: null
   };
+
+  // 403 join: не в persist. Человек вступил, нажал «Я уже внутри», стена должна уйти.
+  var needJoin = null;
 
   /**
    * Три оформления вместо одного. Смысл не в украшении: тёмная тема в солнечный
@@ -471,16 +474,17 @@
     return Boolean(state.day && state.day.visionEnabled);
   }
 
-  function loadDay(silent) {
+  function loadDay(silent, refresh) {
     // Проверяем заново: SDK Telegram — внешний файл и мог прийти позже первой
     // отрисовки. Разовая проверка на старте оставляла приложение в локальном
     // режиме до перезапуска.
     if (!online) online = KM_API.available();
     if (!online) return;
-    KM_API.state(state.viewDate || undefined)
+    KM_API.state(state.viewDate || undefined, refresh)
       .then(function (data) {
         state.day = data;
         state.linkError = null;
+        needJoin = null;
         if (data.pending !== undefined) state.pending = data.pending;
         // План тренировки ведёт бот: в чате и в приложении должна быть одна
         // очередь A/B. Ручное переключение в этой сессии не перетираем.
@@ -489,6 +493,7 @@
           if (data.simple.level === "start" || data.simple.level === "train") {
             state.workout.level = data.simple.level;
           }
+          if (data.simple.split) state.workout.split = data.simple.split;
           state.workout.plan = data.simple.idx % planList().length;
         }
         migrateWeights();
@@ -525,6 +530,10 @@
         // в локальный режим, он честно об этом скажет на экране
         if (err && err.status === 401) {
           online = false;
+          state.linkError = null;
+          needJoin = null;
+        } else if (err && err.status === 403 && err.code === "join") {
+          needJoin = err.data || {};
           state.linkError = null;
         } else {
           // Сеть, таймаут, сбой сервера: причину показываем, а не прячем за
@@ -969,14 +978,7 @@
             ])
           ) +
           field("Где тренируешься", chips("s_place", state.workout.place, [["home", "Дома"], ["gym", "В зале"]])) +
-          field(
-            "Уровень",
-            chips("s_level", workoutLevel(), [
-              ["start", "С нуля"],
-              ["train", "Уже тренируюсь"]
-            ]),
-            "С нуля: дома стул и стена, в зале жим лежа. Уже тренируюсь: полный присед, болгарские, жим стоя."
-          ) +
+          field("Программа", programShelfHtml("s_split", workoutSplit())) +
           '<div class="btn-stack" style="margin-top:18px">' +
           '<button class="btn btn--primary" data-action="setup-done">Готово</button>' +
           '<button class="btn btn--outline btn--slim" data-action="setup-skip">Пропустить</button>' +
@@ -1010,7 +1012,11 @@
     // перетрёт их значением бота по умолчанию.
     workoutTouched = true;
     if (online) {
-      KM_API.saveSettings({ place: state.workout.place, level: workoutLevel() }).catch(function () {});
+      KM_API.saveSettings({
+        place: state.workout.place,
+        level: workoutLevel(),
+        split: workoutSplit()
+      }).catch(function () {});
     }
     haptic("medium");
     go("home");
@@ -1604,14 +1610,14 @@
       programCard() +
       card(
         cardHead(
-          "Тренировка · план " + esc(plan.label),
-          place === "home"
-            ? workoutLevel() === "train"
-              ? "Дома, свой вес"
-              : "Дома, с нуля"
-            : workoutLevel() === "train"
-              ? "В зале, гантели"
-              : "В зале, с нуля",
+          (workoutLoggedToday() ? "Записана" : "Продолжить") +
+            " · " +
+            programById(workoutSplit()).title +
+            " · " +
+            esc(plan.label),
+          (dayMuscles(plan) || programById(workoutSplit()).blurb) +
+            " · " +
+            (place === "home" ? "дома" : "зал"),
           plan.items.length + " " + plural(plan.items.length, "упражнение", "упражнения", "упражнений")
         ) +
           '<p class="lead">' +
@@ -3074,7 +3080,7 @@
     state.busy = "workout";
     state.notice = null;
     render();
-    KM_API.workoutLog(state.workout.place, workoutLevel(), lifts)
+    KM_API.workoutLog(state.workout.place, workoutLevel(), lifts, workoutSplit())
       .then(function (data) {
         state.day = data;
         state.busy = null;
@@ -3152,19 +3158,135 @@
    * и стена ему уже не нужны. Явный выбор на чипе перекрывает догадку.
    */
   function workoutLevel() {
-    var lv = state.workout.level;
-    if (lv === "start" || lv === "train") return lv;
-    return state.profile && state.profile.activity === "high" ? "train" : "start";
+    return KM_PLANS.splitLevel(workoutSplit());
   }
 
+  function workoutSplit() {
+    return KM_PLANS.parseSplit(
+      state.workout.split,
+      state.workout.level === "train" || state.workout.level === "start"
+        ? state.workout.level
+        : state.profile && state.profile.activity === "high"
+          ? "train"
+          : "start"
+    );
+  }
+
+  function programById(id) {
+    return KM_PLANS.programById(id);
+  }
+
+  var PROG_COVER = {
+    "fb-start": "prisedaniya-na-stul",
+    "fb-train": "prisedaniya-do-paralleli",
+    ppl: "zhim-ganteley-lezha",
+    ul: "tyaga-dvuh-ganteley-v-naklone"
+  };
+
   function planList() {
-    return KM_PLANS.forPlace(state.workout.place, workoutLevel());
+    var list = KM_PLANS.forProgram(state.workout.place, workoutSplit());
+    if (state.workout.plan >= list.length) state.workout.plan = 0;
+    return list;
+  }
+
+  function programShelfHtml(seg, current) {
+    var start = KM_PLANS.programs.filter(function (p) {
+      return p.shelf === "start";
+    });
+    var train = KM_PLANS.programs.filter(function (p) {
+      return p.shelf === "train";
+    });
+    function cards(items) {
+      return items
+        .map(function (p) {
+          var on = p.id === current;
+          var cover = PROG_COVER[p.id] || "";
+          var bg = cover
+            ? ' style="background-image:linear-gradient(180deg,rgba(11,11,12,.28),rgba(11,11,12,.84)),url(\'img/ex/' +
+              esc(cover) +
+              ".webp')\""
+            : "";
+          return (
+            '<button type="button" class="prog' +
+            (on ? " is-on" : "") +
+            '" data-value="' +
+            esc(p.id) +
+            '" aria-pressed="' +
+            on +
+            '"' +
+            bg +
+            '><span class="prog__name">' +
+            esc(p.title) +
+            '</span><span class="prog__meta">' +
+            p.daysPerWeek +
+            " " +
+            plural(p.daysPerWeek, "день", "дня", "дней") +
+            (p.shelf === "start" ? " · с нуля" : "") +
+            '</span><span class="prog__blurb">' +
+            esc(p.blurb) +
+            "</span></button>"
+          );
+        })
+        .join("");
+    }
+    return (
+      '<div class="shelf" data-seg="' +
+      seg +
+      '">' +
+      '<p class="shelf__label">Новичок</p>' +
+      '<div class="shelf__grid">' +
+      cards(start) +
+      "</div>" +
+      '<p class="shelf__label">Уже тренируюсь</p>' +
+      '<div class="shelf__grid">' +
+      cards(train) +
+      "</div></div>"
+    );
+  }
+
+  function muscleOf(e) {
+    if (e.name === "Отжимания с колен") return "грудь и руки";
+    var s = e.short || "";
+    var i = s.lastIndexOf(":");
+    if (i < 0) return "";
+    return s.slice(i + 1).trim();
+  }
+
+  function dayMuscles(plan) {
+    var seen = {};
+    var out = [];
+    (plan.items || []).forEach(function (ex) {
+      var m = muscleOf(ex);
+      if (m && !seen[m]) {
+        seen[m] = true;
+        out.push(m);
+      }
+    });
+    return out.join(" · ");
+  }
+
+  function schemeBadge(e, goal) {
+    var d = KM_PLANS.dose(e);
+    var sets = d.sets + (goal === "bulk" ? 1 : 0);
+    if (d.secs) {
+      var lo = goal === "bulk" ? Math.round((d.secs[0] * 1.5) / 5) * 5 : d.secs[0];
+      var hi = goal === "bulk" ? Math.round((d.secs[1] * 1.5) / 5) * 5 : d.secs[1];
+      return sets + "×" + lo + "–" + hi + " с";
+    }
+    var reps = d.reps || 10;
+    var r = goal === "bulk" ? reps + "–" + (reps + 2) : String(reps);
+    return sets + "×" + r;
+  }
+
+  function dayChipLabel(p) {
+    if (p.label === "A" || p.label === "B") return "День " + p.label;
+    return p.label;
   }
 
   var restTick = null;
 
   function sessionKey() {
-    return state.workout.place + "|" + workoutLevel() + "|" + state.workout.plan;
+    return state.workout.place + "|" + workoutSplit() + "|" + state.workout.plan;
   }
 
   function restSec() {
@@ -3285,39 +3407,41 @@
     var list = planList();
     var plan = list[wk.plan] || list[0];
     var goal = workoutGoal();
-    var level = workoutLevel();
+    var split = workoutSplit();
+    var prog = programById(split);
 
     return (
       chips("w_place", wk.place, [["home", "Дома"], ["gym", "В зале"]]) +
-      chips("w_level", level, [
-        ["start", "С нуля"],
-        ["train", "Уже тренируюсь"]
-      ]) +
+      programShelfHtml("w_split", split) +
+      '<p class="shelf__label">День</p>' +
       chips(
         "w_plan",
         wk.plan,
         list.map(function (p, i) {
-          return [i, "План " + p.label];
+          return [i, dayChipLabel(p)];
         })
       ) +
       card(
         cardHead(
-          wk.place === "home"
-            ? level === "train"
-              ? "Дома · свой вес, уже не с нуля"
-              : "Дома · без инвентаря, с нуля"
-            : level === "train"
-              ? "В зале · гантели, уже не с нуля"
-              : "В зале · гантели и блок, с нуля",
+          prog.title + " · " + plan.label,
           plan.items.length +
             " " +
             plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
-            ". Чередуй A и B через день отдыха. Нажми на упражнение, и откроется техника.",
-          "План " + plan.label
+            " · " +
+            (wk.place === "home" ? "дома" : "зал") +
+            " · " +
+            prog.daysPerWeek +
+            " " +
+            plural(prog.daysPerWeek, "день", "дня", "дней") +
+            " в неделю",
+          prog.shelf === "start" ? "новичок" : "уже тренируюсь"
         ) +
+          (dayMuscles(plan)
+            ? '<p class="lead" style="margin-top:10px">' + esc(dayMuscles(plan)) + "</p>"
+            : "") +
           '<p class="note note--plain" style="margin-top:12px">Цель ' +
           esc(KM_PLANS.doseLabel(goal)) +
-          ". Отдых между подходами " +
+          ". Отдых " +
           esc(KM_PLANS.rest(goal)) +
           ".</p>",
         { gold: true }
@@ -3332,7 +3456,7 @@
             '<p class="note note--plain">В дневник уходит факт: вес и повторы каждого подхода, не план. ' +
             "Всего тренировок " +
             (state.day.workoutsTotal || 0) +
-            ". Очередь планов A и B бот ведёт сам.</p>"
+            ". Очередь дней бот ведёт сам.</p>"
         : '<p class="note note--plain">Журнал пишется в дневник бота и работает только тогда, ' +
           "когда приложение открыто из Telegram.</p>") +
       '<p class="note">' +
@@ -3395,7 +3519,7 @@
       card(
         cardHead(
           "Ещё из зала",
-          "Не часть плана A/B и не пишется в журнал. Техника с тех клипов, что уже сняты."
+          "Не часть выбранной программы и не пишется в журнал. Техника с тех клипов, что уже сняты."
         )
       ) + extras.map(extraClipHtml).join("")
     );
@@ -3441,7 +3565,7 @@
     return s.kg + " кг × " + s.reps;
   }
 
-  function exerciseHtml(e) {
+  function exerciseHtml(e, idx) {
     var goal = workoutGoal();
     var slug = KM_PLANS.slug(e);
     var local = KM_PLANS.localVideo(e);
@@ -3523,13 +3647,15 @@
     return (
       '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
       thumb(slug, e.name, "ex") +
-      '<span class="acc__text"><span class="acc__title">' +
+      '<span class="acc__text"><span class="acc__kicker">Упражнение #' +
+      ((idx || 0) + 1) +
+      '</span><span class="acc__title">' +
       esc(e.name) +
-      '</span><span class="acc__sub">' +
-      esc(KM_PLANS.scheme(e, goal)) +
-      " · " +
-      esc(e.short) +
-      '</span></span><span class="acc__sign">+</span></button>' +
+      '</span><span class="acc__sub"><span class="ex-scheme">' +
+      esc(schemeBadge(e, goal)) +
+      "</span>" +
+      (muscleOf(e) ? '<span class="ex-muscle">' + esc(muscleOf(e)) + "</span>" : "") +
+      "</span></span><span class=\"acc__sign\">+</span></button>" +
       log +
       '<div class="acc__body">' +
       media +
@@ -4194,10 +4320,42 @@
     );
   }
 
+  function joinGate(info) {
+    var j = info || {};
+    var kind = j.kind === "group" ? "группу" : "канал";
+    var title = j.title || "KINGMODE";
+    var url = j.url || "";
+    return card(
+      cardHead("Вход для своих", "Без подписки приложение закрыто") +
+        "<p class=\"lead\">KINGMODE работает только для тех, кто в " +
+        kind +
+        " " +
+        esc(title) +
+        ". Вступи и вернись, кнопка перепроверит.</p>" +
+        '<div class="btn-stack" style="margin-top:14px">' +
+        (url
+          ? '<a class="btn btn--primary" href="' +
+            esc(url) +
+            '" data-ext="tg">Вступить</a>'
+          : "") +
+        '<button class="btn ' +
+        (url ? "btn--outline" : "btn--primary") +
+        '" data-action="reload-day">Я уже внутри</button>' +
+        "</div>"
+    );
+  }
+
   function render() {
     if (telegramUnsigned()) {
       view.innerHTML = '<div class="screen">' + unsignedGate() + "</div>";
       titleEl.textContent = "KINGMODE";
+      tabbar.hidden = true;
+      if (tg && tg.BackButton) tg.BackButton.hide();
+      return;
+    }
+    if (needJoin) {
+      view.innerHTML = '<div class="screen">' + joinGate(needJoin) + "</div>";
+      titleEl.textContent = "Вход";
       tabbar.hidden = true;
       if (tg && tg.BackButton) tg.BackButton.hide();
       return;
@@ -4312,7 +4470,7 @@
       }
     }
 
-    var chip = t.closest(".chip");
+    var chip = t.closest(".chip, .prog");
     if (chip) return onSeg(chip);
 
     var acc = t.closest("[data-acc]");
@@ -4429,7 +4587,7 @@
         state.notice = null;
         haptic("light");
         render();
-        return loadDay(false);
+        return loadDay(false, Boolean(needJoin));
       case "pick-photo": {
         var pick = document.getElementById("photoInput");
         if (!pick) return;
@@ -4621,7 +4779,8 @@
   });
 
   function onSeg(btn) {
-    var group = btn.parentElement;
+    var group = btn.closest("[data-seg]");
+    if (!group) return;
     var name = group.getAttribute("data-seg");
     var value = btn.getAttribute("data-value");
     haptic("light");
@@ -4661,11 +4820,20 @@
       case "s_place":
         state.workout.place = value;
         state.workout.plan = 0;
-        break;
+        persist();
+        return render();
       case "s_level":
         state.workout.level = value;
+        state.workout.split = value === "train" ? "fb-train" : "fb-start";
         state.workout.plan = 0;
-        break;
+        persist();
+        return render();
+      case "s_split":
+        state.workout.split = value;
+        state.workout.level = KM_PLANS.splitLevel(value);
+        state.workout.plan = 0;
+        persist();
+        return render();
       case "p_model":
         state.program.model = value;
         state.result = null;
@@ -4689,25 +4857,38 @@
         resetSession();
         workoutTouched = true;
         persist();
-        // Место тренировок общее с ботом: в чате должен открываться тот же зал/дом
         if (state.day) {
-          KM_API.saveSettings({ place: value, level: workoutLevel() })
+          KM_API.saveSettings({ place: value, level: workoutLevel(), split: workoutSplit() })
             .then(function (data) {
               state.day = data;
             })
-            .catch(function () {
-              /* не критично: план на экране уже переключён */
-            });
+            .catch(function () {});
         }
         return render();
       case "w_level":
         state.workout.level = value;
+        state.workout.split = value === "train" ? "fb-train" : "fb-start";
         state.workout.plan = 0;
         resetSession();
         workoutTouched = true;
         persist();
         if (state.day) {
-          KM_API.saveSettings({ place: state.workout.place, level: value })
+          KM_API.saveSettings({ place: state.workout.place, level: value, split: workoutSplit() })
+            .then(function (data) {
+              state.day = data;
+            })
+            .catch(function () {});
+        }
+        return render();
+      case "w_split":
+        state.workout.split = value;
+        state.workout.level = KM_PLANS.splitLevel(value);
+        state.workout.plan = 0;
+        resetSession();
+        workoutTouched = true;
+        persist();
+        if (state.day) {
+          KM_API.saveSettings({ place: state.workout.place, level: workoutLevel(), split: value })
             .then(function (data) {
               state.day = data;
             })
@@ -4730,8 +4911,13 @@
   }
 
   function markPressed(group, value) {
-    Array.prototype.forEach.call(group.querySelectorAll(".chip"), function (b) {
-      b.setAttribute("aria-pressed", String(b.getAttribute("data-value") === String(value)));
+    Array.prototype.forEach.call(group.querySelectorAll(".chip, .prog"), function (b) {
+      var on = b.getAttribute("data-value") === String(value);
+      b.setAttribute("aria-pressed", String(on));
+      if (b.classList.contains("prog")) {
+        if (on) b.classList.add("is-on");
+        else b.classList.remove("is-on");
+      }
     });
   }
 
