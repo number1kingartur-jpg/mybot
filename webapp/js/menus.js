@@ -91,24 +91,28 @@ window.KM_MENUS = (function () {
       meals: {
         breakfast: [
           { food: "Овсянка на молоке", g: 250, alt: ["Гречка отварная", "Хлеб", "Сырники жареные"] },
+          { food: "Хлеб", g: 30, alt: ["Гречка отварная", "Овсянка на молоке", "Паста отварная"] },
           { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Мёд"] },
           { food: "Яйца", g: 110, alt: ["Омлет", "Яичница на масле", "Сыр"] },
           { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Протеин"] }
         ],
         lunch: [
-          { food: "Курица отварная", g: 180, alt: ["Индейка", "Говядина", "Рыба на пару"] },
+          { food: "Курица отварная", g: 150, alt: ["Индейка", "Говядина", "Рыба на пару"] },
           { food: "Гречка отварная", g: 200, alt: ["Рис отварной", "Паста отварная", "Картофель отварной"] },
+          { food: "Картофель отварной", g: 150, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
           { food: "Овощи", g: 200, alt: ["Салат", "Овощи тушёные", "Суп"] },
           { food: "Масло растительное", g: 5, alt: ["Масло сливочное", "Сметана", "Авокадо"] }
         ],
         snack: [
-          { food: "Творог", g: 150, alt: ["Йогурт", "Кефир", "Сыр"] },
-          { food: "Орехи", g: 30, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] },
-          { food: "Яблоко", g: 180, alt: ["Банан", "Сок", "Молоко российское"] }
+          { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Сыр"] },
+          { food: "Паста отварная", g: 150, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
+          { food: "Яблоко", g: 180, alt: ["Банан", "Сок", "Молоко российское"] },
+          { food: "Сок", g: 200, alt: ["Кефир", "Молоко российское", "Банан"] },
+          { food: "Орехи", g: 20, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] }
         ],
         dinner: [
-          { food: "Рыба на пару", g: 200, alt: ["Лосось", "Тунец", "Креветки"] },
-          { food: "Рис отварной", g: 150, alt: ["Гречка отварная", "Картофель отварной", "Паста отварная"] },
+          { food: "Рыба на пару", g: 150, alt: ["Лосось", "Тунец", "Креветки"] },
+          { food: "Рис отварной", g: 180, alt: ["Гречка отварная", "Картофель отварной", "Паста отварная"] },
           { food: "Салат", g: 150, alt: ["Овощи", "Овощи тушёные", "Суп"] }
         ]
       }
@@ -127,11 +131,15 @@ window.KM_MENUS = (function () {
         ],
         snack: [
           { food: "Сом Там", g: 200, alt: ["Салат", "Овощи", "Яблоко"] },
-          { food: "Сате", g: 120, alt: ["Шашлык куриный", "Креветки", "Курица отварная"] }
+          { food: "Сате", g: 120, alt: ["Шашлык куриный", "Креветки", "Курица отварная"] },
+          { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Хлеб"] },
+          { food: "Сок", g: 200, alt: ["Молоко таиландское", "Кефир", "Яблоко"] },
+          { food: "Хлеб", g: 30, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] }
         ],
         dinner: [
           { food: "Том Ям", g: 350, alt: ["Суп", "Пад Тай", "Сом Там"] },
           { food: "Рис отварной", g: 150, alt: ["Гречка отварная", "Картофель отварной", "Хлеб"] },
+          { food: "Паста отварная", g: 120, alt: ["Рис отварной", "Гречка отварная", "Хлеб"] },
           { food: "Креветки", g: 120, alt: ["Рыба на пару", "Тунец", "Курица отварная"] }
         ]
       }
@@ -318,9 +326,12 @@ window.KM_MENUS = (function () {
   }
 
   function meal(menuId, key, grams, swaps) {
-    var items = MENUS[menuId].meals[key].map(function (def, i) {
-      return item(def, menuId + ":" + key + ":" + i, grams[i], swaps);
-    });
+    var items = MENUS[menuId].meals[key]
+      .map(function (def, i) {
+        if (!(grams[i] > 0)) return null;
+        return item(def, menuId + ":" + key + ":" + i, grams[i], swaps);
+      })
+      .filter(Boolean);
     var t = sum(items);
     return {
       key: key,
@@ -334,8 +345,8 @@ window.KM_MENUS = (function () {
   }
 
   /**
-   * Крупы и объёмный белок. Штуки (яйца, банан) не делятся, ими норму не добираю:
-   * после общего множителя двигаю только эти позиции шагом 5–10 г.
+   * Крупы и объёмный белок. Штуки (яйца) не делятся, ими норму не добираю.
+   * Углеводы раскладываю по тарелкам, а не сыплю все в рис.
    */
   var FLEX = {
     "Овсянка на молоке": 1,
@@ -343,6 +354,8 @@ window.KM_MENUS = (function () {
     "Рис отварной": 1,
     "Паста отварная": 1,
     "Картофель отварной": 1,
+    Хлеб: 1,
+    Сок: 1,
     Курица: 1,
     "Курица отварная": 1,
     "Курица запечённая": 1,
@@ -351,21 +364,129 @@ window.KM_MENUS = (function () {
     Индейка: 1,
     "Пад Тай": 1,
     "Том Ям": 1,
+    "Сом Там": 1,
+    Креветки: 1,
+    Сате: 1,
+    Омлет: 1
+  };
+
+  var CARB_FLEX = {
+    "Овсянка на молоке": 1,
+    "Гречка отварная": 1,
+    "Рис отварной": 1,
+    "Паста отварная": 1,
+    "Картофель отварной": 1,
+    Хлеб: 1,
+    Сок: 1,
+    "Пад Тай": 1,
     "Сом Там": 1
   };
 
-  function flexLimit(food, name, g) {
-    if (!FLEX[name] || food.piece) return null;
+  var PROT_FLEX = {
+    Курица: 1,
+    "Курица отварная": 1,
+    "Курица запечённая": 1,
+    Творог: 1,
+    "Рыба на пару": 1,
+    Индейка: 1,
+    Креветки: 1,
+    Сате: 1,
+    Омлет: 1
+  };
+
+  var FAT_FLEX = { Орехи: 1, "Масло растительное": 1, Сате: 1 };
+
+  var OPTIONAL_CARB = {
+    "Картофель отварной": 1,
+    "Паста отварная": 1,
+    Сок: 1,
+    Хлеб: 1,
+    Банан: 1,
+    Яблоко: 1,
+    "Пад Тай": 1
+  };
+
+  var PORTION_MAX = {
+    "Овсянка на молоке": 400,
+    "Гречка отварная": 300,
+    "Рис отварной": 300,
+    "Паста отварная": 300,
+    "Картофель отварной": 300,
+    Хлеб: 90,
+    Сок: 500,
+    "Пад Тай": 500,
+    "Том Ям": 500,
+    "Сом Там": 300,
+    Курица: 220,
+    "Курица отварная": 220,
+    "Курица запечённая": 220,
+    Творог: 200,
+    "Рыба на пару": 200,
+    Индейка: 220,
+    Креветки: 180,
+    Сате: 180,
+    Омлет: 200,
+    Орехи: 45
+  };
+
+  function flexLimit(food, name, g, macros) {
+    if (macros && name === "Масло растительное") {
+      var oil = food.piece || 5;
+      return { min: oil, max: oil * 6, step: oil };
+    }
+    if (name === "Хлеб" || name === "Банан" || name === "Яблоко") {
+      var piece = food.piece || 30;
+      return { min: 0, max: name === "Хлеб" ? PORTION_MAX.Хлеб : piece, step: piece };
+    }
+    if (!FLEX[name] && !(macros && FAT_FLEX[name])) return null;
+    if (food.piece) return null;
     var step = g < 50 ? 5 : 10;
+    var minMul = macros && PROT_FLEX[name] ? 0.5 : OPTIONAL_CARB[name] ? 0 : 0.4;
+    var cap = PORTION_MAX[name] || Math.round(food.def * 2.5);
     return {
-      min: Math.max(step, roundG(food, food.def * 0.4)),
-      max: roundG(food, food.def * 2.5),
+      min: OPTIONAL_CARB[name] ? 0 : Math.max(step, roundG(food, food.def * minMul)),
+      max: cap,
       step: step
     };
   }
 
-  /** Добиваю день до нормы: один шаг той позиции, которая сильнее закрывает разрыв. */
-  function fitSlots(slots, target) {
+  function slotNutr(slots) {
+    return slots.reduce(
+      function (s, x) {
+        var n = nutr(FOOD[x.food], x.g);
+        return {
+          kcal: s.kcal + n.kcal,
+          proteinG: s.proteinG + n.proteinG,
+          fatG: s.fatG + n.fatG,
+          carbsG: s.carbsG + n.carbsG
+        };
+      },
+      { kcal: 0, proteinG: 0, fatG: 0, carbsG: 0 }
+    );
+  }
+
+  function stepGroup(slots, macros, pick, dir) {
+    var best = null;
+    var i, slot, food, lim, next, fill;
+    for (i = 0; i < slots.length; i++) {
+      slot = slots[i];
+      if (!pick(slot.food)) continue;
+      food = FOOD[slot.food];
+      lim = flexLimit(food, slot.food, slot.g, macros);
+      if (!lim) continue;
+      next = slot.g + dir * lim.step;
+      if (next < lim.min || next > lim.max) continue;
+      fill = (slot.g - lim.min) / Math.max(lim.max - lim.min, 1);
+      if (!best || (dir > 0 && fill < best.fill) || (dir < 0 && fill > best.fill)) {
+        best = { i: i, g: next, fill: fill };
+      }
+    }
+    if (!best) return false;
+    slots[best.i].g = best.g;
+    return true;
+  }
+
+  function fitKcalOnly(slots, target, macros) {
     var n, i, now, gap, best, slot, food, lim, next, err;
     for (n = 0; n < 60; n++) {
       now = 0;
@@ -376,7 +497,7 @@ window.KM_MENUS = (function () {
       for (i = 0; i < slots.length; i++) {
         slot = slots[i];
         food = FOOD[slot.food];
-        lim = flexLimit(food, slot.food, slot.g);
+        lim = flexLimit(food, slot.food, slot.g, macros);
         if (!lim) continue;
         next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
         if (next < lim.min || next > lim.max) continue;
@@ -388,27 +509,64 @@ window.KM_MENUS = (function () {
     }
   }
 
+  function fitSlots(slots, target, macros) {
+    var n, now, pGap, cGap, fGap, kGap, moved;
+    if (!macros) {
+      fitKcalOnly(slots, target);
+      return;
+    }
+    fitKcalOnly(slots, target, macros);
+    for (n = 0; n < 120; n++) {
+      now = slotNutr(slots);
+      pGap = now.proteinG - macros.proteinG;
+      cGap = macros.carbsG - now.carbsG;
+      fGap = now.fatG - macros.fatG;
+      kGap = target - now.kcal;
+      if (Math.abs(kGap) <= 25 && pGap <= 18 && pGap >= -15 && Math.abs(cGap) <= 25 && Math.abs(fGap) <= 10) {
+        return;
+      }
+      moved = false;
+      if (pGap > 15) moved = stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, -1);
+      if (!moved && cGap < -15) moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, -1);
+      if (!moved && cGap > 15 && fGap > 0) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, -1);
+      if (!moved && cGap > 15 && kGap >= -15) {
+        moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, 1);
+      }
+      if (!moved && cGap > 15 && pGap > 0) moved = stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, -1);
+      if (!moved && fGap > 8) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, -1);
+      if (!moved && fGap < -8) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, 1);
+      if (!moved && kGap > 20) {
+        moved = cGap >= 0
+          ? stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, 1)
+          : stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, 1);
+      }
+      if (!moved && kGap < -20) {
+        moved = pGap > 0
+          ? stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, -1)
+          : stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, -1);
+      }
+      if (!moved) return;
+    }
+  }
+
   /**
    * День меню под цель и норму.
    *
    * swaps — выбранные замены вида { "ru:breakfast:0": "Гречка отварная" }.
-   * Итог дня складывается из позиций, поэтому после замены цифры меняются сами.
+   * macros — норма БЖУ: без неё закрываю только ккал, с ней раскладываю крупы
+   * по тарелкам, а не сыплю остаток в рис.
    * personalKcal важнее цели: сушка с нормой 2100 получает 2100, а не шаблон 1600.
    */
-  function day(menuId, goal, personalKcal, swaps) {
+  function day(menuId, goal, personalKcal, swaps, macros) {
     var target = targetKcal(goal, personalKcal);
     var factor = target / baseKcal(menuId);
     var slots = [];
     KEYS.forEach(function (key) {
       MENUS[menuId].meals[key].forEach(function (def) {
-        slots.push({
-          key: key,
-          food: def.food,
-          g: roundG(FOOD[def.food], def.g * factor)
-        });
+        slots.push({ key: key, food: def.food, g: def.g });
       });
     });
-    fitSlots(slots, target);
+    fitSlots(slots, target, macros || null);
     var meals = KEYS.map(function (key) {
       var grams = slots
         .filter(function (s) {

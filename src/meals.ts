@@ -57,24 +57,28 @@ export const MENUS: Record<MenuId, DayMenu> = {
     meals: {
       breakfast: [
         { food: "Овсянка на молоке", g: 250, alt: ["Гречка отварная", "Хлеб", "Сырники жареные"] },
+        { food: "Хлеб", g: 30, alt: ["Гречка отварная", "Овсянка на молоке", "Паста отварная"] },
         { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Мёд"] },
         { food: "Яйца", g: 110, alt: ["Омлет", "Яичница на масле", "Сыр"] },
         { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Протеин"] },
       ],
       lunch: [
-        { food: "Курица отварная", g: 180, alt: ["Индейка", "Говядина", "Рыба на пару"] },
+        { food: "Курица отварная", g: 150, alt: ["Индейка", "Говядина", "Рыба на пару"] },
         { food: "Гречка отварная", g: 200, alt: ["Рис отварной", "Паста отварная", "Картофель отварной"] },
+        { food: "Картофель отварной", g: 150, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
         { food: "Овощи", g: 200, alt: ["Салат", "Овощи тушёные", "Суп"] },
         { food: "Масло растительное", g: 5, alt: ["Масло сливочное", "Сметана", "Авокадо"] },
       ],
       snack: [
-        { food: "Творог", g: 150, alt: ["Йогурт", "Кефир", "Сыр"] },
-        { food: "Орехи", g: 30, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] },
+        { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Сыр"] },
+        { food: "Паста отварная", g: 150, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
         { food: "Яблоко", g: 180, alt: ["Банан", "Сок", "Молоко российское"] },
+        { food: "Сок", g: 200, alt: ["Кефир", "Молоко российское", "Банан"] },
+        { food: "Орехи", g: 20, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] },
       ],
       dinner: [
-        { food: "Рыба на пару", g: 200, alt: ["Лосось", "Тунец", "Креветки"] },
-        { food: "Рис отварной", g: 150, alt: ["Гречка отварная", "Картофель отварной", "Паста отварная"] },
+        { food: "Рыба на пару", g: 150, alt: ["Лосось", "Тунец", "Креветки"] },
+        { food: "Рис отварной", g: 180, alt: ["Гречка отварная", "Картофель отварной", "Паста отварная"] },
         { food: "Салат", g: 150, alt: ["Овощи", "Овощи тушёные", "Суп"] },
       ],
     },
@@ -94,10 +98,14 @@ export const MENUS: Record<MenuId, DayMenu> = {
       snack: [
         { food: "Сом Там", g: 200, alt: ["Салат", "Овощи", "Яблоко"] },
         { food: "Сате", g: 120, alt: ["Шашлык куриный", "Креветки", "Курица отварная"] },
+        { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Хлеб"] },
+        { food: "Сок", g: 200, alt: ["Молоко таиландское", "Кефир", "Яблоко"] },
+        { food: "Хлеб", g: 30, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
       ],
       dinner: [
         { food: "Том Ям", g: 350, alt: ["Суп", "Пад Тай", "Сом Там"] },
         { food: "Рис отварной", g: 150, alt: ["Гречка отварная", "Картофель отварной", "Хлеб"] },
+        { food: "Паста отварная", g: 120, alt: ["Рис отварной", "Гречка отварная", "Хлеб"] },
         { food: "Креветки", g: 120, alt: ["Рыба на пару", "Тунец", "Курица отварная"] },
       ],
     },
@@ -245,8 +253,8 @@ function baseKcal(menuId: MenuId): number {
 }
 
 /**
- * Крупы и объёмный белок. Штуки (яйца, банан) не делятся, ими норму не добираю:
- * после общего множителя двигаю только эти позиции шагом 5–10 г.
+ * Крупы и объёмный белок. Штуки (яйца) не делятся, ими норму не добираю.
+ * Углеводы раскладываю по тарелкам, а не сыплю все в рис.
  */
 const FLEX_FOODS = new Set([
   "Овсянка на молоке",
@@ -254,6 +262,8 @@ const FLEX_FOODS = new Set([
   "Рис отварной",
   "Паста отварная",
   "Картофель отварной",
+  "Хлеб",
+  "Сок",
   "Курица",
   "Курица отварная",
   "Курица запечённая",
@@ -263,23 +273,145 @@ const FLEX_FOODS = new Set([
   "Пад Тай",
   "Том Ям",
   "Сом Там",
+  "Креветки",
+  "Сате",
+  "Омлет",
 ]);
+
+const CARB_FLEX = new Set([
+  "Овсянка на молоке",
+  "Гречка отварная",
+  "Рис отварной",
+  "Паста отварная",
+  "Картофель отварной",
+  "Хлеб",
+  "Сок",
+  "Пад Тай",
+  "Сом Там",
+]);
+
+/** Одна тарелка, не гора. Граммы в один приём. */
+const PORTION_MAX: Record<string, number> = {
+  "Овсянка на молоке": 400,
+  "Гречка отварная": 300,
+  "Рис отварной": 300,
+  "Паста отварная": 300,
+  "Картофель отварной": 300,
+  Хлеб: 90,
+  Сок: 500,
+  "Пад Тай": 500,
+  "Том Ям": 500,
+  "Сом Там": 300,
+  Курица: 220,
+  "Курица отварная": 220,
+  "Курица запечённая": 220,
+  Творог: 200,
+  "Рыба на пару": 200,
+  Индейка: 220,
+  Креветки: 180,
+  Сате: 180,
+  Омлет: 200,
+  Орехи: 45,
+};
+
+const PROT_FLEX = new Set([
+  "Курица",
+  "Курица отварная",
+  "Курица запечённая",
+  "Творог",
+  "Рыба на пару",
+  "Индейка",
+  "Креветки",
+  "Сате",
+  "Омлет",
+]);
+
+const FAT_FLEX = new Set(["Орехи", "Масло растительное", "Сате"]);
+
+/** Можно убрать с тарелки, если калораж низкий. */
+const OPTIONAL_CARB = new Set([
+  "Картофель отварной",
+  "Паста отварная",
+  "Сок",
+  "Хлеб",
+  "Банан",
+  "Яблоко",
+  "Пад Тай",
+]);
+
+export type MenuMacros = { proteinG: number; fatG: number; carbsG: number };
 
 type MenuSlot = { key: MealKey; def: MenuItemDef; g: number };
 
-function flexLimit(name: string, g: number): { min: number; max: number; step: number } | null {
-  if (!FLEX_FOODS.has(name) || measureG(name)) return null;
+type SlotNutr = { kcal: number; proteinG: number; fatG: number; carbsG: number };
+
+function flexLimit(
+  name: string,
+  g: number,
+  macros?: MenuMacros | null
+): { min: number; max: number; step: number } | null {
+  if (macros && name === "Масло растительное") {
+    const piece = measureG(name) || 5;
+    return { min: piece, max: piece * 6, step: piece };
+  }
+  if (name === "Хлеб" || name === "Банан" || name === "Яблоко") {
+    const piece = measureG(name) || 30;
+    const cap = name === "Хлеб" ? PORTION_MAX.Хлеб : piece;
+    return { min: 0, max: cap, step: piece };
+  }
+  if (!FLEX_FOODS.has(name) && !(macros && FAT_FLEX.has(name))) return null;
+  if (measureG(name)) return null;
   const food = menuFood(name);
   const step = g < 50 ? 5 : 10;
+  const minMul = macros && PROT_FLEX.has(name) ? 0.5 : OPTIONAL_CARB.has(name) ? 0 : 0.4;
+  const cap = PORTION_MAX[name] ?? Math.round(food.defaultG * 2.5);
   return {
-    min: Math.max(step, roundG(name, food.defaultG * 0.4)),
-    max: roundG(name, food.defaultG * 2.5),
+    min: OPTIONAL_CARB.has(name) ? 0 : Math.max(step, roundG(name, food.defaultG * minMul)),
+    max: cap,
     step,
   };
 }
 
-/** Добиваю день до нормы: один шаг той позиции, которая сильнее закрывает разрыв. */
-function fitSlots(slots: MenuSlot[], target: number) {
+function slotNutr(slots: MenuSlot[]): SlotNutr {
+  return slots.reduce(
+    (s, x) => {
+      const n = nutr(x.def.food, x.g);
+      return {
+        kcal: s.kcal + n.kcal,
+        proteinG: s.proteinG + n.proteinG,
+        fatG: s.fatG + n.fatG,
+        carbsG: s.carbsG + n.carbsG,
+      };
+    },
+    { kcal: 0, proteinG: 0, fatG: 0, carbsG: 0 }
+  );
+}
+
+function stepGroup(
+  slots: MenuSlot[],
+  macros: MenuMacros,
+  pick: (name: string) => boolean,
+  dir: 1 | -1
+): boolean {
+  let best: { i: number; g: number; fill: number } | null = null;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    if (!pick(slot.def.food)) continue;
+    const lim = flexLimit(slot.def.food, slot.g, macros);
+    if (!lim) continue;
+    const next = slot.g + dir * lim.step;
+    if (next < lim.min || next > lim.max) continue;
+    const fill = (slot.g - lim.min) / Math.max(lim.max - lim.min, 1);
+    if (!best || (dir > 0 && fill < best.fill) || (dir < 0 && fill > best.fill)) {
+      best = { i, g: next, fill };
+    }
+  }
+  if (!best) return false;
+  slots[best.i].g = best.g;
+  return true;
+}
+
+function fitKcalOnly(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
   for (let n = 0; n < 60; n++) {
     const now = slots.reduce((s, x) => s + nutr(x.def.food, x.g).kcal, 0);
     const gap = target - now;
@@ -287,7 +419,7 @@ function fitSlots(slots: MenuSlot[], target: number) {
     let best: { i: number; g: number; err: number } | null = null;
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
-      const lim = flexLimit(slot.def.food, slot.g);
+      const lim = flexLimit(slot.def.food, slot.g, macros);
       if (!lim) continue;
       const next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
       if (next < lim.min || next > lim.max) continue;
@@ -301,26 +433,67 @@ function fitSlots(slots: MenuSlot[], target: number) {
   }
 }
 
+/** Без БЖУ добиваю только ккал. С нормой: белок убавляю, углеводы раскладываю по крупам. */
+function fitSlots(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
+  if (!macros) {
+    fitKcalOnly(slots, target);
+    return;
+  }
+  fitKcalOnly(slots, target, macros);
+  for (let n = 0; n < 120; n++) {
+    const now = slotNutr(slots);
+    const pGap = now.proteinG - macros.proteinG;
+    const cGap = macros.carbsG - now.carbsG;
+    const fGap = now.fatG - macros.fatG;
+    const kGap = target - now.kcal;
+    if (Math.abs(kGap) <= 25 && pGap <= 18 && pGap >= -15 && Math.abs(cGap) <= 25 && Math.abs(fGap) <= 10) {
+      return;
+    }
+    let moved = false;
+    if (pGap > 15) moved = stepGroup(slots, macros, (name) => PROT_FLEX.has(name), -1);
+    if (!moved && cGap < -15) moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), -1);
+    if (!moved && cGap > 15 && fGap > 0) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), -1);
+    if (!moved && cGap > 15 && kGap >= -15) {
+      moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), 1);
+    }
+    if (!moved && cGap > 15 && pGap > 0) moved = stepGroup(slots, macros, (name) => PROT_FLEX.has(name), -1);
+    if (!moved && fGap > 8) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), -1);
+    if (!moved && fGap < -8) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), 1);
+    if (!moved && kGap > 20) {
+      moved = cGap >= 0
+        ? stepGroup(slots, macros, (name) => CARB_FLEX.has(name), 1)
+        : stepGroup(slots, macros, (name) => PROT_FLEX.has(name), 1);
+    }
+    if (!moved && kGap < -20) {
+      moved = pGap > 0
+        ? stepGroup(slots, macros, (name) => PROT_FLEX.has(name), -1)
+        : stepGroup(slots, macros, (name) => CARB_FLEX.has(name), -1);
+    }
+    if (!moved) return;
+  }
+}
+
 /**
  * Итог: [ккал, белок, углеводы, жиры] — порядок как в тексте бота.
  * personalKcal важнее цели: сушка с нормой 2100 получает 2100, а не шаблон 1600.
+ * macros, если есть, тянет белок и углеводы к формуле, а не оставляет их составу блюд.
  */
 export function dayMenu(
   menuId: MenuId,
   goal: MealGoal,
-  personalKcal = 0
+  personalKcal = 0,
+  macros?: MenuMacros | null
 ): { meals: MenuMeal[]; total: number[] } {
   const target = personalKcal > 0 ? personalKcal : GOAL_KCAL[goal];
-  const factor = target / baseKcal(menuId);
   const slots: MenuSlot[] = [];
   for (const key of MEAL_KEYS) {
     for (const def of MENUS[menuId].meals[key]) {
-      slots.push({ key, def, g: roundG(def.food, def.g * factor) });
+      slots.push({ key, def, g: def.g });
     }
   }
-  fitSlots(slots, target);
+  fitSlots(slots, target, macros);
   const meals: MenuMeal[] = MEAL_KEYS.map((key) => {
-    const items = slots.filter((s) => s.key === key).map((s) => buildItem(s.def, s.g));
+    const items = slots.filter((s) => s.key === key && s.g > 0).map((s) => buildItem(s.def, s.g));
     return {
       key,
       label: MEAL_LABELS[key],
@@ -389,4 +562,9 @@ export function mealDetailText(menuId: MenuId, goal: MealGoal, key: MealKey): st
 
 export function scaledMealKcal(menuId: MenuId, goal: MealGoal, key: MealKey): number {
   return dayMenu(menuId, goal).meals.find((m) => m.key === key)!.kcal;
+}
+
+/** Чтобы hint в приложении и проверка паритета видели ту же базу. */
+export function menuBaseKcal(menuId: MenuId): number {
+  return baseKcal(menuId);
 }

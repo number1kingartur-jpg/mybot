@@ -206,6 +206,86 @@ for (const kcal of [1700, 2000, 2400, 3100]) {
   }
 }
 
+const GRAIN_CAP = {
+  "Рис отварной": 300,
+  "Гречка отварная": 300,
+  "Паста отварная": 300,
+  "Овсянка на молоке": 400,
+  "Картофель отварной": 300,
+};
+
+function macrosFor(kcal, proteinG = 144, fatG = 72) {
+  return { proteinG, fatG, carbsG: Math.max(0, Math.round((kcal - proteinG * 4 - fatG * 9) / 4)) };
+}
+
+function portionCapsOk(day, label) {
+  for (const meal of day.meals) {
+    for (const item of meal.items) {
+      const cap = GRAIN_CAP[item.food];
+      if (cap) check(`${label}: ${item.food} не гора`, item.g <= cap, `${item.g} г > ${cap} г`);
+      if (item.food === "Яйца") check(`${label}: яйца 2 шт`, item.g === 110, item.amount);
+    }
+  }
+}
+
+const high = macrosFor(3026);
+const appHigh = APP.day("ru", "bulk", 3026, {}, high);
+const botHigh = dayMenu("ru", "bulk", 3026, high);
+check(
+  "ru@3026 с БЖУ: паритет ккал",
+  botHigh.total[0] === appHigh.total.kcal,
+  `бот ${botHigh.total[0]}, приложение ${appHigh.total.kcal}`
+);
+check(
+  "ru@3026 с БЖУ: паритет белка",
+  botHigh.total[1] === appHigh.total.proteinG,
+  `бот ${botHigh.total[1]}, приложение ${appHigh.total.proteinG}`
+);
+check(
+  "ru@3026 с БЖУ: ккал к норме",
+  Math.abs(appHigh.total.kcal - 3026) <= 30,
+  String(appHigh.total.kcal)
+);
+check(
+  "ru@3026 с БЖУ: белок к норме",
+  Math.abs(appHigh.total.proteinG - high.proteinG) <= 20,
+  `${appHigh.total.proteinG} против ${high.proteinG}`
+);
+check(
+  "ru@3026 с БЖУ: жир к норме",
+  Math.abs(appHigh.total.fatG - high.fatG) <= 12,
+  `${appHigh.total.fatG} против ${high.fatG}`
+);
+check(
+  "ru@3026 с БЖУ: углеводы к норме",
+  Math.abs(appHigh.total.carbsG - high.carbsG) <= 30,
+  `${appHigh.total.carbsG} против ${high.carbsG}`
+);
+check(
+  "ru@3026 с БЖУ: яйца не растут от нормы",
+  !appHigh.meals[0].items.some((i) => i.food === "Яйца" && i.g > 110),
+  appHigh.meals[0].items.find((i) => i.food === "Яйца")?.amount
+);
+portionCapsOk(appHigh, "ru@3026");
+
+for (const kcal of [1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3200, 3400]) {
+  const m = macrosFor(kcal);
+  for (const menuId of MENU_IDS) {
+    const mine = APP.day(menuId, "maint", kcal, {}, m);
+    const bot = dayMenu(menuId, "maint", kcal, m);
+    const tag = `${menuId}@${kcal} с БЖУ`;
+    check(`${tag}: паритет ккал`, bot.total[0] === mine.total.kcal, `бот ${bot.total[0]}, приложение ${mine.total.kcal}`);
+    check(`${tag}: паритет белка`, bot.total[1] === mine.total.proteinG, `бот ${bot.total[1]}, приложение ${mine.total.proteinG}`);
+    const kTol = menuId === "th" && kcal >= 3400 ? 80 : 30;
+    const cTol = menuId === "th" && kcal >= 3400 ? 50 : 30;
+    check(`${tag}: ккал`, Math.abs(mine.total.kcal - kcal) <= kTol, `${mine.total.kcal} против ${kcal}`);
+    check(`${tag}: белок`, Math.abs(mine.total.proteinG - m.proteinG) <= 25, `${mine.total.proteinG} против ${m.proteinG}`);
+    check(`${tag}: жир`, Math.abs(mine.total.fatG - m.fatG) <= 12, `${mine.total.fatG} против ${m.fatG}`);
+    check(`${tag}: углеводы`, Math.abs(mine.total.carbsG - m.carbsG) <= cTol, `${mine.total.carbsG} против ${m.carbsG}`);
+    portionCapsOk(mine, tag);
+  }
+}
+
 /* ── Замена соразмерна позиции ─────────────────────────────────────────────── */
 
 for (const menuId of MENU_IDS) {
