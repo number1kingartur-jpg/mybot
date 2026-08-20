@@ -19,7 +19,7 @@ function w6(title: string, body: string, id: string, guideStart?: string): Chann
 const WAVE6_PHOTOS: Record<string, string> = {
   w6_casein: "generated/nutrition/cottage-cheese-bowl.png",
   w6_animal: "generated/nutrition/eggs-steak-meal.png",
-  w6_plate: "generated/akf-real/akf-cafe-morning.png",
+  w6_plate: "master/photos/IMG_9474.JPEG",
   w6_whey_need: "generated/nutrition/protein-tub-minimal.png",
   w6_label: "generated/nutrition/protein-label-closeup.png",
   w6_brands: "generated/nutrition/protein-brands-compare.png",
