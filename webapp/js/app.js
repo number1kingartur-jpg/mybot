@@ -711,7 +711,7 @@
           '" /></div>'
         : "") +
       '<div class="confirm__head">' +
-        thumb(m.slug, m.name, "food", m.photoUrl) +
+        (state.photoPreview ? "" : thumb(m.slug, m.name, "food", m.photoUrl)) +
         '<span class="confirm__title">' +
         esc(m.name) +
         '<span class="confirm__kcal">' +

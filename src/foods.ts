@@ -440,7 +440,18 @@ export function foodSlug(name: string): string {
  * У варианта вроде зелёного яблока картинка своя: variantOf здесь нельзя,
  * иначе слот всегда красный.
  */
+/**
+ * Сырая грудка на чёрной тарелке. Для записи еды это враньё: на фото готовая
+ * курица, а слаг «курица» каждый раз достаёт этот файл. Готовый кадр важнее.
+ */
+const COOKED_CHICKEN_SLUG: Record<string, string> = {
+  "Курица": "kurica-zapechennaya",
+  "Куриная грудка": "kurica-zapechennaya",
+};
+
 export function imageSlug(food: FoodItem): string {
+  const cooked = COOKED_CHICKEN_SLUG[food.name];
+  if (cooked && hasFoodImage(cooked)) return cooked;
   const own = foodSlug(food.name);
   if (hasFoodImage(own)) return own;
   const mapped = IMAGE_FALLBACK[food.name];

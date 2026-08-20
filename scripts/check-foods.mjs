@@ -62,11 +62,14 @@ const plateWithProtein = macrosFromText("куриная грудка 150 г, р�
 check("протеин рядом с тарелкой не делает коктейль", plateWithProtein?.slug !== SHAKE_SLUG, plateWithProtein?.slug);
 
 const breast = matchFood("куриная грудка");
-check("грудка берёт кадр курицы", !!breast && imageSlug(breast) === "kurica", breast && imageSlug(breast));
+check("грудка берёт готовый кадр, не сырой", !!breast && imageSlug(breast) === "kurica-zapechennaya", breast && imageSlug(breast));
 check(
-  "вчерашняя грудка с чужим слагом тоже курица",
-  resolveMealThumb("Куриная грудка ~150 г", "kurinaya-grudka") === "kurica"
+  "вчерашняя грудка с чужим слагом тоже готовая",
+  resolveMealThumb("Куриная грудка ~150 г", "kurinaya-grudka") === "kurica-zapechennaya"
 );
+check("голое слово курица не сырое", imageSlug(matchFood("курица")) === "kurica-zapechennaya", imageSlug(matchFood("курица")));
+const rawNamed = macrosFromText("курица 140 г, рис 160 г");
+check("тарелка с курицей без способа не сырая", rawNamed?.slug === "kurica-zapechennaya", rawNamed?.slug);
 check("молоко без страны это таиландское", matchFood("молоко")?.name === "Молоко таиландское", matchFood("молоко")?.name);
 check("молоко российское отдельно", matchFood("молоко российское")?.name === "Молоко российское");
 check("кадры молока TH и RU разные", imageSlug(matchFood("молоко")) !== imageSlug(matchFood("молоко российское")));

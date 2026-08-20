@@ -39,7 +39,7 @@ export function existingFoodSlug(...candidates: (string | undefined)[]): string 
  * грудка это курица, 1.5% это молоко. Апельсин как яблоко не подставляем.
  */
 export const IMAGE_FALLBACK: Record<string, string> = {
-  "Куриная грудка": "kurica",
+  "Куриная грудка": "kurica-zapechennaya",
   "Тунец консервированный": "tunec",
   "Творог обезжиренный": "tvorog",
   "Греческий йогурт": "yogurt",
