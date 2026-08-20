@@ -1824,7 +1824,15 @@
 
   function menuDay() {
     var target = macros();
-    return KM_MENUS.day(state.menu.id, state.profile.goal, target ? target.kcal : 0, state.menu.swaps || {});
+    return KM_MENUS.day(
+      state.menu.id,
+      state.profile.goal,
+      target ? target.kcal : 0,
+      state.menu.swaps || {},
+      target
+        ? { proteinG: target.proteinG, fatG: target.fatG, carbsG: target.carbsG }
+        : null
+    );
   }
 
   function renderMenu() {
@@ -1899,15 +1907,8 @@
       }).join("") +
       '<p class="note"><strong>' +
       esc(d.hint) +
-      "</strong> «Сегодня» показывает, что уже съел. Меню это план: калории добиты " +
-      "до твоей нормы крупами и белком, белок и углеводы идут из блюд, не из формулы." +
-      (target
-        ? " Сейчас в меню " +
-          d.total.proteinG +
-          " г белка при норме " +
-          target.proteinG +
-          " г: это состав курицы и творога, не вторая норма."
-        : "") +
+      "</strong> «Сегодня» показывает, что уже съел. Меню это план: калории, белок, жир и углеводы " +
+      "подогнаны под твою норму. Крупы закрывают углеводы, курица и творог не раздуваются выше формулы." +
       " Кнопка «Съел» пишет приём в дневник, и остаток смотри на «Сегодня».</p>"
     );
   }
@@ -2297,18 +2298,20 @@
       var kcal = Math.round((f.kcal100 * g) / 100);
       var proteinG = Math.round((f.p100 * g) / 100);
       return (
-        '<li class="log--thumbed">' +
+        '<li class="food">' +
         thumb(f.slug, f.name) +
-        '<span class="meal__name">' +
+        '<span class="food__text">' +
+        '<span class="food__name">' +
         esc(f.name) +
-        '<span class="meal__macro">' +
+        "</span>" +
+        '<span class="food__meta">' +
         kcal +
-        " ккал за " +
+        " ккал · " +
         g +
         " г · Б " +
         proteinG +
-        " г</span></span>" +
-        '<button class="btn btn--outline btn--slim" data-action="add-food" data-food="' +
+        "</span></span>" +
+        '<button class="btn btn--outline food__add" data-action="add-food" data-food="' +
         esc(f.name) +
         '" data-grams="' +
         g +
@@ -2317,7 +2320,7 @@
     }
 
     if (q) {
-      return '<ul class="log">' + list.map(foodRow).join("") + "</ul>";
+      return '<ul class="foods">' + list.map(foodRow).join("") + "</ul>";
     }
 
     var groups = [
@@ -2348,7 +2351,7 @@
         return (
           '<p class="pick__label">' +
           g.title +
-          "</p><ul class=\"log\">" +
+          '</p><ul class="foods">' +
           shown.map(foodRow).join("") +
           "</ul>" +
           more
