@@ -13,6 +13,8 @@ window.KM_MENUS = (function () {
 
   var GOAL_KCAL = { cut: 1600, maint: 2200, bulk: 2800 };
 
+  var SHARE = { breakfast: 0.25, lunch: 0.35, snack: 0.15, dinner: 0.25 };
+
   var KEYS = ["breakfast", "lunch", "snack", "dinner"];
 
   var LABELS = {
@@ -253,14 +255,32 @@ window.KM_MENUS = (function () {
   }
 
   /** Позиция приёма: выбранный продукт плюс он же и три замены в списке выбора. */
-  function item(def, id, grams, swaps) {
+  function item(def, id, grams, swaps, slotFood) {
+    var picked =
+      slotFood && (slotFood === def.food || def.alt.indexOf(slotFood) !== -1)
+        ? slotFood
+        : swaps && swaps[id] && def.alt.indexOf(swaps[id]) !== -1
+        ? swaps[id]
+        : def.food;
+    var fitted = Boolean(slotFood && slotFood === picked);
     var baseG = roundG(FOOD[def.food], grams);
-    var target = nutr(FOOD[def.food], baseG).kcal;
-    var picked = swaps && swaps[id] && def.alt.indexOf(swaps[id]) !== -1 ? swaps[id] : def.food;
+    var targetKcal = fitted
+      ? nutr(FOOD[picked], grams).kcal
+      : nutr(FOOD[def.food], baseG).kcal;
+    var chosenG =
+      picked === def.food
+        ? baseG
+        : fitted
+        ? grams
+        : swapG(FOOD[picked], targetKcal);
 
     var options = [option(def.food, baseG, picked === def.food)].concat(
       def.alt.map(function (name) {
-        return option(name, swapG(FOOD[name], target), picked === name);
+        return option(
+          name,
+          name === picked && fitted ? grams : swapG(FOOD[name], targetKcal),
+          picked === name
+        );
       })
     );
     var chosen = options.filter(function (o) {
@@ -325,14 +345,15 @@ window.KM_MENUS = (function () {
     return size + " " + GOAL_TIP[goal];
   }
 
-  function meal(menuId, key, grams, swaps) {
+  function meal(menuId, key, grams, swaps, target, macros, foods) {
     var items = MENUS[menuId].meals[key]
       .map(function (def, i) {
         if (!(grams[i] > 0)) return null;
-        return item(def, menuId + ":" + key + ":" + i, grams[i], swaps);
+        return item(def, menuId + ":" + key + ":" + i, grams[i], swaps, foods && foods[i]);
       })
       .filter(Boolean);
     var t = sum(items);
+    var share = SHARE[key];
     return {
       key: key,
       label: LABELS[key],
@@ -340,7 +361,11 @@ window.KM_MENUS = (function () {
       kcal: t.kcal,
       proteinG: t.proteinG,
       fatG: t.fatG,
-      carbsG: t.carbsG
+      carbsG: t.carbsG,
+      targetKcal: Math.round(target * share),
+      targetProteinG: macros ? Math.round(macros.proteinG * share) : 0,
+      targetFatG: macros ? Math.round(macros.fatG * share) : 0,
+      targetCarbsG: macros ? Math.round(macros.carbsG * share) : 0
     };
   }
 
@@ -549,6 +574,77 @@ window.KM_MENUS = (function () {
     }
   }
 
+  function reconcileDay(slots, target, macros) {
+    var n, now, kGap, pGap, cGap, fGap, worst, worstErr, key, part, share, have, want, signed, err, before;
+    for (n = 0; n < 80; n++) {
+      now = slotNutr(slots);
+      kGap = target - now.kcal;
+      pGap = macros ? now.proteinG - macros.proteinG : 0;
+      cGap = macros ? macros.carbsG - now.carbsG : 0;
+      fGap = macros ? now.fatG - macros.fatG : 0;
+      if (
+        Math.abs(kGap) <= 30 &&
+        (!macros || (pGap <= 20 && pGap >= -18 && Math.abs(cGap) <= 30 && Math.abs(fGap) <= 12))
+      ) {
+        return;
+      }
+      worst = null;
+      worstErr = -1;
+      KEYS.forEach(function (k) {
+        have = slots.filter(function (s) { return s.key === k; }).reduce(function (s, x) {
+          return s + nutr(FOOD[x.food], x.g).kcal;
+        }, 0);
+        want = Math.round(target * SHARE[k]);
+        signed = want - have;
+        if (kGap > 25 && signed <= 0) return;
+        if (kGap < -25 && signed >= 0) return;
+        err = Math.abs(signed);
+        if (err > worstErr) {
+          worstErr = err;
+          worst = k;
+        }
+      });
+      if (!worst) {
+        fitSlots(slots, target, macros);
+        return;
+      }
+      part = slots.filter(function (s) { return s.key === worst; });
+      share = SHARE[worst];
+      before = part.map(function (s) { return s.g; }).join();
+      if (macros) {
+        fitSlots(part, Math.round(target * share), {
+          proteinG: Math.round(macros.proteinG * share),
+          fatG: Math.round(macros.fatG * share),
+          carbsG: Math.round(macros.carbsG * share)
+        });
+      } else {
+        fitKcalOnly(part, Math.round(target * share));
+      }
+      if (part.map(function (s) { return s.g; }).join() === before) return;
+    }
+  }
+
+  function applySwapsToSlots(slots, menuId, swaps) {
+    if (!swaps) return false;
+    var changed = false;
+    KEYS.forEach(function (key) {
+      var part = slots.filter(function (s) {
+        return s.key === key;
+      });
+      MENUS[menuId].meals[key].forEach(function (def, i) {
+        var id = menuId + ":" + key + ":" + i;
+        var alt = swaps[id];
+        var slot = part[i];
+        if (!alt || !slot || def.alt.indexOf(alt) === -1) return;
+        var kcal = nutr(FOOD[slot.food], slot.g).kcal;
+        slot.food = alt;
+        slot.g = swapG(FOOD[alt], kcal);
+        changed = true;
+      });
+    });
+    return changed;
+  }
+
   /**
    * День меню под цель и норму.
    *
@@ -567,15 +663,20 @@ window.KM_MENUS = (function () {
       });
     });
     fitSlots(slots, target, macros || null);
+    if (applySwapsToSlots(slots, menuId, swaps)) {
+      fitSlots(slots, target, macros || null);
+    }
     var meals = KEYS.map(function (key) {
-      var grams = slots
-        .filter(function (s) {
-          return s.key === key;
-        })
-        .map(function (s) {
-          return s.g;
-        });
-      return meal(menuId, key, grams, swaps);
+      var part = slots.filter(function (s) {
+        return s.key === key;
+      });
+      var grams = part.map(function (s) {
+        return s.g;
+      });
+      var foods = part.map(function (s) {
+        return s.food;
+      });
+      return meal(menuId, key, grams, swaps, target, macros || null, foods);
     });
     return {
       title: MENUS[menuId].title,

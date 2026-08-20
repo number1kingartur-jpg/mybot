@@ -331,12 +331,18 @@
       : errorBox(state.notice.text);
   }
 
-  function macros() {
-    if (state.day && state.day.targets && state.day.targets.kcal) return state.day.targets;
+  function formulaMacros() {
     var p = state.profile;
     var age = num(p.age),
-      h = num(p.heightCm),
-      w = num(p.weightKg);
+      h = num(p.heightCm);
+    var entries = sortedEntries().filter(function (e) {
+      return e.source !== "profile";
+    });
+    if (!entries.length) entries = sortedEntries();
+    var w =
+      entries.length && entries[entries.length - 1].weightKg >= 30
+        ? entries[entries.length - 1].weightKg
+        : num(p.weightKg);
     if (!(age >= 14 && age <= 90 && h >= 120 && h <= 230 && w >= 30 && w <= 250)) return null;
     return KM.calcMacros({
       sex: p.sex,
@@ -346,6 +352,45 @@
       activity: p.activity,
       goal: p.goal
     });
+  }
+
+  function profileMatchesSaved() {
+    var saved = state.day && state.day.nutrition;
+    if (!saved) return false;
+    var p = state.profile;
+    return (
+      saved.sex === p.sex &&
+      saved.goal === p.goal &&
+      saved.activity === p.activity &&
+      Number(saved.age) === num(p.age) &&
+      Math.abs(num(saved.heightCm) - num(p.heightCm)) < 1 &&
+      Math.abs(num(saved.weightKg) - num(p.weightKg)) < 0.15
+    );
+  }
+
+  /**
+   * Норма дня: одна цифра на «Сегодня», «Меню» и «Съедено».
+   * Если анкета совпадает с сервером, беру targets целиком (ккал и БЖУ),
+   * иначе локальная формула до ответа API.
+   */
+  function macros() {
+    var local = formulaMacros();
+    var server = state.day && state.day.targets && state.day.targets.kcal ? state.day.targets : null;
+    if (!local) return server;
+    if (server && profileMatchesSaved()) {
+      return {
+        kcal: server.kcal,
+        proteinG: server.proteinG,
+        fatG: server.fatG,
+        carbsG: server.carbsG,
+        bmr: server.bmr != null ? server.bmr : local.bmr,
+        tdee: server.tdee != null ? server.tdee : local.tdee,
+        source: server.source || "formula",
+        note: server.note,
+        formulaKcal: server.formulaKcal != null ? server.formulaKcal : local.kcal
+      };
+    }
+    return local;
   }
 
   /** Источник дневника веса: база бота, если приложение online, иначе устройство. */
@@ -1850,6 +1895,11 @@
           return [id, KM_MENUS.titles[id]];
         })
       ) +
+      chips("goal", state.profile.goal, [
+        ["bulk", "Набор"],
+        ["cut", "Сушка"],
+        ["maint", "Поддержание"]
+      ]) +
       '<p class="note"><strong>Это не дневник.</strong> Завтрак, обед и перекус ниже собраны под твою норму' +
       (target ? " " + target.kcal + " ккал" : "") +
       (target && target.source === "intake"
@@ -1935,15 +1985,34 @@
       esc(m.label) +
       '</span><span class="acc__sub">' +
       m.kcal +
+      (m.targetKcal ? " / " + m.targetKcal : "") +
       " ккал · Б " +
       m.proteinG +
-      " / Ж " +
+      (m.targetProteinG ? " / " + m.targetProteinG : "") +
+      " · Ж " +
       m.fatG +
-      " / У " +
+      " · У " +
       m.carbsG +
       '</span></span><span class="acc__sign">' +
       (open ? "–" : "+") +
       '</span></button><div class="acc__body">' +
+      (m.targetKcal
+        ? '<div class="bars" style="margin:0 0 12px">' +
+          bar("Ккал", "var(--gold)", m.kcal + " / " + m.targetKcal, (m.kcal * 100) / m.targetKcal) +
+          bar(
+            "Белок",
+            "#cba968",
+            m.proteinG + " / " + m.targetProteinG + " г",
+            m.targetProteinG ? (m.proteinG * 100) / m.targetProteinG : 0
+          ) +
+          bar(
+            "Углеводы",
+            "#8a7a52",
+            m.carbsG + " / " + m.targetCarbsG + " г",
+            m.targetCarbsG ? (m.carbsG * 100) / m.targetCarbsG : 0
+          ) +
+          "</div>"
+        : "") +
       '<ul class="pick">' +
       m.items.map(menuItemHtml).join("") +
       "</ul>" +
@@ -2061,9 +2130,14 @@
       return x.key === key;
     })[0];
     if (!m) return;
+    var parts = (m.items || [])
+      .map(function (i) {
+        return i.food + " " + i.amount;
+      })
+      .join(", ");
     saveMeal(
       {
-        name: mealTitle(m),
+        name: mealTitle(m) + (parts ? ": " + parts : ""),
         kcal: m.kcal,
         proteinG: m.proteinG,
         fatG: m.fatG,
@@ -2503,7 +2577,7 @@
           "«Пол ложки креатина» тоже посчитаю. Сначала смотрю в справочник, а если " +
           "продукта там нет, спрашиваю модель."
       ) +
-      '<button class="btn btn--primary" data-action="add-text">Посчитать и записать</button></div>'
+      '<button class="btn btn--primary" data-action="add-text">Посчитать</button></div>'
     );
   }
 
@@ -2555,10 +2629,10 @@
               ["maint", "Поддержание"]
             ])
           ) +
-          '<div class="btn-stack"><button class="btn btn--primary" data-action="calc-nutrition">Рассчитать</button></div>'
+          '<div class="btn-stack"><button class="btn btn--primary" data-action="calc-nutrition">Пересчитать</button></div>'
       ) +
       '<div id="result">' +
-      (state.result === "nutrition" ? nutritionResult() : "") +
+      (macros() ? nutritionResult() : "") +
       "</div>"
     );
   }
@@ -4484,6 +4558,11 @@
         var box = document.getElementById("foodList");
         if (box) box.innerHTML = foodListHtml();
       }
+      if (path.indexOf("profile.") === 0) {
+        var result = document.getElementById("result");
+        if (result) result.innerHTML = macros() ? nutritionResult() : "";
+        syncProfile();
+      }
     });
   });
 
@@ -4527,7 +4606,9 @@
       case "activity":
       case "goal":
         state.profile[name] = value;
-        break;
+        persist();
+        syncProfile();
+        return render();
       case "calc_tab":
         state.calcTab = value;
         state.result = null;

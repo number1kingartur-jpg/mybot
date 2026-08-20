@@ -51,6 +51,14 @@ export const GOAL_KCAL: Record<MealGoal, number> = {
   bulk: 2800,
 };
 
+/** Доли дня: завтрак / обед / перекус / ужин. */
+export const MEAL_SHARE: Record<MealKey, number> = {
+  breakfast: 0.25,
+  lunch: 0.35,
+  snack: 0.15,
+  dinner: 0.25,
+};
+
 export const MENUS: Record<MenuId, DayMenu> = {
   ru: {
     title: "Русское меню",
@@ -167,6 +175,10 @@ export type MenuMeal = {
   proteinG: number;
   fatG: number;
   carbsG: number;
+  targetKcal: number;
+  targetProteinG: number;
+  targetFatG: number;
+  targetCarbsG: number;
 };
 
 export function menuFood(name: string): FoodItem {
@@ -433,6 +445,54 @@ function fitKcalOnly(slots: MenuSlot[], target: number, macros?: MenuMacros | nu
   }
 }
 
+/** Если день уехал после подгонки приёмов, двигаю самый далёкий от своей доли. */
+function reconcileDay(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
+  for (let n = 0; n < 80; n++) {
+    const now = slotNutr(slots);
+    const kGap = target - now.kcal;
+    const pGap = macros ? now.proteinG - macros.proteinG : 0;
+    const cGap = macros ? macros.carbsG - now.carbsG : 0;
+    const fGap = macros ? now.fatG - macros.fatG : 0;
+    if (
+      Math.abs(kGap) <= 30 &&
+      (!macros || (pGap <= 20 && pGap >= -18 && Math.abs(cGap) <= 30 && Math.abs(fGap) <= 12))
+    ) {
+      return;
+    }
+    let worst: MealKey | null = null;
+    let worstErr = -1;
+    for (const key of MEAL_KEYS) {
+      const have = slots.filter((s) => s.key === key).reduce((s, x) => s + nutr(x.def.food, x.g).kcal, 0);
+      const want = Math.round(target * MEAL_SHARE[key]);
+      const signed = want - have;
+      if (kGap > 25 && signed <= 0) continue;
+      if (kGap < -25 && signed >= 0) continue;
+      const err = Math.abs(signed);
+      if (err > worstErr) {
+        worstErr = err;
+        worst = key;
+      }
+    }
+    if (!worst) {
+      fitSlots(slots, target, macros);
+      return;
+    }
+    const part = slots.filter((s) => s.key === worst);
+    const share = MEAL_SHARE[worst];
+    const before = part.map((s) => s.g).join();
+    if (macros) {
+      fitSlots(part, Math.round(target * share), {
+        proteinG: Math.round(macros.proteinG * share),
+        fatG: Math.round(macros.fatG * share),
+        carbsG: Math.round(macros.carbsG * share),
+      });
+    } else {
+      fitKcalOnly(part, Math.round(target * share));
+    }
+    if (part.map((s) => s.g).join() === before) return;
+  }
+}
+
 /** Без БЖУ добиваю только ккал. С нормой: белок убавляю, углеводы раскладываю по крупам. */
 function fitSlots(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
   if (!macros) {
@@ -494,6 +554,7 @@ export function dayMenu(
   fitSlots(slots, target, macros);
   const meals: MenuMeal[] = MEAL_KEYS.map((key) => {
     const items = slots.filter((s) => s.key === key && s.g > 0).map((s) => buildItem(s.def, s.g));
+    const share = MEAL_SHARE[key];
     return {
       key,
       label: MEAL_LABELS[key],
@@ -502,6 +563,10 @@ export function dayMenu(
       proteinG: items.reduce((s, i) => s + i.proteinG, 0),
       fatG: items.reduce((s, i) => s + i.fatG, 0),
       carbsG: items.reduce((s, i) => s + i.carbsG, 0),
+      targetKcal: Math.round(target * share),
+      targetProteinG: macros ? Math.round(macros.proteinG * share) : 0,
+      targetFatG: macros ? Math.round(macros.fatG * share) : 0,
+      targetCarbsG: macros ? Math.round(macros.carbsG * share) : 0,
     };
   });
   const total = [
