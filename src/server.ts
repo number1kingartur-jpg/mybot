@@ -16,7 +16,8 @@ import {
   analyzeMealPhoto, analyzeMealText, editMeal, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError,
 } from "./meal";
 import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
-import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood, mealImageSlug } from "./foods";
+import { FOODS, imageSlug, macrosFromItems, matchFood, resolveMealThumb } from "./foods";
+import { hasFoodImage } from "./food-images";
 import { isOffImage } from "./product-db";
 import { bangkokHour, sameAsYesterday, shiftDate, usualNames } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
@@ -237,7 +238,7 @@ function dayState(userId: number, date: string) {
       proteinG: m.proteinG,
       fatG: m.fatG,
       carbsG: m.carbsG,
-      slug: mealImageSlug(m.name, m.slug),
+      slug: resolveMealThumb(m.name, m.slug),
       photoUrl: m.photoUrl && isOffImage(m.photoUrl) ? m.photoUrl : undefined,
     })),
     totals: mealTotals(userId, date),
@@ -260,7 +261,7 @@ function dayState(userId: number, date: string) {
             if (!same) return null;
             return {
               ...same,
-              meals: same.meals.map((m) => ({ ...m, slug: mealImageSlug(m.name, m.slug) })),
+              meals: same.meals.map((m) => ({ ...m, slug: resolveMealThumb(m.name, m.slug) })),
             };
           })()
         : null,
@@ -615,7 +616,7 @@ async function handleApi(
         defaultG: f.defaultG,
         category: f.category,
         role: f.role,
-        slug: foodSlug(f.name),
+        slug: hasFoodImage(imageSlug(f)) ? imageSlug(f) : undefined,
         aliases: f.aliases,
       })),
     });
@@ -887,7 +888,7 @@ async function handleApi(
     // Своё название тоже стоит попробовать узнать: «Творог с орехами» найдёт
     // творог и получит картинку — иначе ручная запись выглядит безымянной.
     const known = matchFood(name);
-    const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? imageSlug(known) : undefined };
+    const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? resolveMealThumb(name, imageSlug(known)) : resolveMealThumb(name) };
     const row = addMeal({ userId: user.id, date, ...meal, hour: mealHour(date) });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;

@@ -1,4 +1,5 @@
 import type { MealAnalysis, MealPart } from "./meal";
+import { existingFoodSlug, hasFoodImage, IMAGE_FALLBACK } from "./food-images";
 
 export interface FoodItem {
   aliases: string[];
@@ -432,8 +433,12 @@ export function foodSlug(name: string): string {
  * иначе слот всегда красный.
  */
 export function imageSlug(food: FoodItem): string {
+  const own = foodSlug(food.name);
+  if (hasFoodImage(own)) return own;
+  const mapped = IMAGE_FALLBACK[food.name];
+  if (mapped && hasFoodImage(mapped)) return mapped;
   if (food.brand && food.variantOf) return foodSlug(food.variantOf);
-  return foodSlug(food.name);
+  return own;
 }
 
 /** Картинка шейкера: у коктейля нет одного продукта, тяжёлая позиция врёт. */
@@ -512,6 +517,23 @@ function aliasRe(alias: string): RegExp {
  */
 export function matchFood(name: string): FoodItem | null {
   return matchFoodBy(name)?.food ?? null;
+}
+
+/**
+ * Кадр для записи: вчерашний слаг, состав из имени, только если файл есть.
+ * Иначе буква. Будущие блюда без картинки остаются без миниатюры, не с буквой.
+ */
+export function resolveMealThumb(name: string, slug?: string): string | undefined {
+  const prefer = mealImageSlug(name, slug);
+  const parts = String(name)
+    .split(/,\s*| и ещё \d+/)
+    .map((part) => part.replace(/~\d+\s*г/gi, "").trim())
+    .filter(Boolean);
+  const fromParts = parts.map((part) => {
+    const food = matchFood(part);
+    return food ? imageSlug(food) : undefined;
+  });
+  return existingFoodSlug(prefer, slug, ...fromParts);
 }
 
 /** Совпадение вместе с алиасом, которым оно найдено: по нему видно, что осталось от названия. */

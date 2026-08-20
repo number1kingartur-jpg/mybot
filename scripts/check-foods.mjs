@@ -7,7 +7,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, mealImageSlug, SHAKE_SLUG, STAPLE_ROLE } from "../dist/foods.js";
+import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, imageSlug, mealImageSlug, resolveMealThumb, SHAKE_SLUG, STAPLE_ROLE } from "../dist/foods.js";
+import { hasFoodImage } from "../dist/food-images.js";
 import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
 import { factsFromOffJson, isOffImage, validGtin } from "../dist/product-db.js";
@@ -59,6 +60,22 @@ check(
 );
 const plateWithProtein = macrosFromText("куриная грудка 150 г, рис 150 г, 1 скуп протеина");
 check("протеин рядом с тарелкой не делает коктейль", plateWithProtein?.slug !== SHAKE_SLUG, plateWithProtein?.slug);
+
+const breast = matchFood("куриная грудка");
+check("грудка берёт кадр курицы", !!breast && imageSlug(breast) === "kurica", breast && imageSlug(breast));
+check(
+  "вчерашняя грудка с чужим слагом тоже курица",
+  resolveMealThumb("Куриная грудка ~150 г", "kurinaya-grudka") === "kurica"
+);
+check("молоко 1.5% берёт кадр молока", imageSlug(matchFood("молоко 1.5%")) === "moloko");
+check("нет файла — нет миниатюры, не буква", resolveMealThumb("Киноа ~100 г", "kinoa") === undefined);
+check(
+  "resolve не отдаёт слаг без файла",
+  FOODS.filter((f) => f.role).every((f) => {
+    const slug = resolveMealThumb(f.name, foodSlug(f.name));
+    return !slug || hasFoodImage(slug);
+  })
+);
 
 // ── Единицы по отдельности ───────────────────────────────────────────────────
 function grams(text, expected, tolerance = 0.05) {

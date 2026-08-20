@@ -1914,18 +1914,15 @@
   }
 
   function thumb(slug, title, folder, photoUrl) {
-    var letter = esc(String(title || "?").trim().charAt(0).toUpperCase());
     var src = "";
     if (photoUrl && isOffImage(photoUrl)) src = photoUrl;
     else if (slug) src = "img/" + esc(folder || "food") + "/" + esc(slug) + ".webp";
+    if (!src) return "";
     return (
       '<span class="thumb" aria-hidden="true">' +
-      letter +
-      (src
-        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
-          esc(src) +
-          '" onerror="this.remove()" />'
-        : "") +
+      '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
+      esc(src) +
+      '" onerror="this.parentNode.remove()" />' +
       "</span>"
     );
   }
