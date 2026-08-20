@@ -116,8 +116,8 @@ export const FOODS: FoodItem[] = [
   { aliases: ["bcaa", "бцаа", "аминокислот", "глютамин"], name: "Аминокислоты", kcal100: 320, p100: 80, f100: 0, c100: 0, defaultG: 10, category: "protein", scoopG: 7, tspG: 5, minG: 1 },
   // ── Яйца: варка и жарка различаются маслом ─────────────────────────────────
   { aliases: ["яйцо отварное", "яйца отварные", "яйцо варёное", "яйцо вареное", "boiled egg"], name: "Яйца отварные", kcal100: 155, p100: 13, f100: 11, c100: 1, defaultG: 110, category: "protein", pieceG: 55, minG: 40 },
-  { aliases: ["яичниц", "глазунья", "яйцо жареное", "яйца жареные", "fried egg"], name: "Яичница на масле", kcal100: 200, p100: 12, f100: 16, c100: 1, defaultG: 120, category: "protein", fatIncluded: true },
-  { aliases: ["омлет", "omelet", "omelette", "скрэмбл"], name: "Омлет", kcal100: 185, p100: 11, f100: 14, c100: 3, defaultG: 150, category: "protein", fatIncluded: true },
+  { aliases: ["яичниц", "глазунья", "яйцо жареное", "яйца жареные", "жареные яйца", "fried egg"], name: "Яичница на масле", kcal100: 200, p100: 12, f100: 16, c100: 1, defaultG: 120, category: "protein", fatIncluded: true, pieceG: 60, minG: 40 },
+  { aliases: ["омлет", "omelet", "omelette", "скрэмбл"], name: "Омлет", kcal100: 185, p100: 11, f100: 14, c100: 3, defaultG: 150, category: "protein", fatIncluded: true, pieceG: 75, minG: 40 },
   { aliases: ["egg", "яйц"], name: "Яйца", kcal100: 155, p100: 13, f100: 11, c100: 1, defaultG: 110, category: "protein", pieceG: 55, minG: 30 },
   // ── Творог и молочное: домашние блюда из творога ───────────────────────────
   { aliases: ["сырник", "сырники", "творожник", "творожники", "cheese pancake"], name: "Сырники жареные", kcal100: 220, p100: 14, f100: 10, c100: 20, defaultG: 120, category: "protein", fatIncluded: true, pieceG: 60, minG: 30 },
@@ -341,6 +341,9 @@ export const STAPLE_ROLE: Record<string, FoodRole> = {
   "Тофу": "protein",
   "Яйца": "protein",
   "Яйца отварные": "protein",
+  "Омлет": "protein",
+  "Яичница на масле": "protein",
+  "Сырники жареные": "protein",
   "Творог": "protein",
   "Творог обезжиренный": "protein",
   "Греческий йогурт": "protein",
@@ -367,6 +370,8 @@ export const STAPLE_ROLE: Record<string, FoodRole> = {
   "Картофель отварной": "carb",
   "Батат": "carb",
   "Хлеб цельнозерновой": "carb",
+  "Блины": "carb",
+  "Оладьи": "carb",
   "Банан": "carb",
   "Гейнер": "carb",
   "Овсяные хлопья сухие": "fiber",
@@ -862,18 +867,35 @@ function eggCountInName(name: string): number | undefined {
   return undefined;
 }
 
-/** Два яйца в названии, не «яйца ~165 г»: иначе штуки не проверить. */
-function eggCountLabel(food: FoodItem, grams: number): string | undefined {
+const PIECE_FORMS: Record<string, [string, string, string]> = {
+  "Блины": ["блин", "блина", "блинов"],
+  "Оладьи": ["оладья", "оладьи", "оладий"],
+  "Сырники жареные": ["сырник", "сырника", "сырников"],
+};
+
+function ruPieces(n: number, forms: [string, string, string]): string {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  const word = n100 >= 11 && n100 <= 14 ? forms[2] : n10 === 1 ? forms[0] : n10 >= 2 && n10 <= 4 ? forms[1] : forms[2];
+  return `${n} ${word}`;
+}
+
+/** Число в названии: иначе 150 г омлета не отличить от порции на 4 яйца. */
+function countLabel(food: FoodItem, grams: number): string | undefined {
   if (isWholeEgg(food) && food.pieceG) {
     const n = Math.max(1, Math.round(grams / food.pieceG));
     const base = food.name === "Яйца отварные" ? "яйца отварные" : "яйца";
     return `${n} ${base}`;
   }
   const per = EGG_DISH_G[food.name];
-  if (!per) return undefined;
-  const n = Math.max(1, Math.round(grams / per));
-  const dish = food.name === "Омлет" ? "омлет" : "яичница";
-  return `${dish} из ${n} яиц`;
+  if (per) {
+    const n = Math.max(1, Math.round(grams / per));
+    const dish = food.name === "Омлет" ? "омлет" : "яичница";
+    return `${dish} из ${n} яиц`;
+  }
+  const forms = PIECE_FORMS[food.name];
+  if (!forms || !food.pieceG) return undefined;
+  return ruPieces(Math.max(1, Math.round(grams / food.pieceG)), forms);
 }
 
 /**
@@ -948,10 +970,10 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
     proteinG += food.p100 * mul;
     fatG += food.f100 * mul;
     carbsG += food.c100 * mul;
-    const shownName = eggCountLabel(food, grams) ?? displayName(food);
+    const shownName = countLabel(food, grams) ?? displayName(food);
     parts.push(`${shownName} ~${Math.round(grams)} г`);
     detail.push({
-      name: eggCountLabel(food, grams) ?? displayName(food),
+      name: countLabel(food, grams) ?? displayName(food),
       grams: Math.round(grams),
       kcal: Math.round(food.kcal100 * mul),
       proteinG: Math.round(food.p100 * mul * 10) / 10,
