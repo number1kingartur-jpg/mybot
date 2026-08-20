@@ -436,6 +436,36 @@ export function imageSlug(food: FoodItem): string {
   return foodSlug(food.name);
 }
 
+/** Картинка шейкера: у коктейля нет одного продукта, тяжёлая позиция врёт. */
+export const SHAKE_SLUG = "proteinovyy-kokteyl";
+
+const SHAKE_POWDER = new Set(["Протеин", "Гейнер", "Белок яичный жидкий"]);
+const SHAKE_EXTRA = new Set([
+  "Овсяные хлопья сухие",
+  "Овсянка на воде",
+  "Банан",
+  "Арахисовая паста",
+  "Молоко",
+  "Молоко 1.5%",
+  "Молоко миндальное",
+  "Молоко овсяное",
+  "Креатин",
+]);
+
+export function isShakeMeal(foods: { name: string }[]): boolean {
+  const names = new Set(foods.map((f) => f.name));
+  if (![...SHAKE_POWDER].some((n) => names.has(n))) return false;
+  return [...SHAKE_EXTRA].some((n) => names.has(n));
+}
+
+/** Старые записи коктейля хранят слаг овсянки или банана. По имени чиним. */
+export function mealImageSlug(name: string, slug?: string): string | undefined {
+  const n = name.toLowerCase();
+  const powder = /протеин|гейнер|белок яичн|жидк\w* белка|жидк\w* белок/.test(n);
+  if (powder && /банан|овсян|арахис|молок|креатин|и ещё/.test(n)) return SHAKE_SLUG;
+  return slug;
+}
+
 function norm(s: string): string {
   // Дефис — то же слово: «спринг-роллы» иначе не совпадали с «спринг ролл»
   // и подтягивались к «ролл» из суши.
@@ -800,8 +830,9 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
     carbsG: Math.round(carbsG),
     note,
     // У марки своей картинки нет: показываем миниатюру её категории, иначе на
-    // месте фото остаётся монограмма.
-    slug: imageSlug(main.food),
+    // месте фото остаётся монограмма. Коктейль не тарелка: тяжёлая позиция
+    // (овсянка, банан) даёт чужой файл, которого нет.
+    slug: isShakeMeal(unique.map((u) => u.food)) ? SHAKE_SLUG : imageSlug(main.food),
     photoUrl: main.food.photoUrl,
     parts: detail,
   };

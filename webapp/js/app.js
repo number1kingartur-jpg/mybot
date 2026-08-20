@@ -1052,6 +1052,11 @@
         return esc(m.name) + ", " + m.kcal + " ккал";
       })
       .join("; ");
+    var pics = s.meals
+      .map(function (m) {
+        return thumb(m.slug, m.name, "food", m.photoUrl);
+      })
+      .join("");
     var when =
       s.title === "как обычно"
         ? "Как обычно. Записать то же?"
@@ -1059,6 +1064,7 @@
           ? "Вчера было то же?"
           : "Вчера на " + esc(s.title) + " было то же?";
     return card(
+      (pics ? '<div class="confirm__head">' + pics + "</div>" : "") +
       '<p class="lead">' +
         when +
         "</p>" +

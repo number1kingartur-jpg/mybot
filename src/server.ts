@@ -16,7 +16,7 @@ import {
   analyzeMealPhoto, analyzeMealText, editMeal, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError,
 } from "./meal";
 import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
-import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood } from "./foods";
+import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood, mealImageSlug } from "./foods";
 import { isOffImage } from "./product-db";
 import { bangkokHour, sameAsYesterday, shiftDate, usualNames } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
@@ -237,7 +237,7 @@ function dayState(userId: number, date: string) {
       proteinG: m.proteinG,
       fatG: m.fatG,
       carbsG: m.carbsG,
-      slug: m.slug,
+      slug: mealImageSlug(m.name, m.slug),
       photoUrl: m.photoUrl && isOffImage(m.photoUrl) ? m.photoUrl : undefined,
     })),
     totals: mealTotals(userId, date),
@@ -247,15 +247,22 @@ function dayState(userId: number, date: string) {
     frequent: frequentMeals(userId, today()),
     sameAs:
       date === today()
-        ? sameAsYesterday(
-            getMeals(userId, shiftDate(date, -1)),
-            getMeals(userId, date),
-            bangkokHour(),
-            usualNames(
-              Array.from({ length: 7 }, (_, i) => getMeals(userId, shiftDate(date, -(i + 1)))),
-              2
-            )
-          )
+        ? (() => {
+            const same = sameAsYesterday(
+              getMeals(userId, shiftDate(date, -1)),
+              getMeals(userId, date),
+              bangkokHour(),
+              usualNames(
+                Array.from({ length: 7 }, (_, i) => getMeals(userId, shiftDate(date, -(i + 1)))),
+                2
+              )
+            );
+            if (!same) return null;
+            return {
+              ...same,
+              meals: same.meals.map((m) => ({ ...m, slug: mealImageSlug(m.name, m.slug) })),
+            };
+          })()
         : null,
     photo: photoQuota(userId),
     visionEnabled: mealVisionEnabled(),

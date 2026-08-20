@@ -5,7 +5,9 @@
  * овсянки, 2 скупа протеина». Каждая ошибка здесь стоит человеку сотен
  * килокалорий в дневнике, поэтому разбор проверяется на сборке.
  */
-import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, STAPLE_ROLE } from "../dist/foods.js";
+import fs from "node:fs";
+import path from "node:path";
+import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, mealImageSlug, SHAKE_SLUG, STAPLE_ROLE } from "../dist/foods.js";
 import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
 import { factsFromOffJson, isOffImage, validGtin } from "../dist/product-db.js";
@@ -44,7 +46,19 @@ if (shake) {
     shake.note.includes("среднему весу"),
     shake.note
   );
+  check("коктейль: картинка шейкера, не овсянки", shake.slug === SHAKE_SLUG, shake.slug);
 }
+
+check(
+  "старый коктейль в дневнике тоже получает шейкер",
+  mealImageSlug("Белок яичный жидкий ~200 г, Молоко ~100 г и ещё 4", "ovsyanye-hlopya-suhie") === SHAKE_SLUG
+);
+check(
+  "файл картинки коктейля на месте",
+  fs.existsSync(path.join("webapp", "img", "food", `${SHAKE_SLUG}.webp`))
+);
+const plateWithProtein = macrosFromText("куриная грудка 150 г, рис 150 г, 1 скуп протеина");
+check("протеин рядом с тарелкой не делает коктейль", plateWithProtein?.slug !== SHAKE_SLUG, plateWithProtein?.slug);
 
 // ── Единицы по отдельности ───────────────────────────────────────────────────
 function grams(text, expected, tolerance = 0.05) {
