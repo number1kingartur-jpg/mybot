@@ -812,7 +812,22 @@ function cutRight(window: string): string {
   return m ? window.slice(0, m.index) : window;
 }
 
+/** Готовый омлет/яичница: одна штука в справочнике это два яйца. */
+const EGG_DISH_G: Record<string, number> = {
+  "Омлет": 75,
+  "Яичница на масле": 60,
+};
+
 function measure(food: FoodItem, left: string, right: string): Amount {
+  const eggsInDish = EGG_DISH_G[food.name]
+    ? eggCountInName(`${left} ${right}`) ||
+      eggCountInName(`${left} ${right} яйца`) ||
+      eggCountInName(`${left} яйца ${right}`)
+    : undefined;
+  if (eggsInDish) {
+    const grams = sane(food, eggsInDish * EGG_DISH_G[food.name]);
+    if (grams !== null) return { food, grams, household: true };
+  }
   return (
     amountIn(cutLeft(left), food, true) ??
     amountIn(cutRight(right), food, false) ?? { food, grams: food.defaultG, household: false }
@@ -825,24 +840,40 @@ function isWholeEgg(food: FoodItem): boolean {
 
 function eggCountInName(name: string): number | undefined {
   const t = name.toLowerCase().replace(/ё/g, "е");
-  const digit = t.match(/(\d+)\s*(?:шт\.?\s*)?(?:яйц|egg)/) || t.match(/(?:яйц\w*|eggs?)\s*(\d+)/);
+  const digit = t.match(/(\d+)\s*(?:шт\.?\s*)?(?:я[йи]ц|egg)/) || t.match(/(?:я[йи]ц\w*|eggs?)\s*(\d+)/);
   if (digit) {
     const n = Number(digit[1]);
     if (n >= 1 && n <= 12) return n;
   }
-  const words: Record<string, number> = { один: 1, одно: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6 };
+  const words: Record<string, number> = {
+    один: 1,
+    одно: 1,
+    два: 2,
+    две: 2,
+    три: 3,
+    четыре: 4,
+    четырех: 4,
+    пять: 5,
+    шесть: 6,
+  };
   for (const [word, n] of Object.entries(words)) {
-    if (new RegExp(`${word}\\s+(?:шт\\.?\\s*)?(?:яйц|egg)`, "i").test(t)) return n;
+    if (new RegExp(`${word}\\s+(?:шт\\.?\\s*)?(?:я[йи]ц|egg)`, "i").test(t)) return n;
   }
   return undefined;
 }
 
 /** Два яйца в названии, не «яйца ~165 г»: иначе штуки не проверить. */
 function eggCountLabel(food: FoodItem, grams: number): string | undefined {
-  if (!isWholeEgg(food) || !food.pieceG) return undefined;
-  const n = Math.max(1, Math.round(grams / food.pieceG));
-  const base = food.name === "Яйца отварные" ? "яйца отварные" : "яйца";
-  return `${n} ${base}`;
+  if (isWholeEgg(food) && food.pieceG) {
+    const n = Math.max(1, Math.round(grams / food.pieceG));
+    const base = food.name === "Яйца отварные" ? "яйца отварные" : "яйца";
+    return `${n} ${base}`;
+  }
+  const per = EGG_DISH_G[food.name];
+  if (!per) return undefined;
+  const n = Math.max(1, Math.round(grams / per));
+  const dish = food.name === "Омлет" ? "омлет" : "яичница";
+  return `${dish} из ${n} яиц`;
 }
 
 /**
@@ -852,7 +883,14 @@ function eggCountLabel(food: FoodItem, grams: number): string | undefined {
  */
 export function normalizeEggItem(item: IdentifiedFood): IdentifiedFood {
   const food = matchFood(item.name);
-  if (!food || !isWholeEgg(food) || /белок|жидк|white/i.test(item.name)) return item;
+  if (!food || /белок|жидк|white/i.test(item.name)) return item;
+  const dishG = EGG_DISH_G[food.name];
+  if (dishG) {
+    const named = eggCountInName(item.name);
+    if (named) return { ...item, grams: named * dishG };
+    return item;
+  }
+  if (!isWholeEgg(food)) return item;
   const piece = food.pieceG ?? 55;
   const named = eggCountInName(item.name);
   if (named) return { ...item, grams: named * piece };
@@ -1129,15 +1167,24 @@ export function macrosFromText(description: string): MealAnalysis | null {
     .filter((h) => !hits.some((o) => o !== h && o.len > h.len && o.start <= h.start && o.end >= h.end))
     .filter((h) => !brands.has(h.food.name))
     .sort((a, b) => a.start - b.start);
+  const dishes = kept.filter((h) => EGG_DISH_G[h.food.name]);
+  const used = kept.filter((h) => {
+    if (!isWholeEgg(h.food)) return true;
+    return !dishes.some((d) => {
+      const start = Math.min(d.end, h.end);
+      const end = Math.max(d.start, h.start);
+      return !/[,;+\n]/.test(text.slice(start, end));
+    });
+  });
 
   // Количество ищем в куске текста между соседними продуктами. Раньше границей
   // была запятая, и строка «100 молока 3 банана 8 ложек овсянки» без запятых
   // отдавала всем продуктам первое найденное число.
   let household = false;
-  for (let i = 0; i < kept.length; i++) {
-    const h = kept[i];
-    const left = text.slice(i === 0 ? 0 : kept[i - 1].end, h.start);
-    const right = text.slice(h.end, i + 1 < kept.length ? kept[i + 1].start : text.length);
+  for (let i = 0; i < used.length; i++) {
+    const h = used[i];
+    const left = text.slice(i === 0 ? 0 : used[i - 1].end, h.start);
+    const right = text.slice(h.end, i + 1 < used.length ? used[i + 1].start : text.length);
     const amount = measure(h.food, left, right);
     if (amount.household) household = true;
     matched.push({ food: amount.food, grams: amount.grams });

@@ -104,6 +104,20 @@ near("фото без числа: 110 г", twoFromPhoto?.parts?.[0]?.grams ?? 0,
 const threeNamed = macrosFromItems([{ name: "3 яйца", grams: 165 }]);
 check("если модель написала 3, оставляем 3", /3 яйца/i.test(threeNamed?.name ?? ""), threeNamed?.name);
 near("три по имени: 165 г", threeNamed?.parts?.[0]?.grams ?? 0, 165, 0.01);
+const fourOmelet = macrosFromText("омлет из 4 яиц");
+check("омлет из 4 яиц не дефолт 150 г", Math.round(fourOmelet?.parts?.[0]?.grams ?? 0) === 300, fourOmelet?.name);
+check("омлет из 4 яиц одно блюдо", (fourOmelet?.parts?.length ?? 0) === 1, fourOmelet?.name);
+check("омлет из 4 яиц в названии", /омлет из 4 яиц/i.test(fourOmelet?.name ?? ""), fourOmelet?.name);
+const twoOmelet = macrosFromText("омлет");
+check("омлет без числа это 2 яйца", /омлет из 2 яиц/i.test(twoOmelet?.name ?? ""), twoOmelet?.name);
+near("омлет без числа: 150 г", twoOmelet?.parts?.[0]?.grams ?? 0, 150, 0.01);
+const omeletPlusEggs = macrosFromText("омлет, 2 яйца");
+check("омлет и яйца через запятую это два продукта", (omeletPlusEggs?.parts?.length ?? 0) === 2, omeletPlusEggs?.name);
+const threeFried = macrosFromText("яичница из 3 яиц");
+near("яичница из 3 яиц", threeFried?.parts?.[0]?.grams ?? 0, 180, 0.01);
+const namedOmelet = macrosFromItems([{ name: "омлет из 4 яиц", grams: 150 }]);
+near("фото омлета с 4 в имени", namedOmelet?.parts?.[0]?.grams ?? 0, 300, 0.01);
+
 check("3 яйца берут кадр трёх", resolveMealThumb("3 яйца") === "yayca-3", resolveMealThumb("3 яйца"));
 check("2 яйца берут кадр двух", resolveMealThumb("2 яйца") === "yayca-2", resolveMealThumb("2 яйца"));
 check("яйца ~165 г это тройка", resolveMealThumb("Яйца ~165 г") === "yayca-3", resolveMealThumb("Яйца ~165 г"));
