@@ -27,8 +27,8 @@ function w5(title: string, body: string, id: string, guideStart?: string): Chann
  */
 const WAVE5_PHOTOS: Record<string, string> = {
   w5_heat: "generated/akf-real/akf-heat-noon.png",
-  w5_five_am: "generated/akf-real/akf-gym-dawn.png",
-  w5_no_alcohol: "generated/akf-2026-08/akf-broken-night.png",
+  w5_five_am: "generated/akf-2026-08/sleep-bg-7-sunrise.png",
+  w5_no_alcohol: "generated/akf-2026-08/akf-no-alcohol-trash.png",
   w5_site: "generated/akf-2026-08/akf-rack-dawn.png",
   w5_discipline: "generated/akf-real/akf-viewpoint-fog.png",
   w5_case_start: "generated/akf-real/akf-basement-gym.png",
