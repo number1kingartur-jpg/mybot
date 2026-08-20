@@ -334,7 +334,6 @@ export const STAPLE_ROLE: Record<string, FoodRole> = {
   "Говядина": "protein",
   "Свинина": "protein",
   "Лосось": "protein",
-  "Рыба": "protein",
   "Рыба на пару": "protein",
   "Тунец": "protein",
   "Тунец консервированный": "protein",

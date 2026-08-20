@@ -43,6 +43,7 @@
     foods: null, // справочник продуктов, грузится один раз
     foodQuery: "",
     foodGrams: "",
+    foodMore: {},
     migrated: false, // локальные записи веса уже перенесены в базу бота
     localMeals: [], // режим без сервера: только ручной ввод, хранение на устройстве
     localWater: {}, // режим без сервера: { "YYYY-MM-DD": мл }
@@ -2034,7 +2035,10 @@
     if (!state.foods.length) return '<p class="muted">Загружаю справочник…</p>';
 
     var q = String(state.foodQuery || "").trim().toLowerCase();
+    var seen = {};
     var list = state.foods.filter(function (f) {
+      if (seen[f.name]) return false;
+      seen[f.name] = true;
       if (!q) return true;
       if (f.name.toLowerCase().indexOf(q) !== -1) return true;
       var als = f.aliases || [];
@@ -2051,21 +2055,25 @@
     function foodRow(f) {
       var grams = num(state.foodGrams);
       var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG;
+      var kcal = Math.round((f.kcal100 * g) / 100);
+      var proteinG = Math.round((f.p100 * g) / 100);
       return (
         '<li class="log--thumbed">' +
         thumb(f.slug, f.name) +
         '<span class="meal__name">' +
         esc(f.name) +
         '<span class="meal__macro">' +
-        f.kcal100 +
-        " ккал / 100 г</span></span>" +
+        kcal +
+        " ккал за " +
+        g +
+        " г · Б " +
+        proteinG +
+        " г</span></span>" +
         '<button class="btn btn--outline btn--slim" data-action="add-food" data-food="' +
         esc(f.name) +
         '" data-grams="' +
         g +
-        '">' +
-        g +
-        " г</button></li>"
+        '">Записать</button></li>'
       );
     }
 
@@ -2086,15 +2094,45 @@
           return f.role === g.id;
         });
         if (!items.length) return "";
-        return '<p class="pick__label">' + g.title + "</p><ul class=\"log\">" + items.map(foodRow).join("") + "</ul>";
+        var open = state.foodMore && state.foodMore[g.id];
+        var shown = open || items.length <= 5 ? items : items.slice(0, 5);
+        var more =
+          !open && items.length > 5
+            ? '<button type="button" class="sets__add" data-action="food-more" data-group="' +
+              g.id +
+              '">Ещё ' +
+              (items.length - 5) +
+              " " +
+              plural(items.length - 5, "продукт", "продукта", "продуктов") +
+              "</button>"
+            : "";
+        return (
+          '<p class="pick__label">' +
+          g.title +
+          "</p><ul class=\"log\">" +
+          shown.map(foodRow).join("") +
+          "</ul>" +
+          more
+        );
       })
       .join("");
   }
 
   function foodForm() {
     loadFoods();
+    var target = macros();
+    var eaten = eatenTotals();
+    var left = target ? target.kcal - eaten.kcal : 0;
     return (
       '<div style="margin-top:18px">' +
+      '<p class="note note--plain">Это справочник, не меню на день. Нажми «Записать», продукт уйдет в дневник. План под норму во вкладке «Меню».</p>' +
+      (target
+        ? '<p class="lead" style="margin:10px 0 14px">Осталось ' +
+          left +
+          " ккал из " +
+          target.kcal +
+          ". Цифра в строке это эта порция, не 100 г.</p>"
+        : "") +
       field(
         "Продукт",
         '<input class="input" type="text" data-path="foodQuery" placeholder="грудка, гречка, вода" value="' +
@@ -2104,8 +2142,6 @@
       ) +
       field(
         "Граммы",
-        // Подсказка в поле короткая: длинная фраза в узком поле обрезается на
-        // середине и превращается в мусор. Смысл «пусто = обычная порция» тот же.
         numInput("foodGrams", { min: 1, max: 3000, step: 10, placeholder: "обычная порция" })
       ) +
       '<div id="foodList">' +
@@ -3976,7 +4012,14 @@
       case "add-manual-form":
       case "add-food-form":
         state.addMode = action.getAttribute("data-action").replace("add-", "").replace("-form", "");
+        if (state.addMode === "food") state.foodMore = {};
         state.notice = null;
+        haptic("light");
+        return render();
+      case "food-more":
+        var grp = action.getAttribute("data-group");
+        if (!state.foodMore) state.foodMore = {};
+        if (grp) state.foodMore[grp] = true;
         haptic("light");
         return render();
       case "reload-day":
