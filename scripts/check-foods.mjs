@@ -67,7 +67,12 @@ check(
   "вчерашняя грудка с чужим слагом тоже курица",
   resolveMealThumb("Куриная грудка ~150 г", "kurinaya-grudka") === "kurica"
 );
-check("молоко 1.5% берёт кадр молока", imageSlug(matchFood("молоко 1.5%")) === "moloko");
+check("молоко без страны это таиландское", matchFood("молоко")?.name === "Молоко таиландское", matchFood("молоко")?.name);
+check("молоко российское отдельно", matchFood("молоко российское")?.name === "Молоко российское");
+check("кадры молока TH и RU разные", imageSlug(matchFood("молоко")) !== imageSlug(matchFood("молоко российское")));
+check("foremost берёт кадр таиландского", imageSlug(matchFood("foremost")) === "moloko-tailandskoe");
+check("простоквашино берёт кадр российского", imageSlug(matchFood("простоквашино")) === "moloko-rossiyskoe");
+check("молоко 1.5% берёт кадр российского", imageSlug(matchFood("молоко 1.5%")) === "moloko-rossiyskoe");
 check("нет файла — нет миниатюры, не буква", resolveMealThumb("Киноа ~100 г", "kinoa") === undefined);
 check(
   "resolve не отдаёт слаг без файла",
@@ -146,7 +151,7 @@ for (const [text, expect] of [
   ["10 г масла сливочного", "масло сливочное"],
   ["10 пельменей", "пельмени"],
   ["200 г творога", "творог"],
-  ["300 мл молока", "молоко"],
+  ["300 мл молока", "молоко таиландское"],
 ]) {
   check(`«${text}» → ${expect}`, items(text).includes(expect), items(text));
 }
