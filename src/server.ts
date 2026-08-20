@@ -7,7 +7,7 @@ import {
   addMeal, removeMeal, scaleMeal, getMeals, mealTotals, mealStreak, frequentMeals,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
-  addWorkout, getAllWorkouts, getWorkouts, checkPr,
+  addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, getMealsForDays,
   saveProgram, getActiveProgram, advanceProgramDay,
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium,
   type NutritionProfile, type Lift, type Program,
@@ -23,6 +23,7 @@ import { bangkokHour, sameAsYesterday, shiftDate, usualNames } from "./meal-same
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { plansFor, type Place } from "./simple";
+import { adaptiveTarget } from "./nutrition";
 
 /**
  * HTTP-сервер бота: раздаёт Mini App и обслуживает его запросы.
@@ -81,6 +82,7 @@ const MIME: Record<string, string> = {
   ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".webmanifest": "application/manifest+json",
+  ".mp4": "video/mp4",
 };
 
 function today(): string {
@@ -225,6 +227,11 @@ function waterState(userId: number, date: string) {
 
 function dayState(userId: number, date: string) {
   const u = getUser(userId);
+  const weights = getBodyweight(userId, 60);
+  const lastKg = weights.filter((b) => b.source !== "profile").at(-1)?.weightKg
+    ?? weights.at(-1)?.weightKg
+    ?? u?.nutrition?.weightKg;
+  const meals21 = getMealsForDays(userId, 21).map((m) => ({ date: m.date, kcal: m.kcal }));
   return {
     date,
     today: today(),
@@ -285,11 +292,27 @@ function dayState(userId: number, date: string) {
             ? "train"
             : "start",
     },
+    targets: u?.nutrition
+      ? adaptiveTarget(
+          u.nutrition,
+          lastKg,
+          meals21,
+          weights.map((b) => ({ date: b.date, weightKg: b.weightKg }))
+        )
+      : null,
+    lastLifts: lastLogs(userId),
     workoutsTotal: getAllWorkouts(userId).length,
-    workoutsRecent: getWorkouts(userId, undefined, 8)
+    workoutsRecent: getWorkouts(userId, undefined, 12)
       .slice()
       .reverse()
-      .map((w) => ({ date: w.date, name: w.exercise })),
+      .map((w) => ({
+        date: w.date,
+        name: w.exercise,
+        kg: w.weightKg,
+        reps: w.reps,
+        sets: w.sets,
+        volume: w.log ? w.log.reduce((s, x) => s + x.kg * x.reps, 0) : w.weightKg * w.reps * w.sets,
+      })),
     restDate: u?.restDate && u.restDate === today() ? u.restDate : null,
   };
 }
@@ -388,7 +411,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   // Картинки блюд не меняются: имя файла считается из названия продукта. Неделя
   // кэша важнее суток — в справочнике их сотня, и на мобильной сети каждый
   // повторный заход иначе тянет их заново.
-  const maxAge = urlPath.startsWith("/img/food/") || urlPath.startsWith("/img/ex/") ? 604800 : 86400;
+  const maxAge = urlPath.startsWith("/img/food/") || urlPath.startsWith("/img/ex/") || urlPath.startsWith("/video/ex/") ? 604800 : 86400;
 
   // WebView Telegram держит старый js даже при no-cache — на iOS это проверено
   // на живом устройстве: правка была в сети, а на экране оставалась прошлая
@@ -407,10 +430,30 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
     return;
   }
 
-  res.writeHead(200, {
+  const headers: http.OutgoingHttpHeaders = {
     "Content-Type": MIME[ext] ?? "application/octet-stream",
-    "Cache-Control": isAsset ? `public, max-age=${maxAge}` : "no-cache",
-  });
+    "Cache-Control": isAsset || ext === ".mp4" ? `public, max-age=${maxAge}` : "no-cache",
+  };
+  if (ext === ".mp4") {
+    const stat = fs.statSync(full);
+    const range = req.headers.range;
+    const match = range ? /bytes=(\d+)-(\d*)/.exec(range) : null;
+    if (match) {
+      const start = Number(match[1]);
+      const end = match[2] ? Number(match[2]) : stat.size - 1;
+      res.writeHead(206, {
+        ...headers,
+        "Content-Length": end - start + 1,
+        "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+        "Accept-Ranges": "bytes",
+      });
+      fs.createReadStream(full, { start, end }).pipe(res);
+      return;
+    }
+    headers["Content-Length"] = stat.size;
+    headers["Accept-Ranges"] = "bytes";
+  }
+  res.writeHead(200, headers);
   fs.createReadStream(full).pipe(res);
 }
 
@@ -546,6 +589,81 @@ async function handleApi(
       ok: true,
       pr,
       finished: !updated || !updated.active,
+      ...dayState(user.id, date),
+    });
+    return;
+  }
+
+  // Журнал подходов: одна запись на движение, в ней фактические подходы.
+  if (req.method === "POST" && urlPath === "/api/workout/log") {
+    const body = JSON.parse(await readBody(req)) as {
+      place?: string;
+      level?: string;
+      lifts?: { name?: string; sets?: { kg?: number; reps?: number }[] }[];
+    };
+    const raw = Array.isArray(body.lifts) ? body.lifts : [];
+    if (!raw.length || raw.length > 12) {
+      json(res, 400, { error: "bad_lifts", message: "Нужен хотя бы один подход." });
+      return;
+    }
+    const written: string[] = [];
+    let prs = 0;
+    let volume = 0;
+    for (const lift of raw) {
+      const name = String(lift.name || "").trim().slice(0, 80);
+      const sets = (Array.isArray(lift.sets) ? lift.sets : [])
+        .map((s) => ({
+          kg: Math.max(0, Math.min(500, Math.round(Number(s.kg) * 10) / 10)),
+          reps: Math.max(1, Math.min(100, Math.round(Number(s.reps)))),
+        }))
+        .filter((s) => Number.isFinite(s.kg) && Number.isFinite(s.reps));
+      if (!name || !sets.length) continue;
+      const best = sets.reduce((a, b) => (b.kg > a.kg || (b.kg === a.kg && b.reps > a.reps) ? b : a));
+      const check = checkPr(user.id, name, best.kg, best.reps);
+      addWorkout({
+        userId: user.id,
+        date,
+        exercise: name,
+        sets: sets.length,
+        reps: best.reps,
+        weightKg: best.kg,
+        notes: "log",
+        log: sets,
+      });
+      if (check.isWeightPr || check.isE1rmPr) prs++;
+      volume += sets.reduce((s, x) => s + x.kg * x.reps, 0);
+      written.push(name);
+    }
+    if (!written.length) {
+      json(res, 400, { error: "empty", message: "Нужен хотя бы один подход." });
+      return;
+    }
+    const u = getUser(user.id);
+    const place: Place =
+      body.place === "gym" ? "gym" : body.place === "home" ? "home" : u?.simplePlace === "gym" ? "gym" : "home";
+    const level =
+      body.level === "train" || body.level === "start"
+        ? body.level
+        : u?.simpleLevel === "train" || u?.simpleLevel === "start"
+          ? u.simpleLevel
+          : u?.nutrition?.activity === "high"
+            ? "train"
+            : "start";
+    const idx = u?.simpleIdx ?? 0;
+    const plan = plansFor(place, level);
+    updateUser(user.id, {
+      simpleIdx: idx + 1,
+      simplePlace: place,
+      simpleLevel: level,
+      restDate: "",
+    });
+    json(res, 200, {
+      ok: true,
+      done: plan[idx % plan.length].label,
+      next: plan[(idx + 1) % plan.length].label,
+      lifts: written.length,
+      volume: Math.round(volume),
+      prs,
       ...dayState(user.id, date),
     });
     return;

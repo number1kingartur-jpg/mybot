@@ -93,3 +93,125 @@ export function weightTrendAdvice(
     text: `Тренд веса: ${sign}${rate} кг/нед за ${days} дн. ${verdict}${deltaStr}.`,
   };
 }
+
+/** Ккал в килограмме жира. Для оценки расхода по балансу энергии. */
+const KCAL_PER_KG = 7700;
+
+export interface ExpenditureEstimate {
+  tdee: number;
+  days: number;
+  intakeAvg: number;
+  rateKgWeek: number;
+}
+
+/**
+ * Расход по факту: средний приём минус энергия, ушедшая в вес.
+ *
+ * Если человек ел 2200 и за две недели ушло 0.5 кг, расход выше приёма.
+ * Формула даёт старт. Этот расчёт сильнее анкеты, когда дневник уже есть.
+ * Сдвиг относительно формулы режется до 400 ккал: одна кривая неделя
+ * не должна ломать норму.
+ */
+export function estimateExpenditure(
+  meals: { date: string; kcal: number }[],
+  weights: { date: string; weightKg: number }[],
+  formulaTdee: number
+): ExpenditureEstimate | null {
+  const cutoff = new Date(Date.now() - 21 * 86400_000).toISOString().slice(0, 10);
+  const byDay = new Map<string, number>();
+  for (const m of meals) {
+    if (m.date < cutoff) continue;
+    byDay.set(m.date, (byDay.get(m.date) || 0) + m.kcal);
+  }
+  if (byDay.size < 8) return null;
+
+  const w = weights
+    .filter((e) => e.date >= cutoff)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (w.length < 4) return null;
+  const days = Math.round(
+    (new Date(w[w.length - 1].date).getTime() - new Date(w[0].date).getTime()) / 86400_000
+  );
+  if (days < 10) return null;
+
+  const intakeDays = [...byDay.values()];
+  const intakeAvg = intakeDays.reduce((a, b) => a + b, 0) / intakeDays.length;
+  const rateKgWeek = ((w[w.length - 1].weightKg - w[0].weightKg) / days) * 7;
+  const raw = Math.round(intakeAvg - (rateKgWeek / 7) * KCAL_PER_KG);
+  if (raw < 1200 || raw > 5000) return null;
+  const tdee = Math.max(formulaTdee - 400, Math.min(formulaTdee + 400, raw));
+  return {
+    tdee,
+    days,
+    intakeAvg: Math.round(intakeAvg),
+    rateKgWeek: Math.round(rateKgWeek * 100) / 100,
+  };
+}
+
+export function applyKcalDelta(base: MacroResult, delta: number): MacroResult {
+  const kcal = Math.max(1200, Math.round(base.kcal + delta));
+  const carbsKcal = kcal - base.proteinG * 4 - base.fatG * 9;
+  return { ...base, kcal, carbsG: Math.max(0, Math.round(carbsKcal / 4)) };
+}
+
+export interface AdaptiveTarget extends MacroResult {
+  formulaKcal: number;
+  kcalDelta: number;
+  source: "formula" | "trend" | "intake";
+  note: string;
+}
+
+/**
+ * Норма, которой пользуется кольцо дня.
+ *
+ * 1. Есть дневник еды и вес: расход считается по балансу, цель накручивается
+ *    тем же множителем, что и формула.
+ * 2. Есть только тренд веса: формула сдвигается на 150–200 ккал.
+ * 3. Иначе остаётся Миффлин.
+ */
+export function adaptiveTarget(
+  profile: NutritionProfile,
+  actualWeightKg: number | undefined,
+  meals: { date: string; kcal: number }[],
+  weights: { date: string; weightKg: number }[]
+): AdaptiveTarget {
+  const base = calcMacros(profile, actualWeightKg);
+  const exp = estimateExpenditure(meals, weights, base.tdee);
+  if (exp) {
+    const cfg = GOAL_CFG[profile.goal];
+    const kcal = Math.max(1200, Math.round(exp.tdee * cfg.kcalMul));
+    const carbsKcal = kcal - base.proteinG * 4 - base.fatG * 9;
+    const carbsG = Math.max(0, Math.round(carbsKcal / 4));
+    const sign = exp.rateKgWeek > 0 ? "+" : "";
+    return {
+      ...base,
+      kcal,
+      carbsG,
+      tdee: exp.tdee,
+      formulaKcal: base.kcal,
+      kcalDelta: kcal - base.kcal,
+      source: "intake",
+      note:
+        `Норма от фактического расхода ${exp.tdee} ккал. ` +
+        `Ел в среднем ${exp.intakeAvg}, вес ${sign}${exp.rateKgWeek} кг/нед за ${exp.days} дней.`,
+    };
+  }
+  const advice = weightTrendAdvice(weights, profile.goal);
+  if (advice && advice.kcalDelta !== 0) {
+    const next = applyKcalDelta(base, advice.kcalDelta);
+    return {
+      ...next,
+      formulaKcal: base.kcal,
+      kcalDelta: advice.kcalDelta,
+      source: "trend",
+      note: advice.text,
+    };
+  }
+  return {
+    ...base,
+    formulaKcal: base.kcal,
+    kcalDelta: 0,
+    source: "formula",
+    note: "Норма из формулы. Когда наберутся вес и дневник, цифра станет от факта.",
+  };
+}

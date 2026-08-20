@@ -16,7 +16,7 @@ import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { startWebappServer } from "./server";
 import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError, type MealAnalysis } from "./meal";
 import { putPending, takePending } from "./pending";
-import { calcMacros, weightTrendAdvice } from "./nutrition";
+import { calcMacros, weightTrendAdvice, adaptiveTarget } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
 import {
   plansFor, type Place, type Level, type SimpleExercise, type Goal as SimpleGoal,
@@ -2443,17 +2443,22 @@ function dayMenuKeyboard(menuId: MenuId, goal: MealGoal) {
 }
 
 function nutritionText(p: NutritionProfile, actualWeight?: number, userId?: number): string {
-  const m = calcMacros(p, actualWeight);
+  const weights = userId !== undefined ? getBodyweight(userId, 60) : [];
+  const meals = userId !== undefined
+    ? getMealsForDays(userId, 21).map((x) => ({ date: x.date, kcal: x.kcal }))
+    : [];
+  const adapted = userId !== undefined
+    ? adaptiveTarget(p, actualWeight, meals, weights.map((b) => ({ date: b.date, weightKg: b.weightKg })))
+    : null;
+  const m = adapted ?? calcMacros(p, actualWeight);
   const w = actualWeight ?? p.weightKg;
 
-  // Адаптивная корректировка по фактическому тренду веса (подход MacroFactor)
   let trendBlock = "";
-  if (userId !== undefined) {
-    const advice = weightTrendAdvice(getBodyweight(userId, 60), p.goal);
-    if (advice) {
-      const target = advice.kcalDelta !== 0 ? `\n<b>Новая цель: ${m.kcal + advice.kcalDelta} ккал/день</b>` : "";
-      trendBlock = `\n\n📊 <b>По твоим взвешиваниям:</b>\n<i>${esc(advice.text)}</i>${target}`;
-    }
+  if (adapted && adapted.source !== "formula") {
+    trendBlock = `\n\n📊 <b>Норма от факта:</b>\n<i>${esc(adapted.note)}</i>`;
+  } else if (userId !== undefined) {
+    const advice = weightTrendAdvice(weights, p.goal);
+    if (advice) trendBlock = `\n\n📊 <b>По твоим взвешиваниям:</b>\n<i>${esc(advice.text)}</i>`;
   }
 
   const mealBlock = userId !== undefined ? mealTodayBlock(userId, { kcal: m.kcal, proteinG: m.proteinG }) : "";

@@ -7,6 +7,11 @@ const DB_PATH = process.env.DATA_PATH ?? path.join(__dirname, "..", "data.json")
 const TMP_PATH = `${DB_PATH}.tmp`;
 const BAK_PATH = `${DB_PATH}.bak`;
 
+export interface SetLog {
+  kg: number;
+  reps: number;
+}
+
 export interface WorkoutEntry {
   id: string;
   userId: number;
@@ -16,6 +21,8 @@ export interface WorkoutEntry {
   reps: number;
   weightKg: number;
   notes?: string;
+  /** Фактические подходы. Без этого поля запись это только отметка «сделал». */
+  log?: SetLog[];
 }
 
 export interface BodyweightEntry {
@@ -288,6 +295,28 @@ export function getWorkouts(userId: number, exercise?: string, limit = 20): Work
 
 export function getAllWorkouts(userId: number): WorkoutEntry[] {
   return load().workouts.filter((w) => w.userId === userId);
+}
+
+export interface LastLift {
+  date: string;
+  log: SetLog[];
+  weightKg: number;
+  reps: number;
+}
+
+/** Последний журнал по каждому движению. Отметки «сделал» без подходов пропускаем. */
+export function lastLogs(userId: number): Record<string, LastLift> {
+  const out: Record<string, LastLift> = {};
+  for (const w of load().workouts.filter((row) => row.userId === userId)) {
+    if (!w.log || !w.log.length) continue;
+    out[w.exercise] = {
+      date: w.date,
+      log: w.log,
+      weightKg: w.weightKg,
+      reps: w.reps,
+    };
+  }
+  return out;
 }
 
 export function removeWorkouts(ids: string[]) {

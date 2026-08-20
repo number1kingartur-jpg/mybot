@@ -50,6 +50,7 @@
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
     workout: { place: "home", plan: 0, level: "" },
+    session: { key: "", startedAt: 0, restUntil: 0, lifts: {} },
     diary: { date: today(), weightKg: "" },
     entries: [],
     lastOrm: null,
@@ -330,6 +331,7 @@
   }
 
   function macros() {
+    if (state.day && state.day.targets && state.day.targets.kcal) return state.day.targets;
     var p = state.profile;
     var age = num(p.age),
       h = num(p.heightCm),
@@ -721,6 +723,29 @@
         m.carbsG +
         " г</span></span>" +
         "</div>" +
+        '<div class="scan">' +
+        '<span class="scan__n"><strong>' +
+        m.kcal +
+        "</strong> ккал</span>" +
+        '<span class="scan__n"><strong>' +
+        m.proteinG +
+        "</strong> белок</span>" +
+        '<span class="scan__n"><strong>' +
+        m.fatG +
+        "</strong> жир</span>" +
+        '<span class="scan__n"><strong>' +
+        m.carbsG +
+        "</strong> углеводы</span>" +
+        "</div>" +
+        (parts.length
+          ? '<div class="scan__tags">' +
+            parts
+              .map(function (x) {
+                return '<span class="scan__tag">' + esc(x.name) + " · " + x.kcal + " ккал</span>";
+              })
+              .join("") +
+            "</div>"
+          : "") +
         '<p class="lead">Это оно? В дневник запишу только после твоего «да». ' +
         "Вес поправь прямо в строке, лишнее убери крестиком.</p>" +
         (parts.length
@@ -746,7 +771,7 @@
           : "") +
         '<div class="btn-stack" style="margin-top:14px">' +
         '<button class="btn btn--primary" data-action="meal-confirm">Да, записать</button>' +
-        '<button class="btn btn--outline btn--slim" data-action="meal-reject">Нет, поправлю сам</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="meal-reject">Поправить результат</button>' +
         "</div>"
     );
   }
@@ -1295,11 +1320,15 @@
         { tap: "workout" }
       ) +
       projectionNote(advice) +
-      (advice && advice.kcalDelta !== 0
-        ? '<p class="note"><strong>Тренд против цели.</strong> ' +
-          esc(advice.verdict) +
-          " Правь норму в «Питании» и держи новую цифру две недели.</p>"
-        : "")
+      (function () {
+        var t = macros();
+        if (!t || !t.source || t.source === "formula") return "";
+        return (
+          '<p class="note"><strong>Норма уже сдвинута.</strong> ' +
+          esc(t.note || "Цифра считается от факта, не от анкеты.") +
+          "</p>"
+        );
+      })()
     );
   }
 
@@ -2304,6 +2333,23 @@
       metric("Основной обмен", m.bmr + ' <span class="figure__unit">ккал</span>', "без активности") +
       metric("Полный расход", m.tdee + ' <span class="figure__unit">ккал</span>', "с активностью") +
       "</div>" +
+      (m.note
+        ? card(
+            cardHead(
+              m.source === "intake"
+                ? "Норма от фактического расхода"
+                : m.source === "trend"
+                  ? "Норма сдвинута по тренду веса"
+                  : "Норма из формулы",
+              m.formulaKcal && m.formulaKcal !== m.kcal
+                ? "формула давала " + m.formulaKcal + " ккал"
+                : "пока мало факта, стоит расчёт"
+            ) +
+              '<p class="lead">' +
+              esc(m.note) +
+              "</p>"
+          )
+        : "") +
       card(
         cardHead("Разбивка по приёмам", "Доли, а не жёсткие граммы") +
           '<table class="table"><thead><tr><th>Приём</th><th>Ккал</th><th>Б / Ж / У</th></tr></thead><tbody>' +
@@ -2641,25 +2687,35 @@
 
   function markWorkoutDone() {
     if (!state.day) return;
+    var lifts = collectedLifts();
+    if (!lifts.length) {
+      state.notice = { kind: "err", text: "Отметь хотя бы один подход." };
+      haptic("heavy");
+      return render();
+    }
     state.busy = "workout";
     state.notice = null;
     render();
-    KM_API.workoutDone(state.workout.place, workoutLevel())
+    KM_API.workoutLog(state.workout.place, workoutLevel(), lifts)
       .then(function (data) {
         state.day = data;
         state.busy = null;
         if (state.restDays) delete state.restDays[serverToday()];
+        resetSession();
         persist();
-        // Дальше очередь A/B снова ведёт бот
         workoutTouched = false;
         state.workout.plan = data.simple.idx % planList().length;
         state.notice = {
           kind: "ok",
           text:
-            "Тренировка " +
-            data.done +
-            " записана, всего их " +
-            data.workoutsTotal +
+            "Записано " +
+            data.lifts +
+            " " +
+            plural(data.lifts, "движение", "движения", "движений") +
+            ", тоннаж " +
+            data.volume +
+            " кг" +
+            (data.prs ? ", рекордов " + data.prs : "") +
             ". Следующая по плану " +
             data.next +
             "."
@@ -2727,6 +2783,125 @@
     return KM_PLANS.forPlace(state.workout.place, workoutLevel());
   }
 
+  var restTick = null;
+
+  function sessionKey() {
+    return state.workout.place + "|" + workoutLevel() + "|" + state.workout.plan;
+  }
+
+  function restSec() {
+    var g = workoutGoal();
+    return g === "bulk" ? 105 : g === "cut" ? 75 : 90;
+  }
+
+  function resetSession() {
+    if (restTick) {
+      clearInterval(restTick);
+      restTick = null;
+    }
+    state.session = { key: "", startedAt: 0, restUntil: 0, lifts: {} };
+  }
+
+  function ensureSession() {
+    var key = sessionKey();
+    if (!state.session || state.session.key !== key) {
+      state.session = { key: key, startedAt: Date.now(), restUntil: 0, lifts: {} };
+    }
+    return state.session;
+  }
+
+  function lastLog(name) {
+    var map = state.day && state.day.lastLifts ? state.day.lastLifts : {};
+    return map[name] || null;
+  }
+
+  function sessionSets(e) {
+    var sess = ensureSession();
+    if (!sess.lifts[e.name]) sess.lifts[e.name] = defaultSets(e);
+    return sess.lifts[e.name];
+  }
+
+  function defaultSets(e) {
+    var d = KM_PLANS.dose(e);
+    var goal = workoutGoal();
+    var n = d.sets + (goal === "bulk" ? 1 : 0);
+    var prev = lastLog(e.name);
+    var reps = d.secs
+      ? goal === "bulk"
+        ? Math.round((d.secs[1] * 1.5) / 5) * 5
+        : d.secs[0]
+      : d.reps || 10;
+    var out = [];
+    var i;
+    for (i = 0; i < n; i++) {
+      var p = prev && prev.log && prev.log[i] ? prev.log[i] : null;
+      out.push({
+        kg: p ? p.kg : 0,
+        reps: p ? p.reps : reps,
+        done: false
+      });
+    }
+    return out;
+  }
+
+  function sessionVolume() {
+    var sess = ensureSession();
+    var sum = 0;
+    Object.keys(sess.lifts).forEach(function (name) {
+      sess.lifts[name].forEach(function (s) {
+        if (s.done) sum += (Number(s.kg) || 0) * (Number(s.reps) || 0);
+      });
+    });
+    return Math.round(sum);
+  }
+
+  function sessionDoneCount() {
+    var sess = ensureSession();
+    var n = 0;
+    Object.keys(sess.lifts).forEach(function (name) {
+      sess.lifts[name].forEach(function (s) {
+        if (s.done) n++;
+      });
+    });
+    return n;
+  }
+
+  function collectedLifts() {
+    var sess = ensureSession();
+    var out = [];
+    Object.keys(sess.lifts).forEach(function (name) {
+      var sets = sess.lifts[name]
+        .filter(function (s) {
+          return s.done;
+        })
+        .map(function (s) {
+          return { kg: Number(s.kg) || 0, reps: Math.max(1, Number(s.reps) || 1) };
+        });
+      if (sets.length) out.push({ name: name, sets: sets });
+    });
+    return out;
+  }
+
+  function armRest() {
+    var sess = ensureSession();
+    sess.restUntil = Date.now() + restSec() * 1000;
+    if (restTick) clearInterval(restTick);
+    restTick = setInterval(function () {
+      if (!state.session || !state.session.restUntil || Date.now() >= state.session.restUntil) {
+        if (restTick) clearInterval(restTick);
+        restTick = null;
+        if (state.session) state.session.restUntil = 0;
+      }
+      if (state.screen === "workout") render();
+    }, 1000);
+  }
+
+  function restLeft() {
+    var until = state.session && state.session.restUntil ? state.session.restUntil : 0;
+    if (!until) return 0;
+    return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  }
+
   function renderWorkout() {
     var wk = state.workout;
     var list = planList();
@@ -2770,16 +2945,17 @@
         { gold: true }
       ) +
       noticeHtml() +
+      sessionBarHtml() +
       plan.items.map(exerciseHtml).join("") +
       (state.day
         ? state.busy === "workout"
-          ? card('<p class="lead">Записываю тренировку…</p>')
-          : '<div class="btn-stack"><button class="btn btn--primary" data-action="workout-done">Выполнил, записать</button></div>' +
-            '<p class="note note--plain">Запись идёт в тот же дневник, что и кнопка в чате. ' +
+          ? card('<p class="lead">Записываю подходы…</p>')
+          : '<div class="btn-stack"><button class="btn btn--primary" data-action="workout-done">Записать подходы</button></div>' +
+            '<p class="note note--plain">В дневник уходит факт: вес и повторы каждого подхода, не план. ' +
             "Всего тренировок " +
             (state.day.workoutsTotal || 0) +
             ". Очередь планов A и B бот ведёт сам.</p>"
-        : '<p class="note note--plain">Отметка тренировки пишется в дневник бота и работает только тогда, ' +
+        : '<p class="note note--plain">Журнал пишется в дневник бота и работает только тогда, ' +
           "когда приложение открыто из Telegram.</p>") +
       '<p class="note">' +
       esc(KM_PLANS.rule(wk.place, goal)) +
@@ -2793,9 +2969,125 @@
     );
   }
 
+  function sessionBarHtml() {
+    var done = sessionDoneCount();
+    var vol = sessionVolume();
+    var left = restLeft();
+    var started = state.session && state.session.startedAt ? state.session.startedAt : 0;
+    var mins = started ? Math.max(0, Math.round((Date.now() - started) / 60000)) : 0;
+    return card(
+      '<div class="sessbar">' +
+        '<span><strong>' +
+        mins +
+        "</strong> мин</span>" +
+        '<span><strong>' +
+        vol +
+        "</strong> кг тоннаж</span>" +
+        '<span><strong>' +
+        done +
+        "</strong> " +
+        plural(done, "подход", "подхода", "подходов") +
+        "</span>" +
+        "</div>" +
+        (left
+          ? '<p class="lead" style="margin-top:10px">Отдых ' +
+            left +
+            " " +
+            plural(left, "секунда", "секунды", "секунд") +
+            "</p>"
+          : "")
+    );
+  }
+
+  function prevText(e, i) {
+    var prev = lastLog(e.name);
+    if (!prev || !prev.log || !prev.log[i]) return "нет";
+    var s = prev.log[i];
+    var d = KM_PLANS.dose(e);
+    if (d.secs) return s.reps + " сек";
+    if (!s.kg) return s.reps + " раз";
+    return s.kg + " кг × " + s.reps;
+  }
+
   function exerciseHtml(e) {
     var goal = workoutGoal();
     var slug = KM_PLANS.slug(e);
+    var local = KM_PLANS.localVideo(e);
+    var d = KM_PLANS.dose(e);
+    var sets = sessionSets(e);
+    var hold = Boolean(d.secs);
+    var log =
+      '<div class="sets"><div class="sets__head">' +
+      "<span>#</span><span>прошлый</span><span>" +
+      (hold ? "сек" : "кг") +
+      "</span><span>" +
+      (hold ? "" : "раз") +
+      "</span><span></span></div>" +
+      sets
+        .map(function (s, i) {
+          return (
+            '<div class="sets__row' +
+            (s.done ? " is-done" : "") +
+            '">' +
+            "<span>" +
+            (i + 1) +
+            "</span>" +
+            '<span class="sets__prev">' +
+            esc(prevText(e, i)) +
+            "</span>" +
+            (hold
+              ? '<input class="sets__in" type="number" inputmode="numeric" min="5" max="300" step="5" value="' +
+                s.reps +
+                '" data-set-reps="' +
+                esc(e.name) +
+                '" data-i="' +
+                i +
+                '" aria-label="Секунды" />' +
+                "<span></span>"
+              : '<input class="sets__in" type="number" inputmode="decimal" min="0" max="500" step="2.5" value="' +
+                s.kg +
+                '" data-set-kg="' +
+                esc(e.name) +
+                '" data-i="' +
+                i +
+                '" aria-label="Вес" />' +
+                '<input class="sets__in" type="number" inputmode="numeric" min="1" max="100" step="1" value="' +
+                s.reps +
+                '" data-set-reps="' +
+                esc(e.name) +
+                '" data-i="' +
+                i +
+                '" aria-label="Повторы" />') +
+            '<button type="button" class="sets__ok" data-set-toggle="' +
+            esc(e.name) +
+            '" data-i="' +
+            i +
+            '" aria-label="Готово">' +
+            (s.done ? "✓" : "") +
+            "</button>" +
+            "</div>"
+          );
+        })
+        .join("") +
+      '<button type="button" class="sets__add" data-set-add="' +
+      esc(e.name) +
+      '">+ подход</button></div>';
+    var media = local
+      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="img/ex/' +
+        esc(slug) +
+        '.webp" src="' +
+        esc(local) +
+        '"></video></div>'
+      : slug
+        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="img/ex/' +
+          esc(slug) +
+          '.webp" onerror="this.parentNode.remove()" /></div>'
+        : "";
+    var btn = local
+      ? ""
+      : '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--outline btn--slim" data-link="' +
+        esc(e.video) +
+        '">Техника на видео</button></div>';
     return (
       '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
       thumb(slug, e.name, "ex") +
@@ -2805,12 +3097,10 @@
       esc(KM_PLANS.scheme(e, goal)) +
       " · " +
       esc(e.short) +
-      '</span></span><span class="acc__sign">+</span></button><div class="acc__body">' +
-      (slug
-        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="img/ex/' +
-          esc(slug) +
-          '.webp" onerror="this.parentNode.remove()" /></div>'
-        : "") +
+      '</span></span><span class="acc__sign">+</span></button>' +
+      log +
+      '<div class="acc__body">' +
+      media +
       '<span class="eyebrow section__label">Как делать</span><ol class="steps-list">' +
       e.steps
         .map(function (s) {
@@ -2831,9 +3121,7 @@
       (KM_PLANS.harder(e)
         ? '<p class="note"><strong>Легко?</strong> ' + esc(KM_PLANS.harder(e)) + "</p>"
         : "") +
-      '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--outline btn--slim" data-link="' +
-      esc(e.video) +
-      '">Техника на видео</button></div>' +
+      btn +
       "</div></div>"
     );
   }
@@ -3284,7 +3572,7 @@
     if (!list.length) {
       return card(
         cardHead("Тренировки", "Пока нет записей") +
-          '<p class="lead">Отметь план в «Тренировке», и даты появятся здесь.</p>'
+          '<p class="lead">Запиши подходы в «Тренировке», и веса появятся здесь.</p>'
       );
     }
     return card(
@@ -3301,6 +3589,11 @@
               esc(formatDate(w.date)) +
               '</span><span class="log__value">' +
               esc(w.name) +
+              (w.kg
+                ? " · " + w.kg + " кг × " + w.reps
+                : w.volume
+                  ? " · " + w.volume + " кг"
+                  : "") +
               "</span></li>"
             );
           })
@@ -3551,6 +3844,30 @@
     // Крестик у позиции разбора: убрать то, чего на снимке не было
     var partDrop = t.closest("[data-part-drop]");
     if (partDrop) return dropPendingPart(Number(partDrop.getAttribute("data-part-drop")));
+
+    var setToggle = t.closest("[data-set-toggle]");
+    if (setToggle) {
+      var tn = setToggle.getAttribute("data-set-toggle");
+      var ti = Number(setToggle.getAttribute("data-i"));
+      var tsets = ensureSession().lifts[tn];
+      if (tsets && tsets[ti]) {
+        tsets[ti].done = !tsets[ti].done;
+        if (tsets[ti].done) armRest();
+        haptic("medium");
+        return render();
+      }
+    }
+    var setAdd = t.closest("[data-set-add]");
+    if (setAdd) {
+      var an = setAdd.getAttribute("data-set-add");
+      var asets = ensureSession().lifts[an];
+      if (asets && asets.length < 12) {
+        var last = asets[asets.length - 1] || { kg: 0, reps: 8 };
+        asets.push({ kg: last.kg, reps: last.reps, done: false });
+        haptic("light");
+        return render();
+      }
+    }
 
     var chip = t.closest(".chip");
     if (chip) return onSeg(chip);
@@ -3815,6 +4132,16 @@
       setPendingPartGrams(Number(t.getAttribute("data-part-g")), Number(t.value));
       return;
     }
+    if (t.hasAttribute && (t.hasAttribute("data-set-kg") || t.hasAttribute("data-set-reps"))) {
+      var sname = t.getAttribute("data-set-kg") || t.getAttribute("data-set-reps");
+      var si = Number(t.getAttribute("data-i"));
+      var rows = ensureSession().lifts[sname];
+      if (rows && rows[si]) {
+        if (t.hasAttribute("data-set-kg")) rows[si].kg = Number(t.value) || 0;
+        else rows[si].reps = Number(t.value) || 1;
+      }
+      return;
+    }
 
     if (t.id !== "photoInput") return;
     var file = t.files && t.files[0];
@@ -3886,6 +4213,7 @@
       case "w_place":
         state.workout.place = value;
         state.workout.plan = 0;
+        resetSession();
         workoutTouched = true;
         persist();
         // Место тренировок общее с ботом: в чате должен открываться тот же зал/дом
@@ -3902,6 +4230,7 @@
       case "w_level":
         state.workout.level = value;
         state.workout.plan = 0;
+        resetSession();
         workoutTouched = true;
         persist();
         if (state.day) {
@@ -3914,6 +4243,7 @@
         return render();
       case "w_plan":
         state.workout.plan = Number(value);
+        resetSession();
         workoutTouched = true;
         persist();
         return render();

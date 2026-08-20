@@ -398,6 +398,112 @@ var KM = (function () {
     return daysBetween(last.date, input.today) > 2;
   }
 
+  var KCAL_PER_KG = 7700;
+
+  function estimateExpenditure(meals, weights, formulaTdee) {
+    var cutoff = new Date(Date.now() - 21 * 86400000).toISOString().slice(0, 10);
+    var byDay = {};
+    var i;
+    for (i = 0; i < meals.length; i++) {
+      if (meals[i].date < cutoff) continue;
+      byDay[meals[i].date] = (byDay[meals[i].date] || 0) + meals[i].kcal;
+    }
+    var daysFilled = Object.keys(byDay);
+    if (daysFilled.length < 8) return null;
+    var w = weights
+      .filter(function (e) {
+        return e.date >= cutoff;
+      })
+      .sort(function (a, b) {
+        return a.date < b.date ? -1 : 1;
+      });
+    if (w.length < 4) return null;
+    var span = Math.round(
+      (new Date(w[w.length - 1].date).getTime() - new Date(w[0].date).getTime()) / 86400000
+    );
+    if (span < 10) return null;
+    var sum = 0;
+    for (i = 0; i < daysFilled.length; i++) sum += byDay[daysFilled[i]];
+    var intakeAvg = sum / daysFilled.length;
+    var rate = ((w[w.length - 1].weightKg - w[0].weightKg) / span) * 7;
+    var raw = Math.round(intakeAvg - (rate / 7) * KCAL_PER_KG);
+    if (raw < 1200 || raw > 5000) return null;
+    var tdee = Math.max(formulaTdee - 400, Math.min(formulaTdee + 400, raw));
+    return {
+      tdee: tdee,
+      days: span,
+      intakeAvg: Math.round(intakeAvg),
+      rateKgWeek: Math.round(rate * 100) / 100
+    };
+  }
+
+  function applyKcalDelta(base, delta) {
+    var kcal = Math.max(1200, Math.round(base.kcal + delta));
+    var carbsKcal = kcal - base.proteinG * 4 - base.fatG * 9;
+    return {
+      kcal: kcal,
+      proteinG: base.proteinG,
+      fatG: base.fatG,
+      carbsG: Math.max(0, Math.round(carbsKcal / 4)),
+      bmr: base.bmr,
+      tdee: base.tdee
+    };
+  }
+
+  function adaptiveTarget(profile, meals, weights) {
+    var base = calcMacros(profile);
+    var exp = estimateExpenditure(meals || [], weights || [], base.tdee);
+    if (exp) {
+      var cfg = GOAL_CFG[profile.goal] || GOAL_CFG.maint;
+      var kcal = Math.max(1200, Math.round(exp.tdee * cfg.kcalMul));
+      var carbsKcal = kcal - base.proteinG * 4 - base.fatG * 9;
+      var sign = exp.rateKgWeek > 0 ? "+" : "";
+      return {
+        kcal: kcal,
+        proteinG: base.proteinG,
+        fatG: base.fatG,
+        carbsG: Math.max(0, Math.round(carbsKcal / 4)),
+        bmr: base.bmr,
+        tdee: exp.tdee,
+        formulaKcal: base.kcal,
+        kcalDelta: kcal - base.kcal,
+        source: "intake",
+        note:
+          "Норма от фактического расхода " +
+          exp.tdee +
+          " ккал. Ел в среднем " +
+          exp.intakeAvg +
+          ", вес " +
+          sign +
+          exp.rateKgWeek +
+          " кг/нед за " +
+          exp.days +
+          " дней."
+      };
+    }
+    var advice = weightTrendAdvice(weights || [], profile.goal);
+    if (advice && advice.kcalDelta) {
+      var next = applyKcalDelta(base, advice.kcalDelta);
+      next.formulaKcal = base.kcal;
+      next.kcalDelta = advice.kcalDelta;
+      next.source = "trend";
+      next.note = advice.text;
+      return next;
+    }
+    return {
+      kcal: base.kcal,
+      proteinG: base.proteinG,
+      fatG: base.fatG,
+      carbsG: base.carbsG,
+      bmr: base.bmr,
+      tdee: base.tdee,
+      formulaKcal: base.kcal,
+      kcalDelta: 0,
+      source: "formula",
+      note: "Норма из формулы. Когда наберутся вес и дневник, цифра станет от факта."
+    };
+  }
+
   function dayRoute(input) {
     var target = input.targetKcal || 0;
     var foodOn = target > 0 ? input.eatenKcal >= target * 0.4 : input.eatenCount >= 1;
@@ -423,6 +529,9 @@ var KM = (function () {
     calcMacros: calcMacros,
     mealSplit: mealSplit,
     weightTrendAdvice: weightTrendAdvice,
+    estimateExpenditure: estimateExpenditure,
+    applyKcalDelta: applyKcalDelta,
+    adaptiveTarget: adaptiveTarget,
     buildProgram: buildProgram,
     dayRoute: dayRoute,
     ACTIVITY_FACTOR: ACTIVITY_FACTOR,

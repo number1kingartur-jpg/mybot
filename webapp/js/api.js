@@ -317,6 +317,9 @@ window.KM_API = (function () {
     workoutDone: function (place, level) {
       return request("POST", "/api/workout/simple", { place: place, level: level });
     },
+    workoutLog: function (place, level, lifts) {
+      return request("POST", "/api/workout/log", { place: place, level: level, lifts: lifts });
+    },
     savePlace: function (place) {
       return request("POST", "/api/settings", { place: place });
     },

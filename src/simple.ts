@@ -752,13 +752,36 @@ const VIDEO_URLS: Record<string, string> = {
   "Жим гантелей стоя": "https://www.youtube.com/watch?v=qEwKCR5JCog",
 };
 
+const LOCAL_EX_VIDEO = new Set([
+  "Планка",
+  "Жим гантелей лёжа",
+  "Тяга гантели в наклоне",
+  "Румынская тяга с гантелями",
+  "Тяга верхнего блока к груди",
+  "Выпады с гантелями",
+  "Приседания с гантелью у груди",
+]);
+
+function publicBase(): string {
+  const raw =
+    process.env.MINIAPP_URL ??
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/` : "");
+  if (!raw) return "";
+  return raw.endsWith("/") ? raw : `${raw}/`;
+}
+
 export function exerciseVideoUrl(e: SimpleExercise): string {
+  if (LOCAL_EX_VIDEO.has(e.name)) {
+    const rel = `video/ex/${exerciseSlug(e)}.mp4`;
+    const base = publicBase();
+    return base ? new URL(rel, base).href : rel;
+  }
   return e.videoUrl ?? VIDEO_URLS[e.name] ??
     `https://www.youtube.com/results?search_query=${encodeURIComponent(e.videoQuery)}`;
 }
 
 export function isDirectVideo(url: string): boolean {
-  return url.includes("watch?v=") || url.includes("youtu.be/");
+  return url.includes("watch?v=") || url.includes("youtu.be/") || /\.mp4(\?|$)/i.test(url);
 }
 
 /** Имя файла картинки: та же транслитерация, что у блюд. */

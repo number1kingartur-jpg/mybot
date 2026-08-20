@@ -148,7 +148,21 @@ for (const level of LEVELS) {
         if (seenSlug.has(slug)) continue;
         seenSlug.add(slug);
         check(`${e.name}: картинка`, fs.existsSync(path.join(EX_DIR, `${slug}.webp`)), slug);
+        if (APP.localVideo(e)) {
+          check(`${e.name}: своё видео`, fs.existsSync(path.join("webapp", "video", "ex", `${slug}.mp4`)), slug);
+        }
       }
+    }
+  }
+}
+
+if (typeof APP.gymClips === "function") {
+  for (const e of APP.gymClips()) {
+    const slug = APP.slug(e);
+    const img = fs.existsSync(path.join(EX_DIR, `${slug}.webp`));
+    const vid = !APP.localVideo(e) || fs.existsSync(path.join("webapp", "video", "ex", `${slug}.mp4`));
+    if (!img || !vid) {
+      console.log(`пропуск доп. клипа ${e.name}: медиа ещё не лежит в сборке`);
     }
   }
 }
