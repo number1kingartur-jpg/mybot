@@ -26,7 +26,7 @@ const WAVE6_PHOTOS: Record<string, string> = {
   w6_scoop: "generated/nutrition/protein-powder-scoop.png",
   w6_shake_after: "generated/nutrition/post-workout-shake-gym.png",
   w6_prep: "generated/nutrition/meal-prep-containers.png",
-  w6_water_day: "generated/nutrition/hydration-water-dark.png",
+  w6_water_day: "generated/broll/broll-timer-water-v2.png",
   w6_sauna: "generated/recovery/sauna-steam-dark.png",
   w6_bed: "generated/recovery/sleep-recovery-bed.png",
   w6_hr: "generated/akf-real/akf-track-sunrise.png",

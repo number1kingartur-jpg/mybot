@@ -42,6 +42,7 @@ const MSG_ASSET_ID = {
   57: "bands",
   58: "protein",
   89: "mini_cut",
+  93: "dont_do_list",
 };
 
 /** Старые посты канала (не из очереди CHANNEL_POSTS). */
@@ -59,6 +60,7 @@ const PREFIX_MAP = [
   ["раньше я тоже верил ощущениям", "data"],
   ["три ночи по 5 часов", "sleep"],
   ["упёрся в плато", "plateau"],
+  ["список того, что я не делаю", "dont_do_list"],
 ];
 
 const ASSETS = join(process.cwd(), "assets", "channel");
