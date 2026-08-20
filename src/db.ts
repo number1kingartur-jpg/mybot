@@ -659,12 +659,16 @@ export function frequentMeals(
     .meals.filter((m) => m.userId === userId && m.date >= since)
     .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 
-  const byName = new Map<string, { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; count: number }>();
+  const byName = new Map<
+    string,
+    { name: string; kcal: number; proteinG: number; fatG: number; carbsG: number; count: number; days: Set<string> }
+  >();
   for (const m of rows) {
     const key = m.name.trim().toLowerCase();
     const seen = byName.get(key);
     if (seen) {
       seen.count++;
+      seen.days.add(m.date);
       seen.name = m.name;
       seen.kcal = m.kcal;
       seen.proteinG = m.proteinG;
@@ -678,11 +682,15 @@ export function frequentMeals(
         fatG: m.fatG,
         carbsG: m.carbsG,
         count: 1,
+        days: new Set([m.date]),
       });
     }
   }
 
-  return [...byName.values()].sort((a, b) => b.count - a.count).slice(0, limit);
+  return [...byName.values()]
+    .sort((a, b) => b.days.size - a.days.size || b.count - a.count)
+    .slice(0, limit)
+    .map(({ days: _days, ...row }) => row);
 }
 
 export function mealTotals(userId: number, date: string) {

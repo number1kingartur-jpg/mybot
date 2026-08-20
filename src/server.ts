@@ -18,7 +18,7 @@ import {
 import { dropPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, foodSlug, imageSlug, macrosFromItems, matchFood } from "./foods";
 import { isOffImage } from "./product-db";
-import { bangkokHour, sameAsYesterday, yesterdayOf } from "./meal-same";
+import { bangkokHour, sameAsYesterday, shiftDate, usualNames } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { plansFor, type Place } from "./simple";
@@ -245,9 +245,18 @@ function dayState(userId: number, date: string) {
     // открытого в календаре: это состояние человека, а не свойство даты
     streak: mealStreak(userId, today()),
     frequent: frequentMeals(userId, today()),
-    sameAs: date === today()
-      ? sameAsYesterday(getMeals(userId, yesterdayOf(date)), getMeals(userId, date), bangkokHour())
-      : null,
+    sameAs:
+      date === today()
+        ? sameAsYesterday(
+            getMeals(userId, shiftDate(date, -1)),
+            getMeals(userId, date),
+            bangkokHour(),
+            usualNames(
+              Array.from({ length: 7 }, (_, i) => getMeals(userId, shiftDate(date, -(i + 1)))),
+              2
+            )
+          )
+        : null,
     photo: photoQuota(userId),
     visionEnabled: mealVisionEnabled(),
     // Всё остальное состояние человека — одним ответом, чтобы приложение не делало

@@ -3,3 +3,6 @@
 # только assets/channel — готовые кадры постов.
 assets/rewrite-media
 assets/rewrite-photos
+.tmp-e2e
+scripts/extra-scan.ps1
+scripts/extra-sheets.ps1

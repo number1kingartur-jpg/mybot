@@ -2,7 +2,7 @@
  * Повтор вчерашнего приёма по времени дня.
  * Запуск: node scripts/check-same.mjs
  */
-import { inferSlots, sameAsYesterday, slotByHour, slotLabel, yesterdayOf } from "../dist/meal-same.js";
+import { inferSlots, sameAsYesterday, slotByHour, slotLabel, usualNames, yesterdayOf } from "../dist/meal-same.js";
 
 let failed = 0;
 function check(title, cond, detail) {
@@ -47,6 +47,33 @@ check("час в записи важнее порядка", byHour?.title === "�
 
 const one = sameAsYesterday([{ name: "Рис", kcal: 230, proteinG: 5, fatG: 1, carbsG: 50 }], [], 20);
 check("один вчерашний приём без часа спрашивают и вечером", one?.title === "вчера" && one.meals[0].name === "Рис", one?.title);
+
+const shake = { name: "Белок яичный жидкий ~200 г, Молоко ~100 г и ещё 4", kcal: 1215, proteinG: 100, fatG: 21, carbsG: 155, hour: 8 };
+const cocktailNoon = sameAsYesterday(
+  [shake, { name: "Куриная грудка ~150 г", kcal: 248, proteinG: 47, fatG: 5, carbsG: 0, hour: 13 }],
+  [],
+  13,
+  usualNames([[shake], [shake], [{ name: "Куриная грудка ~150 г", kcal: 248, proteinG: 47, fatG: 5, carbsG: 0 }]], 2)
+);
+check("коктейль каждый день всплывает и в обед", cocktailNoon?.meals.some((m) => /белок яичный/i.test(m.name)), JSON.stringify(cocktailNoon?.meals.map((m) => m.name)));
+check("подпись про обычный рацион", cocktailNoon?.title === "как обычно", cocktailNoon?.title);
+
+const names = usualNames(
+  [[{ name: "коктейль" }], [{ name: "коктейль" }], [{ name: "суп" }]],
+  2
+);
+check("обычным считается то, что было два дня", names.has("коктейль") && !names.has("суп"));
+
+const dinnerOnce = sameAsYesterday(
+  [
+    { name: "Стейк", kcal: 400, proteinG: 40, fatG: 20, carbsG: 0, hour: 20 },
+    { name: "Овсянка на воде ~250 г", kcal: 170, proteinG: 6, fatG: 4, carbsG: 30, hour: 8 },
+  ],
+  [],
+  8,
+  new Set()
+);
+check("разовый ужин утром не валят", dinnerOnce?.meals.length === 1 && dinnerOnce.meals[0].name.startsWith("Овсянка"), JSON.stringify(dinnerOnce?.meals.map((m) => m.name)));
 
 if (failed) {
   console.error(`check-same: ${failed} ошибок`);

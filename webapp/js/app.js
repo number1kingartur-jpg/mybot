@@ -1052,7 +1052,12 @@
         return esc(m.name) + ", " + m.kcal + " ккал";
       })
       .join("; ");
-    var when = s.title === "вчера" ? "Вчера было то же?" : "Вчера на " + esc(s.title) + " было то же?";
+    var when =
+      s.title === "как обычно"
+        ? "Как обычно. Записать то же?"
+        : s.title === "вчера"
+          ? "Вчера было то же?"
+          : "Вчера на " + esc(s.title) + " было то же?";
     return card(
       '<p class="lead">' +
         when +

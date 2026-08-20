@@ -33,11 +33,29 @@ export function bangkokHour(now = new Date()): number {
   return Number(parts.find((p) => p.type === "hour")?.value ?? 0);
 }
 
-export function yesterdayOf(dateStr: string): string {
+export function shiftDate(dateStr: string, days: number): string {
   const [y, m, d] = dateStr.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() - 1);
+  dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
+}
+
+export function yesterdayOf(dateStr: string): string {
+  return shiftDate(dateStr, -1);
+}
+
+/** Имена, которые были не в один день: коктейль каждый день попадает сюда со второго дня. */
+export function usualNames(days: { name: string }[][], minDays = 2): Set<string> {
+  const counts = new Map<string, number>();
+  for (const day of days) {
+    const seen = new Set<string>();
+    for (const m of day) {
+      const key = m.name.trim().toLowerCase();
+      if (key) seen.add(key);
+    }
+    for (const key of seen) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return new Set([...counts.entries()].filter(([, n]) => n >= minDays).map(([name]) => name));
 }
 
 export function slotByHour(hour: number): MealSlot {
@@ -73,26 +91,52 @@ export function slotOfMeal(meal: { hour?: number }, index: number, total: number
   return inferSlots(total)[index] ?? "dinner";
 }
 
+function uniqueMeals(list: SameMeal[]): SameMeal[] {
+  const out: SameMeal[] = [];
+  const seen = new Set<string>();
+  for (const m of list) {
+    const key = m.name.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(m);
+  }
+  return out;
+}
+
 /**
- * Что предложить записать сейчас: вчерашние позиции того же слота, которых
- * сегодня ещё нет. Один приём вчера без часа предлагаем в любой слот:
- * иначе ужин никогда не спросит про единственную вчерашнюю запись.
+ * Что предложить сейчас: вчерашний слот по часу плюс то, что человек ест
+ * почти каждый день. Коктейль в 10 утра вчера не должен пропадать в полдень.
  */
-export function sameAsYesterday(yesterday: SameMeal[], todayMeals: { name: string }[], hour: number): SameAs | null {
+export function sameAsYesterday(
+  yesterday: SameMeal[],
+  todayMeals: { name: string }[],
+  hour: number,
+  usual?: Iterable<string>
+): SameAs | null {
   if (!yesterday.length) return null;
   const slot = slotByHour(hour);
-  const picked = yesterday.filter((m, i) => slotOfMeal(m, i, yesterday.length) === slot);
-  const fallback = !picked.length && yesterday.length === 1 && yesterday[0].hour === undefined;
-  const source = fallback ? yesterday : picked;
+  const usualSet = usual instanceof Set ? usual : new Set(usual ?? []);
+  const inSlot = yesterday.filter((m, i) => slotOfMeal(m, i, yesterday.length) === slot);
+  const usualYesterday = yesterday.filter((m) => usualSet.has(m.name.trim().toLowerCase()));
+  const fallback = !inSlot.length && !usualYesterday.length && yesterday.length === 1 && yesterday[0].hour === undefined;
+  const source = uniqueMeals([...inSlot, ...usualYesterday, ...(fallback ? yesterday : [])]);
   if (!source.length) return null;
 
   const have = new Set(todayMeals.map((m) => m.name.trim().toLowerCase()));
   const meals = source.filter((m) => !have.has(m.name.trim().toLowerCase()));
   if (!meals.length) return null;
 
+  const extraUsual = usualYesterday.some((m) => !inSlot.includes(m));
+  const title =
+    fallback
+      ? "вчера"
+      : extraUsual || (!inSlot.length && usualYesterday.length)
+        ? "как обычно"
+        : slotLabel(slot);
+
   return {
     slot,
-    title: fallback ? "вчера" : slotLabel(slot),
+    title,
     meals: meals.map((m) => ({
       name: m.name,
       kcal: m.kcal,
