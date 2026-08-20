@@ -93,23 +93,23 @@ window.KM_MENUS = (function () {
       meals: {
         breakfast: [
           { food: "Овсянка на молоке", g: 250, alt: ["Гречка отварная", "Хлеб", "Сырники жареные"] },
-          { food: "Хлеб", g: 30, alt: ["Гречка отварная", "Овсянка на молоке", "Паста отварная"] },
+          { food: "Хлеб", g: 60, alt: ["Гречка отварная", "Овсянка на молоке", "Паста отварная"] },
           { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Мёд"] },
           { food: "Яйца", g: 110, alt: ["Омлет", "Яичница на масле", "Сыр"] },
-          { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Протеин"] }
+          { food: "Творог", g: 150, alt: ["Йогурт", "Кефир", "Протеин"] }
         ],
         lunch: [
           { food: "Курица отварная", g: 150, alt: ["Индейка", "Говядина", "Рыба на пару"] },
           { food: "Гречка отварная", g: 200, alt: ["Рис отварной", "Паста отварная", "Картофель отварной"] },
-          { food: "Картофель отварной", g: 150, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
+          { food: "Картофель отварной", g: 200, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
           { food: "Овощи", g: 200, alt: ["Салат", "Овощи тушёные", "Суп"] },
-          { food: "Масло растительное", g: 5, alt: ["Масло сливочное", "Сметана", "Авокадо"] }
+          { food: "Масло растительное", g: 10, alt: ["Масло сливочное", "Сметана", "Авокадо"] }
         ],
         snack: [
-          { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Сыр"] },
-          { food: "Паста отварная", g: 150, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
+          { food: "Творог", g: 150, alt: ["Йогурт", "Кефир", "Сыр"] },
+          { food: "Паста отварная", g: 180, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
           { food: "Яблоко", g: 180, alt: ["Банан", "Сок", "Молоко российское"] },
-          { food: "Сок", g: 200, alt: ["Кефир", "Молоко российское", "Банан"] },
+          { food: "Сок", g: 250, alt: ["Кефир", "Молоко российское", "Банан"] },
           { food: "Орехи", g: 20, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] }
         ],
         dinner: [
@@ -432,13 +432,13 @@ window.KM_MENUS = (function () {
   };
 
   var PORTION_MAX = {
-    "Овсянка на молоке": 400,
+    "Овсянка на молоке": 430,
     "Гречка отварная": 300,
     "Рис отварной": 300,
     "Паста отварная": 300,
     "Картофель отварной": 300,
     Хлеб: 90,
-    Сок: 500,
+    Сок: 600,
     "Пад Тай": 500,
     "Том Ям": 500,
     "Сом Там": 300,
@@ -454,7 +454,34 @@ window.KM_MENUS = (function () {
     Орехи: 45
   };
 
+  var FIT = { protein: 8, carbs: 20, fat: 8, kcal: 25 };
+
+  function inferredMacros(kcal) {
+    var proteinG = Math.round((kcal * 149) / 3011);
+    var fatG = Math.round((kcal * 75) / 3011);
+    return {
+      proteinG: proteinG,
+      fatG: fatG,
+      carbsG: Math.max(0, Math.round((kcal - proteinG * 4 - fatG * 9) / 4))
+    };
+  }
+
+  function applyProteinPlate(slots, macros) {
+    if (!macros) return;
+    slots.forEach(function (slot) {
+      var p = macros.proteinG;
+      if (slot.food === "Творог") {
+        slot.g = slot.key === "breakfast" ? (p >= 185 ? 150 : 0) : (p >= 170 ? 150 : 0);
+      } else if (slot.food === "Яйца") slot.g = p >= 85 ? 110 : 0;
+      else if (slot.food === "Рыба на пару") slot.g = p >= 125 ? 150 : 0;
+      else if (slot.food === "Омлет") slot.g = p >= 85 ? 150 : 0;
+      else if (slot.food === "Сате") slot.g = p >= 155 ? 120 : 0;
+      else if (slot.food === "Креветки") slot.g = p >= 145 ? 120 : 0;
+    });
+  }
+
   function flexLimit(food, name, g, macros) {
+    if (PROT_FLEX[name] || name === "Яйца") return null;
     if (macros && name === "Масло растительное") {
       var oil = food.piece || 5;
       return { min: oil, max: oil * 6, step: oil };
@@ -466,10 +493,9 @@ window.KM_MENUS = (function () {
     if (!FLEX[name] && !(macros && FAT_FLEX[name])) return null;
     if (food.piece) return null;
     var step = g < 50 ? 5 : 10;
-    var minMul = macros && PROT_FLEX[name] ? 0.5 : OPTIONAL_CARB[name] ? 0 : 0.4;
     var cap = PORTION_MAX[name] || Math.round(food.def * 2.5);
     return {
-      min: OPTIONAL_CARB[name] ? 0 : Math.max(step, roundG(food, food.def * minMul)),
+      min: OPTIONAL_CARB[name] ? 0 : Math.max(step, roundG(food, food.def * 0.4)),
       max: cap,
       step: step
     };
@@ -490,9 +516,9 @@ window.KM_MENUS = (function () {
     );
   }
 
-  function stepGroup(slots, macros, pick, dir) {
+  function stepGroup(slots, macros, pick, dir, preferLowProtein) {
     var best = null;
-    var i, slot, food, lim, next, fill;
+    var i, slot, food, lim, next, fill, p100, better;
     for (i = 0; i < slots.length; i++) {
       slot = slots[i];
       if (!pick(slot.food)) continue;
@@ -502,9 +528,16 @@ window.KM_MENUS = (function () {
       next = slot.g + dir * lim.step;
       if (next < lim.min || next > lim.max) continue;
       fill = (slot.g - lim.min) / Math.max(lim.max - lim.min, 1);
-      if (!best || (dir > 0 && fill < best.fill) || (dir < 0 && fill > best.fill)) {
-        best = { i: i, g: next, fill: fill };
+      p100 = food.n[1];
+      if (!best) better = true;
+      else if (preferLowProtein) {
+        better = dir > 0
+          ? p100 < best.p100 || (p100 === best.p100 && fill < best.fill)
+          : p100 > best.p100 || (p100 === best.p100 && fill > best.fill);
+      } else {
+        better = dir > 0 ? fill < best.fill : fill > best.fill;
       }
+      if (better) best = { i: i, g: next, fill: fill, p100: p100 };
     }
     if (!best) return false;
     slots[best.i].g = best.g;
@@ -512,12 +545,13 @@ window.KM_MENUS = (function () {
   }
 
   function fitKcalOnly(slots, target, macros) {
-    var n, i, now, gap, best, slot, food, lim, next, err;
+    var n, i, now, gap, best, slot, food, lim, next, err, p100, proteinHigh, better;
     for (n = 0; n < 60; n++) {
       now = 0;
       for (i = 0; i < slots.length; i++) now += nutr(FOOD[slots[i].food], slots[i].g).kcal;
       gap = target - now;
       if (Math.abs(gap) <= 20) return;
+      proteinHigh = Boolean(macros && slotNutr(slots).proteinG >= macros.proteinG);
       best = null;
       for (i = 0; i < slots.length; i++) {
         slot = slots[i];
@@ -527,7 +561,11 @@ window.KM_MENUS = (function () {
         next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
         if (next < lim.min || next > lim.max) continue;
         err = Math.abs(target - (now - nutr(food, slot.g).kcal + nutr(food, next).kcal));
-        if (!best || err < best.err) best = { i: i, g: next, err: err };
+        p100 = food.n[1];
+        if (!best) better = true;
+        else if (proteinHigh && gap > 0) better = p100 < best.p100 || (p100 === best.p100 && err < best.err);
+        else better = err < best.err;
+        if (better) best = { i: i, g: next, err: err, p100: p100 };
       }
       if (!best || best.err >= Math.abs(gap)) return;
       slots[best.i].g = best.g;
@@ -535,40 +573,35 @@ window.KM_MENUS = (function () {
   }
 
   function fitSlots(slots, target, macros) {
-    var n, now, pGap, cGap, fGap, kGap, moved;
+    var n, now, pGap, cGap, fGap, kGap, moved, lowP;
     if (!macros) {
       fitKcalOnly(slots, target);
       return;
     }
     fitKcalOnly(slots, target, macros);
-    for (n = 0; n < 120; n++) {
+    for (n = 0; n < 200; n++) {
       now = slotNutr(slots);
       pGap = now.proteinG - macros.proteinG;
       cGap = macros.carbsG - now.carbsG;
       fGap = now.fatG - macros.fatG;
       kGap = target - now.kcal;
-      if (Math.abs(kGap) <= 25 && pGap <= 18 && pGap >= -15 && Math.abs(cGap) <= 25 && Math.abs(fGap) <= 10) {
+      if (Math.abs(kGap) <= FIT.kcal && Math.abs(cGap) <= FIT.carbs && Math.abs(fGap) <= FIT.fat) {
         return;
       }
+      lowP = pGap > 0;
       moved = false;
-      if (pGap > 15) moved = stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, -1);
-      if (!moved && cGap < -15) moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, -1);
-      if (!moved && cGap > 15 && fGap > 0) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, -1);
-      if (!moved && cGap > 15 && kGap >= -15) {
-        moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, 1);
+      if (cGap < -FIT.carbs) moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, -1, lowP);
+      if (!moved && cGap > FIT.carbs && fGap > 0) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, -1);
+      if (!moved && cGap > FIT.carbs && kGap >= -FIT.kcal) {
+        moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, 1, lowP);
       }
-      if (!moved && cGap > 15 && pGap > 0) moved = stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, -1);
-      if (!moved && fGap > 8) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, -1);
-      if (!moved && fGap < -8) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, 1);
-      if (!moved && kGap > 20) {
-        moved = cGap >= 0
-          ? stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, 1)
-          : stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, 1);
+      if (!moved && fGap > FIT.fat) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, -1);
+      if (!moved && fGap < -FIT.fat) moved = stepGroup(slots, macros, function (name) { return FAT_FLEX[name]; }, 1);
+      if (!moved && kGap > FIT.kcal) {
+        moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, 1, lowP);
       }
-      if (!moved && kGap < -20) {
-        moved = pGap > 0
-          ? stepGroup(slots, macros, function (name) { return PROT_FLEX[name]; }, -1)
-          : stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, -1);
+      if (!moved && kGap < -FIT.kcal) {
+        moved = stepGroup(slots, macros, function (name) { return CARB_FLEX[name]; }, -1, lowP);
       }
       if (!moved) return;
     }
@@ -583,8 +616,12 @@ window.KM_MENUS = (function () {
       cGap = macros ? macros.carbsG - now.carbsG : 0;
       fGap = macros ? now.fatG - macros.fatG : 0;
       if (
-        Math.abs(kGap) <= 30 &&
-        (!macros || (pGap <= 20 && pGap >= -18 && Math.abs(cGap) <= 30 && Math.abs(fGap) <= 12))
+        Math.abs(kGap) <= FIT.kcal &&
+        (!macros ||
+          (pGap <= FIT.protein &&
+            pGap >= -FIT.protein &&
+            Math.abs(cGap) <= FIT.carbs &&
+            Math.abs(fGap) <= FIT.fat))
       ) {
         return;
       }
@@ -662,6 +699,7 @@ window.KM_MENUS = (function () {
         slots.push({ key: key, food: def.food, g: def.g });
       });
     });
+    applyProteinPlate(slots, macros || inferredMacros(target));
     fitSlots(slots, target, macros || null);
     if (applySwapsToSlots(slots, menuId, swaps)) {
       fitSlots(slots, target, macros || null);

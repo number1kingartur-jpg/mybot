@@ -65,23 +65,23 @@ export const MENUS: Record<MenuId, DayMenu> = {
     meals: {
       breakfast: [
         { food: "Овсянка на молоке", g: 250, alt: ["Гречка отварная", "Хлеб", "Сырники жареные"] },
-        { food: "Хлеб", g: 30, alt: ["Гречка отварная", "Овсянка на молоке", "Паста отварная"] },
+        { food: "Хлеб", g: 60, alt: ["Гречка отварная", "Овсянка на молоке", "Паста отварная"] },
         { food: "Банан", g: 120, alt: ["Яблоко", "Сок", "Мёд"] },
         { food: "Яйца", g: 110, alt: ["Омлет", "Яичница на масле", "Сыр"] },
-        { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Протеин"] },
+        { food: "Творог", g: 150, alt: ["Йогурт", "Кефир", "Протеин"] },
       ],
       lunch: [
         { food: "Курица отварная", g: 150, alt: ["Индейка", "Говядина", "Рыба на пару"] },
         { food: "Гречка отварная", g: 200, alt: ["Рис отварной", "Паста отварная", "Картофель отварной"] },
-        { food: "Картофель отварной", g: 150, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
+        { food: "Картофель отварной", g: 200, alt: ["Рис отварной", "Гречка отварная", "Паста отварная"] },
         { food: "Овощи", g: 200, alt: ["Салат", "Овощи тушёные", "Суп"] },
-        { food: "Масло растительное", g: 5, alt: ["Масло сливочное", "Сметана", "Авокадо"] },
+        { food: "Масло растительное", g: 10, alt: ["Масло сливочное", "Сметана", "Авокадо"] },
       ],
       snack: [
-        { food: "Творог", g: 100, alt: ["Йогурт", "Кефир", "Сыр"] },
-        { food: "Паста отварная", g: 150, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
+        { food: "Творог", g: 150, alt: ["Йогурт", "Кефир", "Сыр"] },
+        { food: "Паста отварная", g: 180, alt: ["Гречка отварная", "Рис отварной", "Хлеб"] },
         { food: "Яблоко", g: 180, alt: ["Банан", "Сок", "Молоко российское"] },
-        { food: "Сок", g: 200, alt: ["Кефир", "Молоко российское", "Банан"] },
+        { food: "Сок", g: 250, alt: ["Кефир", "Молоко российское", "Банан"] },
         { food: "Орехи", g: 20, alt: ["Арахисовая паста", "Авокадо", "Шоколад"] },
       ],
       dinner: [
@@ -304,13 +304,13 @@ const CARB_FLEX = new Set([
 
 /** Одна тарелка, не гора. Граммы в один приём. */
 const PORTION_MAX: Record<string, number> = {
-  "Овсянка на молоке": 400,
+  "Овсянка на молоке": 430,
   "Гречка отварная": 300,
   "Рис отварной": 300,
   "Паста отварная": 300,
   "Картофель отварной": 300,
   Хлеб: 90,
-  Сок: 500,
+  Сок: 600,
   "Пад Тай": 500,
   "Том Ям": 500,
   "Сом Там": 300,
@@ -357,11 +357,36 @@ type MenuSlot = { key: MealKey; def: MenuItemDef; g: number };
 
 type SlotNutr = { kcal: number; proteinG: number; fatG: number; carbsG: number };
 
+const FIT = { protein: 8, carbs: 20, fat: 8, kcal: 25 };
+
+function inferredMacros(kcal: number): MenuMacros {
+  const proteinG = Math.round((kcal * 149) / 3011);
+  const fatG = Math.round((kcal * 75) / 3011);
+  const carbsG = Math.max(0, Math.round((kcal - proteinG * 4 - fatG * 9) / 4));
+  return { proteinG, fatG, carbsG };
+}
+
+/** Обычная порция из справочника. Белок не режу и не досыпаю граммами: продукт либо на тарелке, либо нет. */
+function applyProteinPlate(slots: MenuSlot[], macros: MenuMacros) {
+  for (const slot of slots) {
+    const name = slot.def.food;
+    const p = macros.proteinG;
+    if (name === "Творог") {
+      slot.g = slot.key === "breakfast" ? (p >= 185 ? 150 : 0) : p >= 170 ? 150 : 0;
+    } else if (name === "Яйца") slot.g = p >= 85 ? 110 : 0;
+    else if (name === "Рыба на пару") slot.g = p >= 125 ? 150 : 0;
+    else if (name === "Омлет") slot.g = p >= 85 ? 150 : 0;
+    else if (name === "Сате") slot.g = p >= 155 ? 120 : 0;
+    else if (name === "Креветки") slot.g = p >= 145 ? 120 : 0;
+  }
+}
+
 function flexLimit(
   name: string,
   g: number,
   macros?: MenuMacros | null
 ): { min: number; max: number; step: number } | null {
+  if (PROT_FLEX.has(name) || name === "Яйца") return null;
   if (macros && name === "Масло растительное") {
     const piece = measureG(name) || 5;
     return { min: piece, max: piece * 6, step: piece };
@@ -375,10 +400,9 @@ function flexLimit(
   if (measureG(name)) return null;
   const food = menuFood(name);
   const step = g < 50 ? 5 : 10;
-  const minMul = macros && PROT_FLEX.has(name) ? 0.5 : OPTIONAL_CARB.has(name) ? 0 : 0.4;
   const cap = PORTION_MAX[name] ?? Math.round(food.defaultG * 2.5);
   return {
-    min: OPTIONAL_CARB.has(name) ? 0 : Math.max(step, roundG(name, food.defaultG * minMul)),
+    min: OPTIONAL_CARB.has(name) ? 0 : Math.max(step, roundG(name, food.defaultG * 0.4)),
     max: cap,
     step,
   };
@@ -403,9 +427,10 @@ function stepGroup(
   slots: MenuSlot[],
   macros: MenuMacros,
   pick: (name: string) => boolean,
-  dir: 1 | -1
+  dir: 1 | -1,
+  preferLowProtein = false
 ): boolean {
-  let best: { i: number; g: number; fill: number } | null = null;
+  let best: { i: number; g: number; fill: number; p100: number } | null = null;
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
     if (!pick(slot.def.food)) continue;
@@ -414,9 +439,17 @@ function stepGroup(
     const next = slot.g + dir * lim.step;
     if (next < lim.min || next > lim.max) continue;
     const fill = (slot.g - lim.min) / Math.max(lim.max - lim.min, 1);
-    if (!best || (dir > 0 && fill < best.fill) || (dir < 0 && fill > best.fill)) {
-      best = { i, g: next, fill };
-    }
+    const p100 = menuFood(slot.def.food).p100;
+    const better = !best
+      ? true
+      : preferLowProtein
+        ? dir > 0
+          ? p100 < best.p100 || (p100 === best.p100 && fill < best.fill)
+          : p100 > best.p100 || (p100 === best.p100 && fill > best.fill)
+        : dir > 0
+          ? fill < best.fill
+          : fill > best.fill;
+    if (better) best = { i, g: next, fill, p100 };
   }
   if (!best) return false;
   slots[best.i].g = best.g;
@@ -425,10 +458,11 @@ function stepGroup(
 
 function fitKcalOnly(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
   for (let n = 0; n < 60; n++) {
-    const now = slots.reduce((s, x) => s + nutr(x.def.food, x.g).kcal, 0);
-    const gap = target - now;
+    const nowKcal = slots.reduce((s, x) => s + nutr(x.def.food, x.g).kcal, 0);
+    const gap = target - nowKcal;
     if (Math.abs(gap) <= 20) return;
-    let best: { i: number; g: number; err: number } | null = null;
+    const proteinHigh = Boolean(macros && slotNutr(slots).proteinG >= macros.proteinG);
+    let best: { i: number; g: number; err: number; p100: number } | null = null;
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
       const lim = flexLimit(slot.def.food, slot.g, macros);
@@ -436,9 +470,15 @@ function fitKcalOnly(slots: MenuSlot[], target: number, macros?: MenuMacros | nu
       const next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
       if (next < lim.min || next > lim.max) continue;
       const err = Math.abs(
-        target - (now - nutr(slot.def.food, slot.g).kcal + nutr(slot.def.food, next).kcal)
+        target - (nowKcal - nutr(slot.def.food, slot.g).kcal + nutr(slot.def.food, next).kcal)
       );
-      if (!best || err < best.err) best = { i, g: next, err };
+      const p100 = menuFood(slot.def.food).p100;
+      const better = !best
+        ? true
+        : proteinHigh && gap > 0
+          ? p100 < best.p100 || (p100 === best.p100 && err < best.err)
+          : err < best.err;
+      if (better) best = { i, g: next, err, p100 };
     }
     if (!best || best.err >= Math.abs(gap)) return;
     slots[best.i].g = best.g;
@@ -454,8 +494,12 @@ function reconcileDay(slots: MenuSlot[], target: number, macros?: MenuMacros | n
     const cGap = macros ? macros.carbsG - now.carbsG : 0;
     const fGap = macros ? now.fatG - macros.fatG : 0;
     if (
-      Math.abs(kGap) <= 30 &&
-      (!macros || (pGap <= 20 && pGap >= -18 && Math.abs(cGap) <= 30 && Math.abs(fGap) <= 12))
+      Math.abs(kGap) <= FIT.kcal &&
+      (!macros ||
+        (pGap <= FIT.protein &&
+          pGap >= -FIT.protein &&
+          Math.abs(cGap) <= FIT.carbs &&
+          Math.abs(fGap) <= FIT.fat))
     ) {
       return;
     }
@@ -493,41 +537,36 @@ function reconcileDay(slots: MenuSlot[], target: number, macros?: MenuMacros | n
   }
 }
 
-/** Без БЖУ добиваю только ккал. С нормой: белок убавляю, углеводы раскладываю по крупам. */
+/** Без БЖУ добиваю только ккал. С нормой: белковые порции уже выбраны, двигаю крупы и жир. */
 function fitSlots(slots: MenuSlot[], target: number, macros?: MenuMacros | null) {
   if (!macros) {
     fitKcalOnly(slots, target);
     return;
   }
   fitKcalOnly(slots, target, macros);
-  for (let n = 0; n < 120; n++) {
+  for (let n = 0; n < 200; n++) {
     const now = slotNutr(slots);
     const pGap = now.proteinG - macros.proteinG;
     const cGap = macros.carbsG - now.carbsG;
     const fGap = now.fatG - macros.fatG;
     const kGap = target - now.kcal;
-    if (Math.abs(kGap) <= 25 && pGap <= 18 && pGap >= -15 && Math.abs(cGap) <= 25 && Math.abs(fGap) <= 10) {
+    if (Math.abs(kGap) <= FIT.kcal && Math.abs(cGap) <= FIT.carbs && Math.abs(fGap) <= FIT.fat) {
       return;
     }
+    const lowP = pGap > 0;
     let moved = false;
-    if (pGap > 15) moved = stepGroup(slots, macros, (name) => PROT_FLEX.has(name), -1);
-    if (!moved && cGap < -15) moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), -1);
-    if (!moved && cGap > 15 && fGap > 0) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), -1);
-    if (!moved && cGap > 15 && kGap >= -15) {
-      moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), 1);
+    if (cGap < -FIT.carbs) moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), -1, lowP);
+    if (!moved && cGap > FIT.carbs && fGap > 0) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), -1);
+    if (!moved && cGap > FIT.carbs && kGap >= -FIT.kcal) {
+      moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), 1, lowP);
     }
-    if (!moved && cGap > 15 && pGap > 0) moved = stepGroup(slots, macros, (name) => PROT_FLEX.has(name), -1);
-    if (!moved && fGap > 8) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), -1);
-    if (!moved && fGap < -8) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), 1);
-    if (!moved && kGap > 20) {
-      moved = cGap >= 0
-        ? stepGroup(slots, macros, (name) => CARB_FLEX.has(name), 1)
-        : stepGroup(slots, macros, (name) => PROT_FLEX.has(name), 1);
+    if (!moved && fGap > FIT.fat) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), -1);
+    if (!moved && fGap < -FIT.fat) moved = stepGroup(slots, macros, (name) => FAT_FLEX.has(name), 1);
+    if (!moved && kGap > FIT.kcal) {
+      moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), 1, lowP);
     }
-    if (!moved && kGap < -20) {
-      moved = pGap > 0
-        ? stepGroup(slots, macros, (name) => PROT_FLEX.has(name), -1)
-        : stepGroup(slots, macros, (name) => CARB_FLEX.has(name), -1);
+    if (!moved && kGap < -FIT.kcal) {
+      moved = stepGroup(slots, macros, (name) => CARB_FLEX.has(name), -1, lowP);
     }
     if (!moved) return;
   }
@@ -551,6 +590,7 @@ export function dayMenu(
       slots.push({ key, def, g: def.g });
     }
   }
+  applyProteinPlate(slots, macros ?? inferredMacros(target));
   fitSlots(slots, target, macros);
   const meals: MenuMeal[] = MEAL_KEYS.map((key) => {
     const items = slots.filter((s) => s.key === key && s.g > 0).map((s) => buildItem(s.def, s.g));
