@@ -37,51 +37,47 @@
  * скакалке. Список ушел в Desktop/ВИДЕО-В-ШТАБ/ЧТО СНЯТЬ.md.
  */
 
-const CLIPS = "C:/Users/admin/OneDrive/Desktop/CURSOR/public/video/artur/exercises";
-const ARCH = "C:/Users/admin/OneDrive/Desktop/CONTENT/brand/media-archive/master/videos";
+const WEBAPP = "C:/Users/admin/OneDrive/Desktop/BABKI/mybot/webapp/video/ex";
+const ARCH = "C:/Users/admin/OneDrive/Desktop/CONTENT/brand/media-archive";
 const STILL = "assets/rewrite-photos";
+const GEN = "C:/Users/admin/OneDrive/Desktop/CONTENT/brand/media-archive/generated/akf-2026-08";
 
 export const MEDIA = {
-  // Простые базовые движения под текст о том, что усложнять нечего.
-  // Раньше тут стоял box-jump, а это тот же файл, что у поста 52.
-  9: { type: "clip", src: `${CLIPS}/dip.mp4`, out: "r09-dip.mp4", note: "брусья" },
+  9: { type: "clip", src: `${WEBAPP}/vis-na-turnike.mp4`, out: "r09-dip.mp4", note: "брусья/турник" },
 
-  46: { type: "loc", src: `${ARCH}/IMG_2092.MOV`, out: "r46-predawn-bay.mp4", ss: 4, dur: 8, note: "залив до рассвета" },
-  51: { type: "clip", src: `${CLIPS}/band-shoulder-dislocate.mp4`, out: "r51-band-shoulders.mp4", note: "резина на плечи" },
-  52: { type: "clip", src: `${CLIPS}/back-squat.mp4`, out: "r52-back-squat.mp4", note: "присед в глубину" },
-  53: { type: "clip", src: `${CLIPS}/negative-pull-up.mp4`, out: "r53-negative-pullup.mp4", note: "выход на перекладину" },
-  61: { type: "loc", src: `${ARCH}/IMG_1385.MOV`, out: "r61-beach.mp4", ss: 1.5, dur: 8, note: "пляж днем" },
-  62: { type: "clip", src: `${CLIPS}/farmers-carry.mp4`, out: "r62-farmers-carry.mp4", note: "переноска гантелей" },
-  64: { type: "clip", src: `${CLIPS}/shadow-boxing.mp4`, out: "r64-outdoor-field.mp4", note: "работа на поле, а не в кондиционере" },
+  46: { type: "loc", src: `${ARCH}/master/videos/IMG_2092.MOV`, out: "r46-predawn-bay.mp4", ss: 4, dur: 8, note: "залив до рассвета" },
+  51: { type: "clip", src: `${WEBAPP}/razgibanie-ruk-s-kanatom.mp4`, out: "r51-band-shoulders.mp4", note: "резина, плечи" },
+  52: { type: "clip", src: `${WEBAPP}/prisedaniya-s-gantelyu-u-grudi.mp4`, out: "r52-back-squat.mp4", note: "присед" },
+  53: { type: "clip", src: `${WEBAPP}/podtyagivaniya.mp4`, out: "r53-negative-pullup.mp4", note: "подтягивания" },
+  61: { type: "loc", src: `${ARCH}/master/videos/IMG_1385.MOV`, out: "r61-beach.mp4", ss: 1.5, dur: 8, note: "пляж днем" },
+  62: { type: "clip", src: `${WEBAPP}/tyaga-ganteli-v-naklone.mp4`, out: "r62-farmers-carry.mp4", note: "тяга/носиль" },
+  64: { type: "clip", src: `${WEBAPP}/zhim-giri-stoya.mp4`, out: "r64-outdoor-field.mp4", note: "работа с гирей" },
 
-  // Текст перечисляет жим как базу, которая идет первой. Раньше стоял barbell-row,
-  // где Артур просто стоит у стойки и держит гриф.
-  71: { type: "clip", src: `${CLIPS}/incline-bench-press.mp4`, out: "r71-bench-press.mp4", note: "жим лежа, база" },
+  71: { type: "clip", src: `${WEBAPP}/zhim-ganteley-lezha.mp4`, out: "r71-bench-press.mp4", note: "жим лежа" },
 
-  79: { type: "clip", src: `${CLIPS}/hip-90-90-stretch.mp4`, out: "r79-mobility.mp4", note: "мобильность на полу" },
-  80: { type: "shot", src: `${ARCH}/IMG_2104.MOV`, out: "r80-viewpoint.jpg", ss: 1, note: "смотровая над заливом" },
+  79: { type: "clip", src: `${WEBAPP}/planka.mp4`, out: "r79-mobility.mp4", note: "кор/планка" },
+  80: { type: "shot", src: `${ARCH}/master/videos/IMG_2104.MOV`, out: "r80-viewpoint.jpg", ss: 1, note: "смотровая" },
 
-  // Пост прямо про угол жима, поэтому наклонный жим гантелей, а не горизонтальный.
-  82: { type: "clip", src: `${CLIPS}/bulgarian-split-squat.mp4`, out: "r82-incline-db-press.mp4", note: "наклонный жим гантелей" },
+  81: { type: "photo", src: `${GEN}/akf-lowback-blocks.png`, out: "r81-joint-care.png", note: "суставы, обход" },
 
-  // Становой в архиве нет. Пробовал подставить работу на наклонной скамье,
-  // но в кадр попадают только ноги, и без подписи это читается как что угодно.
-  // Предметный кадр честнее подмены.
-  83: { type: "photo", src: `${STILL}/deadlift-floor.png`, out: "r83-deadlift-floor.png", note: "становой в архиве нет" },
+  82: { type: "clip", src: `${WEBAPP}/zhim-ganteley-na-naklonnoy.mp4`, out: "r82-incline-db-press.mp4", note: "наклонный жим" },
 
-  84: { type: "photo", src: `${STILL}/kettlebells.png`, out: "r84-kettlebells.png", note: "маха гири в архиве нет" },
+  83: { type: "clip", src: `${WEBAPP}/stanovaya-tyaga.mp4`, out: "r83-deadlift.mp4", note: "становая, Артур" },
 
-  // Прыжков на скакалке в архиве нет: вся сессия IMG_309x это разминка,
-  // растяжка с верёвкой и бой с тенью. Взят другой кадр той же сессии,
-  // стадион на закате, скакалка в руках.
-  85: { type: "loc", src: `${ARCH}/IMG_3098.MP4`, out: "r85-rope-sunset.mp4", ss: 42, dur: 8, note: "стадион на закате, скакалка" },
+  84: { type: "clip", src: `${WEBAPP}/mahi-girey.mp4`, out: "r84-kettlebell-swing.mp4", note: "мах гири" },
 
-  87: { type: "loc", src: `${ARCH}/IMG_8244.MP4`, out: "r87-night-track.mp4", ss: 3, dur: 8, note: "стадион в сумерках" },
-  88: { type: "shot", src: `${ARCH}/IMG_2663.MOV`, out: "r88-cafe-plate.jpg", ss: 1.4, note: "тарелка в тайском кафе" },
+  85: { type: "loc", src: `${ARCH}/master/videos/IMG_3098.MP4`, out: "r85-rope-sunset.mp4", ss: 42, dur: 8, note: "скакалка, стадион" },
 
-  // Текст называет планку первой. Раньше стоял russian-twist, где на самом
-  // деле отжимания на упорах.
-  89: { type: "clip", src: `${CLIPS}/plank.mp4`, out: "r89-plank.mp4", note: "планка" },
+  86: { type: "photo", src: `${GEN}/prog-bg-8-notebook.png`, out: "r86-periodization.png", note: "план, блокнот" },
 
-  90: { type: "photo", src: `${STILL}/stairs-down.png`, out: "r90-stairs.png", note: "приседа крупно на стопу нет, текст про лестницу" },
+  87: { type: "loc", src: `${ARCH}/master/videos/IMG_8244.MP4`, out: "r87-night-track.mp4", ss: 3, dur: 8, note: "стадион" },
+  88: { type: "shot", src: `${ARCH}/master/videos/IMG_2663.MOV`, out: "r88-cafe-plate.jpg", ss: 1.4, note: "тарелка в кафе" },
+
+  89: { type: "clip", src: `${WEBAPP}/planka.mp4`, out: "r89-plank.mp4", note: "пресс/кор, планка" },
+
+  90: { type: "photo", src: `${STILL}/r90-knee-pain.png`, out: "r90-knee-pain.png", note: "колено, боль" },
+
+  91: { type: "photo", src: `${GEN}/sleep-bg-2-clock.png`, out: "r91-recovery.png", note: "восстановление после болезни" },
+
+  92: { type: "photo", src: `${ARCH}/frames/gym-squat.jpg`, out: "r92-after-40.jpg", note: "Артур в зале, 40+" },
 };
