@@ -228,14 +228,14 @@ function option(name: string, g: number): MenuOption {
   return { food: name, amount: amountText(name, g), ...nutr(name, g) };
 }
 
-function buildItem(def: MenuItemDef, factor: number): MenuItem {
-  const baseG = roundG(def.food, def.g * factor);
+function buildItem(def: MenuItemDef, grams: number): MenuItem {
+  const baseG = roundG(def.food, grams);
   const base = option(def.food, baseG);
   const options = [base, ...def.alt.map((name) => option(name, swapG(name, base.kcal)))];
   return { ...base, options };
 }
 
-/** Калорийность меню в базовых порциях: от неё считается множитель под цель. */
+/** Калорийность меню в базовых порциях: от неё считается множитель под норму. */
 function baseKcal(menuId: MenuId): number {
   let total = 0;
   for (const key of MEAL_KEYS) {
@@ -244,11 +244,83 @@ function baseKcal(menuId: MenuId): number {
   return total;
 }
 
-/** Итог: [ккал, белок, углеводы, жиры] — порядок как в тексте бота. */
-export function dayMenu(menuId: MenuId, goal: MealGoal): { meals: MenuMeal[]; total: number[] } {
-  const factor = GOAL_KCAL[goal] / baseKcal(menuId);
+/**
+ * Крупы и объёмный белок. Штуки (яйца, банан) не делятся, ими норму не добираю:
+ * после общего множителя двигаю только эти позиции шагом 5–10 г.
+ */
+const FLEX_FOODS = new Set([
+  "Овсянка на молоке",
+  "Гречка отварная",
+  "Рис отварной",
+  "Паста отварная",
+  "Картофель отварной",
+  "Курица",
+  "Курица отварная",
+  "Курица запечённая",
+  "Творог",
+  "Рыба на пару",
+  "Индейка",
+  "Пад Тай",
+  "Том Ям",
+  "Сом Там",
+]);
+
+type MenuSlot = { key: MealKey; def: MenuItemDef; g: number };
+
+function flexLimit(name: string, g: number): { min: number; max: number; step: number } | null {
+  if (!FLEX_FOODS.has(name) || measureG(name)) return null;
+  const food = menuFood(name);
+  const step = g < 50 ? 5 : 10;
+  return {
+    min: Math.max(step, roundG(name, food.defaultG * 0.4)),
+    max: roundG(name, food.defaultG * 2.5),
+    step,
+  };
+}
+
+/** Добиваю день до нормы: один шаг той позиции, которая сильнее закрывает разрыв. */
+function fitSlots(slots: MenuSlot[], target: number) {
+  for (let n = 0; n < 60; n++) {
+    const now = slots.reduce((s, x) => s + nutr(x.def.food, x.g).kcal, 0);
+    const gap = target - now;
+    if (Math.abs(gap) <= 20) return;
+    let best: { i: number; g: number; err: number } | null = null;
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      const lim = flexLimit(slot.def.food, slot.g);
+      if (!lim) continue;
+      const next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
+      if (next < lim.min || next > lim.max) continue;
+      const err = Math.abs(
+        target - (now - nutr(slot.def.food, slot.g).kcal + nutr(slot.def.food, next).kcal)
+      );
+      if (!best || err < best.err) best = { i, g: next, err };
+    }
+    if (!best || best.err >= Math.abs(gap)) return;
+    slots[best.i].g = best.g;
+  }
+}
+
+/**
+ * Итог: [ккал, белок, углеводы, жиры] — порядок как в тексте бота.
+ * personalKcal важнее цели: сушка с нормой 2100 получает 2100, а не шаблон 1600.
+ */
+export function dayMenu(
+  menuId: MenuId,
+  goal: MealGoal,
+  personalKcal = 0
+): { meals: MenuMeal[]; total: number[] } {
+  const target = personalKcal > 0 ? personalKcal : GOAL_KCAL[goal];
+  const factor = target / baseKcal(menuId);
+  const slots: MenuSlot[] = [];
+  for (const key of MEAL_KEYS) {
+    for (const def of MENUS[menuId].meals[key]) {
+      slots.push({ key, def, g: roundG(def.food, def.g * factor) });
+    }
+  }
+  fitSlots(slots, target);
   const meals: MenuMeal[] = MEAL_KEYS.map((key) => {
-    const items = MENUS[menuId].meals[key].map((def) => buildItem(def, factor));
+    const items = slots.filter((s) => s.key === key).map((s) => buildItem(s.def, s.g));
     return {
       key,
       label: MEAL_LABELS[key],

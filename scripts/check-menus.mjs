@@ -105,11 +105,10 @@ for (const menuId of MENU_IDS) {
     const app = APP.day(menuId, goal, 0, {});
 
     check(`${menuId}/${goal}: итог дня`, bot.total[0] === app.total.kcal, `бот ${bot.total[0]}, приложение ${app.total.kcal}`);
-    /* Допуск 5%, а не 1%: штучные продукты не делятся. Полтора яйца и 1,2 банана
-       никто не ест, поэтому на наборе итог честно недотягивает до круглой цели. */
+    /* После подгонки крупами разрыв должен быть в пределах шага 10 г, не 5%. */
     check(
       `${menuId}/${goal}: итог дня близко к цели`,
-      Math.abs(app.total.kcal - GOAL_KCAL[goal]) <= GOAL_KCAL[goal] * 0.05,
+      Math.abs(app.total.kcal - GOAL_KCAL[goal]) <= 25,
       `${app.total.kcal} против ${GOAL_KCAL[goal]}`
     );
 
@@ -179,9 +178,27 @@ check("личная норма поднимает порции", personal.total.
 check("личная норма выводится в карточке", personal.basedOn === 2600 && personal.personal === true);
 check(
   "личная норма выдержана",
-  Math.abs(personal.total.kcal - 2600) <= 2600 * 0.05,
+  Math.abs(personal.total.kcal - 2600) <= 25,
   String(personal.total.kcal)
 );
+
+const cutLike = APP.day("ru", "bulk", 1800, {});
+check("дефицит важнее цели набор", cutLike.basedOn === 1800, String(cutLike.basedOn));
+check("дефицит выдержан", Math.abs(cutLike.total.kcal - 1800) <= 25, String(cutLike.total.kcal));
+check("дефицит ниже шаблона набора", cutLike.total.kcal < APP.day("ru", "bulk", 0, {}).total.kcal);
+
+for (const kcal of [1700, 2000, 2400, 3100]) {
+  for (const menuId of MENU_IDS) {
+    const mine = APP.day(menuId, "maint", kcal, {});
+    const bot = dayMenu(menuId, "maint", kcal);
+    check(
+      `${menuId}@${kcal}: паритет с ботом`,
+      bot.total[0] === mine.total.kcal,
+      `бот ${bot.total[0]}, приложение ${mine.total.kcal}`
+    );
+    check(`${menuId}@${kcal}: к норме`, Math.abs(mine.total.kcal - kcal) <= 25, `${mine.total.kcal} против ${kcal}`);
+  }
+}
 
 /* ── Замена соразмерна позиции ─────────────────────────────────────────────── */
 

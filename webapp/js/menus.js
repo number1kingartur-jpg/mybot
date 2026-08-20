@@ -214,8 +214,8 @@ window.KM_MENUS = (function () {
   }
 
   /** Позиция приёма: выбранный продукт плюс он же и три замены в списке выбора. */
-  function item(def, id, factor, swaps) {
-    var baseG = roundG(FOOD[def.food], def.g * factor);
+  function item(def, id, grams, swaps) {
+    var baseG = roundG(FOOD[def.food], grams);
     var target = nutr(FOOD[def.food], baseG).kcal;
     var picked = swaps && swaps[id] && def.alt.indexOf(swaps[id]) !== -1 ? swaps[id] : def.food;
 
@@ -286,9 +286,9 @@ window.KM_MENUS = (function () {
     return size + " " + GOAL_TIP[goal];
   }
 
-  function meal(menuId, key, factor, swaps) {
+  function meal(menuId, key, grams, swaps) {
     var items = MENUS[menuId].meals[key].map(function (def, i) {
-      return item(def, menuId + ":" + key + ":" + i, factor, swaps);
+      return item(def, menuId + ":" + key + ":" + i, grams[i], swaps);
     });
     var t = sum(items);
     return {
@@ -303,16 +303,90 @@ window.KM_MENUS = (function () {
   }
 
   /**
+   * Крупы и объёмный белок. Штуки (яйца, банан) не делятся, ими норму не добираю:
+   * после общего множителя двигаю только эти позиции шагом 5–10 г.
+   */
+  var FLEX = {
+    "Овсянка на молоке": 1,
+    "Гречка отварная": 1,
+    "Рис отварной": 1,
+    "Паста отварная": 1,
+    "Картофель отварной": 1,
+    Курица: 1,
+    "Курица отварная": 1,
+    "Курица запечённая": 1,
+    Творог: 1,
+    "Рыба на пару": 1,
+    Индейка: 1,
+    "Пад Тай": 1,
+    "Том Ям": 1,
+    "Сом Там": 1
+  };
+
+  function flexLimit(food, name, g) {
+    if (!FLEX[name] || food.piece) return null;
+    var step = g < 50 ? 5 : 10;
+    return {
+      min: Math.max(step, roundG(food, food.def * 0.4)),
+      max: roundG(food, food.def * 2.5),
+      step: step
+    };
+  }
+
+  /** Добиваю день до нормы: один шаг той позиции, которая сильнее закрывает разрыв. */
+  function fitSlots(slots, target) {
+    var n, i, now, gap, best, slot, food, lim, next, err;
+    for (n = 0; n < 60; n++) {
+      now = 0;
+      for (i = 0; i < slots.length; i++) now += nutr(FOOD[slots[i].food], slots[i].g).kcal;
+      gap = target - now;
+      if (Math.abs(gap) <= 20) return;
+      best = null;
+      for (i = 0; i < slots.length; i++) {
+        slot = slots[i];
+        food = FOOD[slot.food];
+        lim = flexLimit(food, slot.food, slot.g);
+        if (!lim) continue;
+        next = gap > 0 ? slot.g + lim.step : slot.g - lim.step;
+        if (next < lim.min || next > lim.max) continue;
+        err = Math.abs(target - (now - nutr(food, slot.g).kcal + nutr(food, next).kcal));
+        if (!best || err < best.err) best = { i: i, g: next, err: err };
+      }
+      if (!best || best.err >= Math.abs(gap)) return;
+      slots[best.i].g = best.g;
+    }
+  }
+
+  /**
    * День меню под цель и норму.
    *
    * swaps — выбранные замены вида { "ru:breakfast:0": "Гречка отварная" }.
    * Итог дня складывается из позиций, поэтому после замены цифры меняются сами.
+   * personalKcal важнее цели: сушка с нормой 2100 получает 2100, а не шаблон 1600.
    */
   function day(menuId, goal, personalKcal, swaps) {
     var target = targetKcal(goal, personalKcal);
     var factor = target / baseKcal(menuId);
+    var slots = [];
+    KEYS.forEach(function (key) {
+      MENUS[menuId].meals[key].forEach(function (def) {
+        slots.push({
+          key: key,
+          food: def.food,
+          g: roundG(FOOD[def.food], def.g * factor)
+        });
+      });
+    });
+    fitSlots(slots, target);
     var meals = KEYS.map(function (key) {
-      return meal(menuId, key, factor, swaps);
+      var grams = slots
+        .filter(function (s) {
+          return s.key === key;
+        })
+        .map(function (s) {
+          return s.g;
+        });
+      return meal(menuId, key, grams, swaps);
     });
     return {
       title: MENUS[menuId].title,
