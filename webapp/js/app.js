@@ -59,6 +59,9 @@
     restDays: {},
     photoPreview: null,
     sameAsSkip: null,
+    samePick: null,
+    partAdd: "",
+    partAddG: "",
     repeatAsk: null
   };
 
@@ -592,6 +595,7 @@
     state.notice = { kind: "ok", text: okText };
     state.addMode = null;
     state.mealText = "";
+    state.samePick = null;
     state.manual = { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" };
     // Запоминаем последнюю запись, чтобы предложить правку порции. Состав модель
     // видит, вес — нет: именно порция и есть главный источник ошибки в оценке.
@@ -828,7 +832,16 @@
                 return partRowHtml(x, i, parts.length);
               })
               .join("") +
-            "</ul>"
+            "</ul>" +
+            '<div class="edit__add">' +
+            '<input class="input" type="text" data-path="partAdd" placeholder="арахисовая паста, банан" value="' +
+            esc(state.partAdd || "") +
+            '" />' +
+            '<input class="input edit__add-g" type="number" inputmode="numeric" min="1" max="3000" data-path="partAddG" placeholder="г" value="' +
+            esc(state.partAddG || "") +
+            '" />' +
+            '<button type="button" class="btn btn--outline food__add" data-action="part-add">Добавить</button>' +
+            "</div>"
           : "") +
         (m.said ? '<p class="note note--plain">Вижу так: ' + esc(m.said) + "</p>" : "") +
         (m.note ? '<p class="note note--plain">' + esc(m.note) + "</p>" : "") +
@@ -1379,43 +1392,126 @@
    * Вчера в этот час: спросить, то же ли блюдо, и не писать в дневник сразу.
    * Слот берётся с сервера по часу Бангкока: утром завтрак, днём обед.
    */
+  function sameUnits() {
+    var s = sameAsOffered();
+    if (!s) return [];
+    if (s.units && s.units.length) return s.units;
+    return (s.meals || []).map(function (m, i) {
+      return {
+        id: "m" + i,
+        title: m.name,
+        kcal: m.kcal,
+        items: (m.parts || []).map(function (p) {
+          return { name: p.name, grams: p.grams };
+        }),
+        mealName: m.name
+      };
+    });
+  }
+
+  function sameSelectedUnits() {
+    return sameUnits().filter(function (u) {
+      return !state.samePick || state.samePick[u.id] !== false;
+    });
+  }
+
   function sameAsCard() {
     var s = sameAsOffered();
     if (!s || sameAsSkipped()) return "";
-    var kcal = s.meals.reduce(function (a, m) {
-      return a + m.kcal;
+    var units = sameUnits();
+    var picked = sameSelectedUnits();
+    var kcal = picked.reduce(function (a, u) {
+      return a + u.kcal;
     }, 0);
-    var list = s.meals
-      .map(function (m) {
-        return esc(m.name) + ", " + m.kcal + " ккал";
-      })
-      .join("; ");
-    var pics = s.meals
-      .map(function (m) {
-        return thumb(m.slug, m.name, "food", m.photoUrl);
-      })
-      .join("");
     var when =
       s.title === "как обычно"
-        ? "Как обычно. Записать то же?"
+        ? "Как обычно. Отметь что было."
         : s.title === "вчера"
-          ? "Вчера было то же?"
-          : "Вчера на " + esc(s.title) + " было то же?";
+          ? "Вчера. Отметь что было."
+          : "Вчера на " + esc(s.title) + ". Отметь что было.";
+    var rows = units
+      .map(function (u) {
+        var on = !state.samePick || state.samePick[u.id] !== false;
+        return (
+          '<li class="same">' +
+          '<button type="button" class="same__tick' +
+          (on ? " same__tick--on" : "") +
+          '" data-action="same-as-toggle" data-id="' +
+          esc(u.id) +
+          '" aria-pressed="' +
+          (on ? "true" : "false") +
+          '">' +
+          (on ? "✓" : "") +
+          "</button>" +
+          '<span class="same__text"><span class="same__name">' +
+          esc(u.title) +
+          '</span><span class="same__meta">' +
+          u.kcal +
+          " ккал</span></span>" +
+          '<button type="button" class="btn btn--outline food__add" data-action="same-as-edit" data-id="' +
+          esc(u.id) +
+          '">Поправить</button></li>'
+        );
+      })
+      .join("");
     return card(
-      (pics ? '<div class="confirm__head">' + pics + "</div>" : "") +
       '<p class="lead">' +
         when +
         "</p>" +
+        '<p class="muted">Коктейль, виноград и стакан по отдельности. Сними галочку с того, чего не было. Состав напитка поправь до записи.</p>' +
+        '<ul class="sames">' +
+        rows +
+        "</ul>" +
         '<p class="muted">' +
-        list +
-        " · " +
-        kcal +
-        " ккал</p>" +
+        (picked.length
+          ? "Выбрано " + picked.length + " · " + kcal + " ккал"
+          : "Ничего не отмечено") +
+        "</p>" +
         '<div class="btn-stack">' +
-        '<button class="btn btn--primary" data-action="same-as-yes">Да, записать</button>' +
+        '<button class="btn btn--primary" data-action="same-as-yes"' +
+        (picked.length ? "" : " disabled") +
+        ">Записать выбранное</button>" +
         '<button class="btn btn--outline btn--slim" data-action="same-as-no">Нет, другое</button>' +
         "</div>"
     );
+  }
+
+  function isShakeName(name) {
+    var n = String(name || "").toLowerCase();
+    return /протеин|гейнер|белок яичн|жидк\w* белка|жидк\w* белок/.test(n) &&
+      /банан|овсян|арахис|молок|креатин|и ещё/.test(n);
+  }
+
+  function isHeapName(name) {
+    return /,\s*| и ещё \d+/.test(String(name || "")) || isShakeName(name);
+  }
+
+  function frequentLabel(name) {
+    if (isShakeName(name)) return "Коктейль";
+    if (name.length > 22) return name.slice(0, 21).replace(/[ ,]+$/, "") + "…";
+    return name;
+  }
+
+  function openRevise(name, items) {
+    if (!online) return;
+    state.busy = "food";
+    state.repeatAsk = null;
+    state.notice = null;
+    render();
+    var rev = items && items.length ? KM_API.revise(null, items) : KM_API.revise(name);
+    return rev
+      .then(function (data) {
+        state.day = data;
+        state.busy = null;
+        state.pending = data && data.pending ? data.pending : null;
+        state.partAdd = "";
+        state.partAddG = "";
+        state.screen = "nutrition";
+        state.nutTab = "eaten";
+        haptic("light");
+        render();
+      })
+      .catch(mealError);
   }
 
   function repeatAskCard() {
@@ -1430,6 +1526,9 @@
         " ккал</p>" +
         '<div class="btn-stack">' +
         '<button class="btn btn--primary" data-action="repeat-yes">Да, записать</button>' +
+        (isHeapName(a.name)
+          ? '<button class="btn btn--outline" data-action="repeat-edit">Сначала состав</button>'
+          : "") +
         '<button class="btn btn--outline btn--slim" data-action="repeat-no">Нет</button>' +
         "</div>"
     );
@@ -1454,7 +1553,7 @@
       list
         .slice(0, 3)
         .map(function (f) {
-          var short = f.name.length > 22 ? f.name.slice(0, 21).replace(/[ ,]+$/, "") + "…" : f.name;
+          var short = frequentLabel(f.name);
           return (
             '<button type="button" class="chip" data-repeat-ask="' +
             esc(f.name) +
@@ -2291,16 +2390,29 @@
     }
   }
 
+  function assetVer() {
+    return KM_API && KM_API.build ? KM_API.build() : "";
+  }
+
+  function exSrc(slug) {
+    var src = "img/ex/" + slug + ".webp";
+    var v = assetVer();
+    return v ? src + "?v=" + v : src;
+  }
+
   function thumb(slug, title, folder, photoUrl) {
     var src = "";
     if (photoUrl && isOffImage(photoUrl)) src = photoUrl;
-    else if (slug) src = "img/" + esc(folder || "food") + "/" + esc(slug) + ".webp";
-    if (!src) return "";
+    else if (slug) {
+      src = (folder || "food") === "ex" ? exSrc(slug) : "img/" + (folder || "food") + "/" + slug + ".webp";
+    }
     return (
       '<span class="thumb" aria-hidden="true">' +
-      '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
-      esc(src) +
-      '" onerror="this.parentNode.remove()" />' +
+      (src
+        ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
+          esc(src) +
+          '" onerror="this.remove()" />'
+        : "") +
       "</span>"
     );
   }
@@ -2402,7 +2514,7 @@
       var proteinG = Math.round((f.p100 * g) / 100);
       return (
         '<li class="food">' +
-        thumb(typeof KM_MENUS !== "undefined" && KM_MENUS.slugOf ? KM_MENUS.slugOf(f.name, g) : f.slug, f.name) +
+        thumb(f.slug || (typeof KM_MENUS !== "undefined" && KM_MENUS.slugOf ? KM_MENUS.slugOf(f.name, g) : ""), f.name) +
         '<span class="food__text">' +
         '<span class="food__name">' +
         esc(f.name) +
@@ -3210,9 +3322,9 @@
           var on = p.id === current;
           var cover = PROG_COVER[p.id] || "";
           var bg = cover
-            ? ' style="background-image:linear-gradient(180deg,rgba(11,11,12,.28),rgba(11,11,12,.84)),url(\'img/ex/' +
-              esc(cover) +
-              ".webp')\""
+            ? ' style="background-image:linear-gradient(180deg,rgba(11,11,12,.28),rgba(11,11,12,.84)),url(\'' +
+              esc(exSrc(cover)) +
+              "')\""
             : "";
           return (
             '<button type="button" class="prog' +
@@ -3535,9 +3647,9 @@
     var slug = KM_PLANS.slug(e);
     var local = e.video || KM_PLANS.localVideo(e);
     var media = local
-      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="img/ex/' +
-        esc(slug) +
-        '.webp" src="' +
+      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="' +
+        esc(exSrc(slug)) +
+        '" src="' +
         esc(local) +
         '"></video></div>'
       : "";
@@ -3720,15 +3832,15 @@
       historyHtml(e) +
       "</div>";
     var media = local
-      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="img/ex/' +
-        esc(slug) +
-        '.webp" src="' +
+      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="' +
+        esc(exSrc(slug)) +
+        '" src="' +
         esc(local) +
         '"></video></div>'
       : slug
-        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="img/ex/' +
-          esc(slug) +
-          '.webp" onerror="this.parentNode.remove()" /></div>'
+        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="' +
+          esc(exSrc(slug)) +
+          '" onerror="this.parentNode.remove()" /></div>'
         : "";
     var btn = local
       ? ""
@@ -4525,10 +4637,10 @@
     // Повтор частого блюда — тоже раньше .chip, по той же причине
     var ask = t.closest("[data-repeat-ask]");
     if (ask) {
-      state.repeatAsk = {
-        name: ask.getAttribute("data-repeat-ask"),
-        kcal: Number(ask.getAttribute("data-kcal")) || 0,
-      };
+      var askName = ask.getAttribute("data-repeat-ask");
+      var askKcal = Number(ask.getAttribute("data-kcal")) || 0;
+      if (isHeapName(askName)) return openRevise(askName);
+      state.repeatAsk = { name: askName, kcal: askKcal };
       state.notice = null;
       haptic("light");
       return render();
@@ -4708,24 +4820,112 @@
       case "meal-reject":
         return rejectPending();
       case "same-as-yes": {
-        var same = sameAsOffered();
-        if (!same) return;
-        return repeatMeals(
-          same.meals.map(function (m) {
-            return m.name;
+        var picked = sameSelectedUnits();
+        if (!picked.length) return;
+        var withItems = picked.filter(function (u) {
+          return u.items && u.items.length;
+        });
+        var onlyNames = picked
+          .filter(function (u) {
+            return !(u.items && u.items.length) && u.mealName;
           })
-        );
+          .map(function (u) {
+            return u.mealName;
+          });
+        if (withItems.length) {
+          state.busy = "food";
+          state.repeatAsk = null;
+          state.notice = null;
+          render();
+          KM_API.pick(
+            withItems.map(function (u) {
+              return { items: u.items };
+            })
+          )
+            .then(function (data) {
+              var extra = data.copied && data.copied.length > 1 ? data.copied : null;
+              var sumK = extra
+                ? extra.reduce(function (a, m) {
+                    return a + m.kcal;
+                  }, 0)
+                : data.meal.kcal;
+              applyMealResult(
+                data,
+                extra
+                  ? "Записал " + extra.length + " " + plural(extra.length, "приём", "приёма", "приёмов") + ", " + sumK + " ккал."
+                  : "Записал: " + data.meal.name + ", " + data.meal.kcal + " ккал."
+              );
+            })
+            .catch(mealError);
+          return;
+        }
+        return repeatMeals(onlyNames);
+      }
+      case "same-as-toggle": {
+        var tog = action.getAttribute("data-id") || action.getAttribute("data-name");
+        if (!tog) return;
+        if (!state.samePick) state.samePick = {};
+        state.samePick[tog] = state.samePick[tog] === false;
+        haptic("light");
+        return render();
+      }
+      case "same-as-edit": {
+        var editId = action.getAttribute("data-id");
+        var unit = sameUnits().filter(function (u) {
+          return u.id === editId;
+        })[0];
+        if (!unit || !online) return;
+        state.busy = "food";
+        state.notice = null;
+        render();
+        var rev =
+          unit.items && unit.items.length
+            ? KM_API.revise(null, unit.items)
+            : KM_API.revise(unit.mealName || unit.title);
+        rev
+          .then(function (data) {
+            state.day = data;
+            state.busy = null;
+            state.pending = data && data.pending ? data.pending : null;
+            state.partAdd = "";
+            state.partAddG = "";
+            state.nutTab = "eaten";
+            haptic("light");
+            render();
+          })
+          .catch(mealError);
+        return;
+      }
+      case "part-add": {
+        var addName = String(state.partAdd || "").trim();
+        var addG = num(state.partAddG);
+        if (!addName || !(addG >= 1 && addG <= 3000)) {
+          state.notice = { kind: "err", text: "Напиши продукт и граммы." };
+          return render();
+        }
+        return editPendingPart(function (token) {
+          return KM_API.addPart(token, addName, addG).then(function (data) {
+            state.partAdd = "";
+            state.partAddG = "";
+            return data;
+          });
+        });
       }
       case "same-as-no": {
         var off = sameAsOffered();
         state.sameAsSkip = off ? { date: serverToday(), slot: off.slot } : null;
+        state.samePick = null;
         persist();
         haptic("light");
         return render();
       }
       case "repeat-yes":
         if (!state.repeatAsk) return;
+        if (isHeapName(state.repeatAsk.name)) return openRevise(state.repeatAsk.name);
         return repeatMeals([state.repeatAsk.name]);
+      case "repeat-edit":
+        if (!state.repeatAsk) return;
+        return openRevise(state.repeatAsk.name);
       case "repeat-no":
         state.repeatAsk = null;
         haptic("light");
