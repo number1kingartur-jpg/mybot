@@ -194,6 +194,8 @@ check(
 );
 check("зал: есть молоты", programNames.includes("Молоты двумя руками"));
 check("зал: есть разгибание на блоке", programNames.includes("Разгибание рук с канатом"));
+check("дом: есть сгибание с канистрой", programNames.includes("Сгибание рук с канистрой"));
+check("дом: есть разгибание с канистрой", programNames.includes("Разгибание рук с канистрой"));
 
 const squat = SIMPLE_PLANS.home[0].items[0];
 check("набор: 4 подхода", schemeFor(squat, "bulk").startsWith("4 подхода"), schemeFor(squat, "bulk"));
