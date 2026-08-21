@@ -107,6 +107,11 @@ export interface UserRecord {
   mealRemindMissed?: number;   // сколько напоминаний подряд не привели к записи
   mealRemindPaused?: boolean;  // авто-пауза: не надоедаем тому, кто не отвечает
   ref?: string;                // источник: kingmode, channel, …
+  /** Бесплатный «Старт 3 дня» */
+  restartActive?: boolean;
+  restartStarted?: string;     // YYYY-MM-DD
+  restartDoneDays?: number;    // 0–3
+  restartLastDoneDate?: string;
   restDate?: string;           // YYYY-MM-DD: сегодня отмечен отдых в маршруте дня
 }
 
@@ -125,6 +130,20 @@ export interface MealEntry {
   photoUrl?: string;
   /** Час Бангкока, когда записали. Нужен, чтобы утром предлагать вчерашний завтрак. */
   hour?: number;
+  /**
+   * Состав. Без него повтор коктейля это одна строка, и арахисовую пасту
+   * из напитка не вычесть.
+   */
+  parts?: {
+    name: string;
+    grams: number;
+    kcal: number;
+    proteinG: number;
+    fatG: number;
+    carbsG: number;
+    slug?: string;
+    source?: "catalog" | "barcode" | "label" | "similar";
+  }[];
 }
 
 export interface Challenge {
@@ -663,6 +682,16 @@ export function scaleMeal(userId: number, mealId: string, factor: number): MealE
   row.proteinG = Math.round(row.proteinG * k);
   row.fatG = Math.round(row.fatG * k);
   row.carbsG = Math.round(row.carbsG * k);
+  if (row.parts?.length) {
+    row.parts = row.parts.map((p) => ({
+      ...p,
+      grams: Math.max(1, Math.round(p.grams * k)),
+      kcal: Math.round(p.kcal * k),
+      proteinG: Math.round(p.proteinG * k * 10) / 10,
+      fatG: Math.round(p.fatG * k * 10) / 10,
+      carbsG: Math.round(p.carbsG * k * 10) / 10,
+    }));
+  }
   save(db);
   return row;
 }

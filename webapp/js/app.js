@@ -50,7 +50,7 @@
     profile: { sex: "m", age: 30, heightCm: 180, weightKg: 80, activity: "mid", goal: "maint" },
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
-    workout: { place: "home", plan: 0, level: "", split: "", meso: 0, cycle: 0 },
+    workout: { place: "home", plan: 0, level: "start", split: "fb-start", meso: 0, cycle: 0 },
     session: { key: "", startedAt: 0, restUntil: 0, lifts: {}, notes: {} },
     diary: { date: today(), weightKg: "" },
     entries: [],
@@ -154,6 +154,10 @@
       if (saved.restDays && typeof saved.restDays === "object") state.restDays = saved.restDays;
       if (saved.sameAsSkip && typeof saved.sameAsSkip === "object") state.sameAsSkip = saved.sameAsSkip;
       restoreSession(saved.session);
+      if (!state.workout.split) {
+        state.workout.split = "fb-start";
+        if (!state.workout.level) state.workout.level = "start";
+      }
       state.setupDone = Boolean(saved.setupDone);
       state.migrated = Boolean(saved.migrated);
       hadSavedProfile = Boolean(saved.profile);
@@ -589,6 +593,31 @@
       });
   }
 
+  function recordUsualShake() {
+    if (!online) return;
+    state.busy = "food";
+    state.notice = null;
+    render();
+    KM_API.usualShake()
+      .then(function (data) {
+        state.pending = null;
+        clearPhotoPreview();
+        applyMealResult(data, "Коктейль: " + data.meal.kcal + " ккал.");
+      })
+      .catch(mealError);
+  }
+
+  function usualShakeChip() {
+    var usual = state.day && state.day.usualShake;
+    if (!usual || !online) return "";
+    return (
+      '<button type="button" class="chip chip--gold" data-action="usual-shake">' +
+      "🥤 Коктейль · " +
+      usual.kcal +
+      " ккал</button>"
+    );
+  }
+
   function applyMealResult(data, okText) {
     state.day = data;
     state.busy = null;
@@ -725,6 +754,32 @@
     if (online) KM_API.rejectMeal(p.token).catch(function () {});
     state.pending = null;
     clearPhotoPreview();
+    haptic("light");
+    render();
+  }
+
+  /** Окно убрать, состав не оставлять: ни в дневник, ни в поле ввода. */
+  function dismissPending() {
+    var p = state.pending;
+    if (p && online) KM_API.rejectMeal(p.token).catch(function () {});
+    state.pending = null;
+    state.mealText = "";
+    state.addMode = null;
+    state.partAdd = "";
+    state.partAddG = "";
+    state.notice = null;
+    clearPhotoPreview();
+    haptic("light");
+    render();
+  }
+
+  function dismissSameAs() {
+    var skip = { date: serverToday(), slots: [] };
+    sameAsList().forEach(function (s) {
+      if (s.slot && skip.slots.indexOf(s.slot) === -1) skip.slots.push(s.slot);
+    });
+    state.sameAsSkip = skip;
+    persist();
     haptic("light");
     render();
   }
@@ -871,8 +926,12 @@
               .join("") +
             "</ul>" +
             '<div class="edit__add">' +
-            '<p class="muted">Не хватает овсянки, протеина или креатина: допиши здесь, потом «Добавить».</p>' +
-            '<input class="input" type="text" data-path="partAdd" placeholder="овсянка, протеин, креатин" value="' +
+            (pendingNeedsShakeFill(parts)
+              ? '<p class="muted">Не хватает овсянки, протеина или креатина: допиши здесь, потом «Добавить».</p>'
+              : '<p class="muted">Не хватает позиции: допиши здесь, потом «Добавить».</p>') +
+            '<input class="input" type="text" data-path="partAdd" placeholder="' +
+            (pendingNeedsShakeFill(parts) ? "овсянка, протеин, креатин" : "продукт") +
+            '" value="' +
             esc(state.partAdd || "") +
             '" />' +
             '<input class="input edit__add-g" type="number" inputmode="numeric" min="1" max="3000" data-path="partAddG" placeholder="г" value="' +
@@ -894,8 +953,27 @@
             "Сними ещё раз так, чтобы попал штрихкод: по нему продукт находится точно.</p>"
           : "") +
         '<div class="btn-stack" style="margin-top:14px">' +
-        '<button class="btn btn--primary" data-action="meal-confirm">Да, записать</button>' +
+        (function () {
+          var usual = state.day && state.day.usualShake;
+          if (!usual) return "";
+          return (
+            '<button class="btn btn--primary" data-action="usual-shake">' +
+            "Коктейль · " +
+            usual.kcal +
+            " ккал</button>"
+          );
+        })() +
+        (function () {
+          var usual = state.day && state.day.usualShake;
+          var wrong = usual && !isShakeParts(parts);
+          return (
+            '<button class="btn btn--primary" data-action="meal-confirm">' +
+            (wrong ? "Записать это, " + m.kcal + " ккал" : "Да, записать") +
+            "</button>"
+          );
+        })() +
         '<button class="btn btn--outline btn--slim" data-action="meal-reject">Поправить результат</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="meal-dismiss">Убрать</button>' +
         "</div>"
     );
   }
@@ -1032,7 +1110,7 @@
             ])
           ) +
           field("Где тренируешься", chips("s_place", state.workout.place, [["home", "Дома"], ["gym", "В зале"]])) +
-          field("Программа", programShelfHtml("s_split", workoutSplit())) +
+          '<p class="muted">Программу на первый месяц ставлю сама: Full Body с нуля. Сменишь в «Тренировке».</p>' +
           '<div class="btn-stack" style="margin-top:18px">' +
           '<button class="btn btn--primary" data-action="setup-done">Готово</button>' +
           '<button class="btn btn--outline btn--slim" data-action="setup-skip">Пропустить</button>' +
@@ -1065,6 +1143,7 @@
     // Место и ступень иначе останутся только на устройстве: loadDay потом
     // перетрёт их значением бота по умолчанию.
     workoutTouched = true;
+    if (!state.workout.split) state.workout.split = "fb-start";
     if (online) {
       KM_API.saveSettings({
         place: state.workout.place,
@@ -1535,6 +1614,7 @@
         '<button class="btn btn--outline btn--slim" data-action="same-as-no" data-slot="' +
         esc(s.slot || "") +
         '">Нет, другое</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="same-as-dismiss">Убрать</button>' +
         "</div>"
     );
   }
@@ -1545,8 +1625,27 @@
 
   function isShakeName(name) {
     var n = String(name || "").toLowerCase();
+    if (/^коктейль\b/.test(n)) return true;
     return /протеин|гейнер|белок яичн|жидк\w* белка|жидк\w* белок/.test(n) &&
       /банан|овсян|арахис|молок|креатин|и ещё/.test(n);
+  }
+
+  function isShakeParts(parts) {
+    if (!parts || !parts.length) return false;
+    var blob = parts.map(function (x) { return String(x.name || "").toLowerCase(); }).join(" ");
+    var powder = /протеин|гейнер|белок яичн|жидк\w* белка|жидк\w* белок/.test(blob);
+    var extra = /банан|овсян|арахис|молок|креатин/.test(blob);
+    return powder && extra;
+  }
+
+  function isCompleteShakeParts(parts) {
+    if (!isShakeParts(parts)) return false;
+    var blob = parts.map(function (x) { return String(x.name || "").toLowerCase(); }).join(" ");
+    return /овсян/.test(blob) && /протеин|гейнер/.test(blob);
+  }
+
+  function pendingNeedsShakeFill(parts) {
+    return !!(state.day && state.day.usualShake && isShakeParts(parts) && !isCompleteShakeParts(parts));
   }
 
   function isHeapName(name) {
@@ -1559,9 +1658,29 @@
     return name;
   }
 
+  var USUAL_SHAKE_ITEMS = [
+    { name: "белок яичный жидкий", grams: 250 },
+    { name: "молоко таиландское", grams: 100 },
+    { name: "банан", grams: 360 },
+    { name: "овсяные хлопья сухие", grams: 96 },
+    { name: "арахисовая паста", grams: 16 },
+    { name: "протеин", grams: 60 },
+    { name: "креатин", grams: 3 }
+  ];
+
+  function usualShakeItems() {
+    var usual = state.day && state.day.usualShake;
+    if (usual && usual.parts && usual.parts.length >= 5) return usual.parts;
+    return USUAL_SHAKE_ITEMS;
+  }
+
+  function openUsualShakeEditor() {
+    return openRevise(null, usualShakeItems());
+  }
+
   function openRevise(name, items) {
     if (!online) return;
-    state.busy = "food";
+    state.busy = "revise";
     state.repeatAsk = null;
     state.notice = null;
     render();
@@ -1614,9 +1733,10 @@
     list = list.filter(function (f) {
       return !skip[String(f.name).trim().toLowerCase()];
     });
-    if (!list.length) return "";
+    if (!list.length && !state.day.usualShake) return "";
     return (
       '<div class="chips chips--wrap" style="margin-bottom:12px">' +
+      usualShakeChip() +
       list
         .slice(0, 3)
         .map(function (f) {
@@ -1718,7 +1838,7 @@
             bar("Жиры", "#b08d45", eaten.fatG + " / " + m.fatG + " г", (eaten.fatG * 100) / m.fatG) +
             bar("Углеводы", "#7d8ea8", eaten.carbsG + " / " + m.carbsG + " г", (eaten.carbsG * 100) / m.carbsG) +
             "</div>",
-          { gold: true, tap: "nutrition" }
+          { gold: false, tap: "nutrition" }
         )
       : card(
           cardHead("Норма не задана", "Шесть полей, и появится цифра дня") +
@@ -1728,9 +1848,9 @@
     return (
       noticeHtml() +
       pendingTeaserCard() +
-      heroCard +
       routeCard() +
-      (!state.busy && !state.repeatAsk ? sameAsCards() : "") +
+      heroCard +
+      (!state.busy && !state.repeatAsk && !state.pending ? sameAsCards() : "") +
       '<div class="tiles">' +
       // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
       // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
@@ -1738,10 +1858,13 @@
       // ситуацию. Плитки с вопросом здесь быть не должно — она обещает кнопку,
       // а приводит к тексту, и человек нажимает её впустую.
       (online
-        ? tile("pick-photo", "photo", "Фото еды", true) + tile("add-text-form", "text", "Текстом")
+        ? tile("pick-photo", "photo", "Фото еды", true) +
+          tile("usual-shake", "repeat", "Коктейль", Boolean(state.day && state.day.usualShake)) +
+          tile("add-text-form", "text", "Текстом")
         : tile("add-manual-form", "text", "Ввести вручную", true) + tile("reload-day", "repeat", "Связь с ботом")) +
       tile("water-250", "water", "+250 мл") +
       "</div>" +
+      '<p class="muted">Коктейль: одна кнопка. Фото тарелки или текст: «250 мл белка, 3 банана, 2 скупа протеина».</p>' +
       (state.addMode === "text" ? card(textForm()) : "") +
       (state.addMode === "manual" ? card(manualForm()) : "") +
       (state.busy
@@ -1752,13 +1875,13 @@
                 '" /></div>'
               : "") +
             '<p class="lead">' +
-              (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
+              (state.busy === "photo" ? "Распознаю блюдо…" : state.busy === "revise" ? "Открываю состав…" : "Считаю…") +
               '</p><p class="muted">Обычно 3–10 секунд.</p>'
           )
         : state.pending
           ? pendingCard()
           : portionCard()) +
-      frequentRow() +
+      (state.pending ? "" : frequentRow()) +
       streakStrip() +
       progressTeaserCard() +
       '<div class="grid-2">' +
@@ -1915,10 +2038,8 @@
 
     return card(
       cardHead(
-        closed ? "День закрыт" : "Маршрут дня",
-        closed
-          ? "Еда, вода, движение и вес на месте."
-          : "Следующее: " + next.name.toLowerCase() + ".",
+        closed ? "День закрыт" : "Сейчас: " + next.name.toLowerCase(),
+        closed ? "Еда, вода, движение и вес на месте." : next.hint,
         done + " из " + items.length
       ) +
         '<div class="route">' +
@@ -1948,7 +2069,8 @@
             (next.id === "move"
               ? '<button class="btn btn--outline btn--slim" data-action="route-rest">Сегодня отдых</button>'
               : "") +
-            "</div>")
+            "</div>"),
+      { gold: !closed }
     );
   }
 
@@ -2427,7 +2549,7 @@
             '" /></div>'
           : "") +
         '<p class="lead">' +
-          (state.busy === "photo" ? "Распознаю блюдо…" : "Считаю…") +
+          (state.busy === "photo" ? "Распознаю блюдо…" : state.busy === "revise" ? "Открываю состав…" : "Считаю…") +
           '</p><p class="muted">Обычно 3–10 секунд.</p>'
       );
     }
@@ -2436,7 +2558,7 @@
     // добавляет второй приём вместо подтверждения первого. Выход из вопроса —
     // кнопка «Не то», она же открывает ввод текстом.
     if (state.repeatAsk) return repeatAskCard();
-    if (state.pending) return pendingCard() + sameAsCards();
+    if (state.pending) return pendingCard();
     return sameAsCards() + portionCard() + addBlock(quota);
   }
 
@@ -2788,12 +2910,10 @@
       '<div style="margin-top:18px">' +
       field(
         "Что съел",
-        '<textarea class="input" rows="3" data-path="mealText" placeholder="250 мл жидкого белка, 3 банана, 8 ложек овсянки, 2 скупа протеина, 1 ложка арахисовой пасты">' +
+        '<textarea class="input" rows="3" data-path="mealText" placeholder="рис 200, курица 150">' +
           esc(state.mealText) +
           "</textarea>",
-        "Меры понимаю любые: граммы, миллилитры, ложки, скупы, стаканы, штуки. " +
-          "«Пол ложки креатина» тоже посчитаю. Сначала смотрю в справочник, а если " +
-          "продукта там нет, спрашиваю модель."
+        "Пиши как ел: граммы, ложки, штуки, стаканы. «Рис 200, курица 150» достаточно."
       ) +
       '<button class="btn btn--primary" data-action="add-text">Посчитать</button></div>'
     );
@@ -3373,12 +3493,21 @@
     return prog.title;
   }
 
-  var PROG_COVER = {
-    "fb-start": "prisedaniya-na-stul",
-    "fb-train": "prisedaniya-do-paralleli",
-    ppl: "zhim-ganteley-lezha",
-    ul: "tyaga-dvuh-ganteley-v-naklone"
-  };
+  function programCover(id) {
+    var gym = {
+      "fb-start": "prisedaniya-s-gantelyu-u-grudi",
+      "fb-train": "bolgarskie-split-prisedaniya",
+      ppl: "zhim-ganteley-lezha",
+      ul: "tyaga-dvuh-ganteley-v-naklone"
+    };
+    var home = {
+      "fb-start": "prisedaniya-na-stul",
+      "fb-train": "prisedaniya-do-paralleli",
+      ppl: "otzhimaniya-ot-pola",
+      ul: "shagayuschie-vypady"
+    };
+    return (state.workout.place === "gym" ? gym : home)[id] || "";
+  }
 
   function planList() {
     var list = KM_PLANS.forProgram(state.workout.place, workoutSplit());
@@ -3397,7 +3526,7 @@
       return items
         .map(function (p) {
           var on = p.id === current;
-          var cover = PROG_COVER[p.id] || "";
+          var cover = programCover(p.id);
           var bg = cover
             ? ' style="background-image:linear-gradient(180deg,rgba(11,11,12,.28),rgba(11,11,12,.84)),url(\'' +
               esc(exSrc(cover)) +
@@ -3490,20 +3619,36 @@
     var load = KM_PLANS.loadOf
       ? KM_PLANS.loadOf(e, goal, workoutCycle(), workoutDay())
       : null;
-    if (!load) {
-      var d = KM_PLANS.dose(e);
-      return (d.sets || 3) + "×" + (d.reps || 10);
+    if (load) {
+      if (firstWorkout()) {
+        return load.sets + "×" + load.lo + "–" + load.hi + (load.hold ? " с" : "");
+      }
+      return (
+        load.sets +
+        "×" +
+        load.lo +
+        "–" +
+        load.hi +
+        (load.hold ? " с" : "") +
+        " · RPE " +
+        load.rpe
+      );
     }
-    return (
-      load.sets +
-      "×" +
-      load.lo +
-      "–" +
-      load.hi +
-      (load.hold ? " с" : "") +
-      " · RPE " +
-      load.rpe
-    );
+    var d = KM_PLANS.dose(e);
+    var sets = (d.sets || 3) + (goal === "bulk" ? 1 : 0);
+    if (d.secs) {
+      var slo = d.secs[0];
+      var shi = d.secs[1];
+      if (goal === "bulk") {
+        slo = Math.round((slo * 1.5) / 5) * 5;
+        shi = Math.round((shi * 1.5) / 5) * 5;
+      }
+      return sets + "×" + slo + "–" + shi + " с";
+    }
+    var reps = d.reps || 10;
+    var rlo = goal === "bulk" ? reps : Math.max(5, reps - 2);
+    var rhi = goal === "bulk" ? reps + 2 : reps;
+    return sets + "×" + rlo + "–" + rhi;
   }
 
   function dayChipLabel(p) {
@@ -3596,6 +3741,23 @@
   function lastLog(name) {
     var map = state.day && state.day.lastLifts ? state.day.lastLifts : {};
     return map[name] || null;
+  }
+
+  function needsLoad(e) {
+    return /гантел|штан|гир|канистр|блок/i.test((e && e.name) || "");
+  }
+
+  function showKg(e, hold) {
+    if (hold) return false;
+    if (state.workout.place === "home") return needsLoad(e);
+    return true;
+  }
+
+  function startLoadHint(e, hold, load) {
+    if (hold || lastLog(e.name)) return "";
+    if (!showKg(e, hold)) return "Вес не нужен.";
+    var hi = load && load.hi ? load.hi : 8;
+    return "Первый заход: вес, с которым " + hi + " повторов чистые.";
   }
 
   function sessionSets(e) {
@@ -3695,6 +3857,10 @@
     return Math.max(0, Math.ceil((until - Date.now()) / 1000));
   }
 
+  function firstWorkout() {
+    return !(state.day && state.day.workoutsTotal > 0);
+  }
+
   function renderWorkout() {
     var wk = state.workout;
     var list = planList();
@@ -3703,6 +3869,7 @@
     var split = workoutSplit();
     var prog = programById(split);
     var placeChips = chips("w_place", wk.place, [["home", "Дома"], ["gym", "В зале"]]);
+    var beginner = firstWorkout();
 
     if (workoutPick) {
       return (
@@ -3721,50 +3888,58 @@
       esc(plan.label) +
       '</span><span class="progbar__meta">' +
       (wk.place === "home" ? "дома" : "зал") +
-      " · мезоцикл " +
-      (workoutMeso() + 1) +
-      " · цикл " +
-      (workoutCycle() + 1) +
-      " · " +
-      prog.daysPerWeek +
-      " " +
-      plural(prog.daysPerWeek, "день", "дня", "дней") +
-      " в неделю</span></div>" +
+      (beginner
+        ? " · " + prog.daysPerWeek + " " + plural(prog.daysPerWeek, "день", "дня", "дней") + " в неделю"
+        : " · мезоцикл " +
+          (workoutMeso() + 1) +
+          " · цикл " +
+          (workoutCycle() + 1) +
+          " · " +
+          prog.daysPerWeek +
+          " " +
+          plural(prog.daysPerWeek, "день", "дня", "дней") +
+          " в неделю") +
+      "</span></div>" +
       '<button type="button" class="btn btn--outline btn--slim" data-action="workout-pick">Другая программа</button></div>' +
-      '<p class="shelf__label">Мезоцикл</p>' +
-      chips("w_meso", workoutMeso(), [
-        [0, "Мезоцикл 1"],
-        [1, "Мезоцикл 2"],
-        [2, "Мезоцикл 3"]
-      ]) +
-      '<p class="shelf__label">Цикл</p>' +
-      chips(
-        "w_cycle",
-        workoutCycle(),
-        [0, 1, 2, 3, 4].map(function (i) {
-          var name = KM_PLANS.cycleLoad ? KM_PLANS.cycleLoad(i).name : "";
-          return [i, "Цикл " + (i + 1) + (name ? " · " + name : "")];
-        }),
-        true
-      ) +
+      (beginner
+        ? ""
+        : '<p class="shelf__label">Мезоцикл</p>' +
+          chips("w_meso", workoutMeso(), [
+            [0, "Мезоцикл 1"],
+            [1, "Мезоцикл 2"],
+            [2, "Мезоцикл 3"]
+          ]) +
+          '<p class="shelf__label">Цикл</p>' +
+          chips(
+            "w_cycle",
+            workoutCycle(),
+            [0, 1, 2, 3, 4].map(function (i) {
+              var name = KM_PLANS.cycleLoad ? KM_PLANS.cycleLoad(i).name : "";
+              return [i, "Цикл " + (i + 1) + (name ? " · " + name : "")];
+            }),
+            true
+          )) +
       '<p class="shelf__label">День</p>' +
       chips(
         "w_plan",
         wk.plan,
         list.map(function (p, i) {
+          if (beginner) return [i, dayChipLabel(p)];
           var role = KM_PLANS.waveOf ? KM_PLANS.waveOf(workoutCycle(), i).dayName : "";
           return [i, dayChipLabel(p) + (role ? " · " + role : "")];
         })
       ) +
       card(
         cardHead(
-          dayChipLabel(plan) +
-            " · " +
-            esc(workoutWave().dayName) +
-            ". Цикл " +
-            (workoutCycle() + 1) +
-            " · " +
-            esc(workoutWave().cycleName),
+          beginner
+            ? "Сегодня эти движения"
+            : dayChipLabel(plan) +
+              " · " +
+              esc(workoutWave().dayName) +
+              ". Цикл " +
+              (workoutCycle() + 1) +
+              " · " +
+              esc(workoutWave().cycleName),
           programTitle(split) +
             (dayMuscles(plan) ? " · " + dayMuscles(plan) : "") +
             " · " +
@@ -3773,13 +3948,17 @@
             plural(plan.items.length, "упражнение", "упражнения", "упражнений"),
           prog.shelf === "start" ? "новичок" : "уже тренируюсь"
         ) +
-          '<p class="note note--plain" style="margin-top:12px">Формула сама ставит подходы и повторы: цикл ' +
-          esc(workoutWave().cycleName) +
-          ", день " +
-          esc(workoutWave().dayName) +
-          ". Отдых " +
-          esc(KM_PLANS.rest(goal)) +
-          ". Вес в журнал пишешь сам.</p>",
+          (beginner
+            ? '<p class="note note--plain" style="margin-top:12px">Сделай по списку. Вес: тот, с которым 8 повторов остаются чистыми. Без снаряда поставь 0. Отдых ' +
+              esc(KM_PLANS.rest(goal)) +
+              ".</p>"
+            : '<p class="note note--plain" style="margin-top:12px">Формула сама ставит подходы и повторы: цикл ' +
+              esc(workoutWave().cycleName) +
+              ", день " +
+              esc(workoutWave().dayName) +
+              ". Отдых " +
+              esc(KM_PLANS.rest(goal)) +
+              ". Вес в журнал пишешь сам.</p>"),
         { gold: true }
       ) +
       noticeHtml() +
@@ -3880,7 +4059,7 @@
 
   function prevText(e, i) {
     var prev = lastLog(e.name);
-    if (!prev || !prev.log || !prev.log[i]) return "нет";
+    if (!prev || !prev.log || !prev.log[i]) return "первый";
     var s = prev.log[i];
     var d = KM_PLANS.dose(e);
     if (d.secs) return s.reps + " сек";
@@ -3922,18 +4101,28 @@
     }).length;
     var wave = workoutWave();
     var planText = KM_PLANS.scheme(e, goal, workoutCycle(), workoutDay());
+    var load = KM_PLANS.loadOf
+      ? KM_PLANS.loadOf(e, goal, workoutCycle(), workoutDay())
+      : null;
+    var kgOn = showKg(e, hold);
+    var hint = startLoadHint(e, hold, load);
+    var planExtra = firstWorkout()
+      ? (hint ? " " + hint : "") + " Делай в этом диапазоне."
+      : (wave.rpe ? " · RPE " + wave.rpe : "") +
+        ". Цикл " +
+        wave.cycleName +
+        ", день " +
+        wave.dayName +
+        ". Делай в этом диапазоне." +
+        (hint ? " " + hint : "");
     var log =
       '<div class="sets"><p class="sets__plan">План: <strong>' +
       esc(planText) +
       "</strong>" +
-      (wave.rpe ? " · RPE " + wave.rpe : "") +
-      ". Цикл " +
-      esc(wave.cycleName) +
-      ", день " +
-      esc(wave.dayName) +
-      ". Делай в этом диапазоне.</p><div class=\"sets__head\">" +
+      esc(planExtra) +
+      "</p><div class=\"sets__head\">" +
       "<span>#</span><span>прошлый</span><span>" +
-      (hold ? "сек" : "кг") +
+      (hold ? "сек" : kgOn ? "кг" : "") +
       "</span><span>" +
       (hold ? "" : "раз") +
       "</span><span></span></div>" +
@@ -3958,13 +4147,15 @@
                 i +
                 '" aria-label="Секунды" />' +
                 "<span></span>"
-              : '<input class="sets__in" type="number" inputmode="decimal" min="0" max="500" step="2.5" value="' +
-                s.kg +
-                '" data-set-kg="' +
-                esc(e.name) +
-                '" data-i="' +
-                i +
-                '" aria-label="Вес" />' +
+              : (kgOn
+                  ? '<input class="sets__in" type="number" inputmode="decimal" min="0" max="500" step="2.5" value="' +
+                    s.kg +
+                    '" data-set-kg="' +
+                    esc(e.name) +
+                    '" data-i="' +
+                    i +
+                    '" aria-label="Вес" />'
+                  : '<span class="sets__prev">без веса</span>') +
                 '<input class="sets__in" type="number" inputmode="numeric" min="1" max="100" step="1" value="' +
                 s.reps +
                 '" data-set-reps="' +
@@ -4418,6 +4609,7 @@
       // Еда и вода стоят рядом: то, что человек делает каждый день по многу раз,
       // не должно требовать перехода в другой раздел
       (stale ? "" : addOrBusy(state.day ? state.day.photo : null) + mealsListCard(mealsToday(), true)) +
+      mealRemindCard() +
       waterCard()
     );
   }
@@ -4427,6 +4619,22 @@
    * прогноз — единственная честная замена обещаниям «−8 кг за месяц», которыми
    * торгуют соседи по нише.
    */
+  function mealRemindCard() {
+    var on = !(state.day && state.day.mealRemind && state.day.mealRemind.on === false);
+    return card(
+      cardHead(
+        on ? "Напоминание поесть" : "Напоминание поесть выключено",
+        "Сообщение в чат с ботом в 8:00, 13:00 и 19:00 по Бангкоку. Если приём уже записан, в этот час молчит."
+      ) +
+        '<p class="muted">Mini App сам пуш на телефон не шлёт. Чтобы не пропустить: не глуши @Raschettbot в Telegram.</p>' +
+        '<div class="btn-stack">' +
+        (on
+          ? '<button class="btn btn--outline btn--slim" data-action="meal-remind-off">Выключить</button>'
+          : '<button class="btn btn--primary" data-action="meal-remind-on">Включить</button>') +
+        "</div>"
+    );
+  }
+
   function goalWeightCard() {
     var goal = num(state.goalWeightKg);
     var last = sortedEntries().slice(-1)[0];
@@ -4697,12 +4905,12 @@
     var title = j.title || "KINGMODE";
     var url = j.url || "";
     return card(
-      cardHead("Вход для своих", "Без подписки приложение закрыто") +
-        "<p class=\"lead\">KINGMODE работает только для тех, кто в " +
+      cardHead("Вход для своих", "Сначала канал, потом дневник") +
+        "<p class=\"lead\">В " +
         kind +
         " " +
         esc(title) +
-        ". Вступи и вернись, кнопка перепроверит.</p>" +
+        " задания и разборы. Без подписки приложение закрыто. Вступи и нажми «Я уже внутри».</p>" +
         '<div class="btn-stack" style="margin-top:14px">' +
         (url
           ? '<a class="btn btn--primary" href="' +
@@ -4808,6 +5016,7 @@
     if (ask) {
       var askName = ask.getAttribute("data-repeat-ask");
       var askKcal = Number(ask.getAttribute("data-kcal")) || 0;
+      if (isShakeName(askName)) return openUsualShakeEditor();
       if (isHeapName(askName)) return openRevise(askName);
       state.repeatAsk = { name: askName, kcal: askKcal };
       state.notice = null;
@@ -4984,10 +5193,16 @@
         state.nutTab = "eaten";
         haptic("light");
         return render();
+      case "usual-shake":
+        return recordUsualShake();
       case "meal-confirm":
         return confirmPending();
       case "meal-reject":
         return rejectPending();
+      case "meal-dismiss":
+        return dismissPending();
+      case "same-as-dismiss":
+        return dismissSameAs();
       case "same-as-yes": {
         var yesSlot = action.getAttribute("data-slot");
         var yesBlock = sameAsOffered().filter(function (s) {
@@ -5098,10 +5313,12 @@
       }
       case "repeat-yes":
         if (!state.repeatAsk) return;
+        if (isShakeName(state.repeatAsk.name)) return openUsualShakeEditor();
         if (isHeapName(state.repeatAsk.name)) return openRevise(state.repeatAsk.name);
         return repeatMeals([state.repeatAsk.name]);
       case "repeat-edit":
         if (!state.repeatAsk) return;
+        if (isShakeName(state.repeatAsk.name)) return openUsualShakeEditor();
         return openRevise(state.repeatAsk.name);
       case "repeat-no":
         state.repeatAsk = null;
@@ -5117,6 +5334,27 @@
         // «Проверить связь» и вся диагностика
         state.nutTab = "eaten";
         return go("nutrition");
+      case "meal-remind-on":
+      case "meal-remind-off": {
+        if (!online) return;
+        var remindOn = action.getAttribute("data-action") === "meal-remind-on";
+        state.busy = "food";
+        render();
+        return KM_API.saveSettings({ mealRemind: remindOn })
+          .then(function (data) {
+            state.day = data;
+            state.busy = null;
+            state.notice = {
+              kind: "ok",
+              text: remindOn
+                ? "Буду писать в чат в 8:00, 13:00 и 19:00, если приём ещё пуст."
+                : "Напоминания про еду выключены.",
+            };
+            haptic("light");
+            render();
+          })
+          .catch(mealError);
+      }
       case "save-goal-weight":
         persist();
         state.notice = { kind: "ok", text: "Цель сохранена." };
@@ -5184,7 +5422,17 @@
         return finishSetup();
       case "setup-skip":
         state.setupDone = true;
+        state.workout.split = "fb-start";
+        state.workout.level = "start";
+        workoutTouched = true;
         persist();
+        if (online) {
+          KM_API.saveSettings({
+            place: state.workout.place,
+            level: "start",
+            split: "fb-start"
+          }).catch(function () {});
+        }
         return go("home");
       case "orm-to-program":
         ensureLifts();

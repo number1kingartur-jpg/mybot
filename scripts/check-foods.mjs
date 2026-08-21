@@ -13,6 +13,7 @@ import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
 import { factsFromOffJson, isOffImage, validGtin } from "../dist/product-db.js";
 import { shelfByCode, STORE_SHELF } from "../dist/store-shelf.js";
+import { defaultShakeMeal } from "../dist/meal-shake.js";
 
 let failed = 0;
 
@@ -38,16 +39,24 @@ if (shake) {
   near("коктейль: жиры", shake.fatG, 21, 0.2);
   near("коктейль: углеводы", shake.carbsG, 155, 0.12);
   check(
-    "коктейль: в названии видно, что позиций больше четырёх",
-    /и ещё \d/.test(shake.name),
+    "коктейль: в названии не прячем овсянку за «и ещё»",
+    shake.name === "Коктейль",
     shake.name
   );
+  check("коктейль: все позиции в составе", shake.parts && shake.parts.length >= 6, shake.parts && shake.parts.length);
   check(
     "коктейль: честная приписка про меры",
     shake.note.includes("среднему весу"),
     shake.note
   );
   check("коктейль: картинка шейкера, не овсянки", shake.slug === SHAKE_SLUG, shake.slug);
+}
+
+const builtInShake = defaultShakeMeal();
+check("эталонный коктейль собирается", builtInShake !== null);
+if (builtInShake) {
+  near("эталонный коктейль: ккал", builtInShake.kcal, 1215, 0.1);
+  check("эталонный коктейль: имя", builtInShake.name === "Коктейль", builtInShake.name);
 }
 
 check(
@@ -382,7 +391,11 @@ check("справочник и этикетка считаются вместе"
 check("слаг из названия", foodSlug("Котлета куриная жареная") === "kotleta-kurinaya-zharenaya", foodSlug("Котлета куриная жареная"));
 check("слаги не повторяются", new Set(FOODS.map((f) => foodSlug(f.name))).size === FOODS.length);
 const plate = macrosFromText("курица жареная 200 г, рис 150 г");
-check("картинка приёма — по главному продукту", plate?.slug === "kurica-zharenaya", plate?.slug);
+if (hasFoodImage("kurica-zharenaya")) {
+  check("картинка приёма — по главному продукту", plate?.slug === "kurica-zharenaya", plate?.slug);
+} else {
+  check("без файла курицы нет ложного слага", !plate?.slug, plate?.slug);
+}
 check("зелёное яблоко не красное", matchFood("яблоко зелёное")?.name === "Яблоко зелёное", matchFood("яблоко зелёное")?.name);
 check("зелёное яблоко: слаг", foodSlug("Яблоко зелёное") === "yabloko-zelenoe", foodSlug("Яблоко зелёное"));
 const greenShot = macrosFromItems([{ name: "яблоко зелёное", grams: 120 }]);
@@ -554,6 +567,23 @@ check(
 );
 
 // ── Справочник цел ───────────────────────────────────────────────────────────
+const passion = macrosFromItems([{ name: "маракуйя свежая", grams: 80 }]);
+check("маракуйя в справочнике", matchFood("маракуйя свежая")?.name === "Маракуйя", matchFood("маракуйя свежая")?.name);
+check("маракуйя не с упаковки", passion?.parts?.[0]?.source === "catalog", passion?.parts?.[0]?.source);
+check("у маракуйи есть кадр", passion?.slug === "marakuyya" && hasFoodImage("marakuyya"), passion?.slug);
+const weighedPassion = macrosFromItems([{ name: "маракуйя", grams: 200 }]);
+near("взвесил сам — граммы как есть", weighedPassion?.parts?.[0]?.grams ?? 0, 200, 0.01);
+const passionPhoto = fromModel(
+  '{"items":[{"name":"Маракуйя свежая","grams":200,"kcal100":97,"p100":4.4,"f100":1.4,"c100":23.4}],"note":"на доске"}'
+);
+check("фото маракуйи записалось", passionPhoto.meal !== undefined, String(passionPhoto.error?.message));
+near("фото маракуйи без кожуры", passionPhoto.meal?.parts?.[0]?.grams ?? 0, 90, 0.05);
+check("фото маракуйи не этикетка", passionPhoto.meal?.parts?.[0]?.source === "catalog", passionPhoto.meal?.parts?.[0]?.source);
+const freshUnknown = macrosFromItems([
+  { name: "личи свежее", grams: 100, kcal100: 66, p100: 0.8, f100: 0.4, c100: 17 },
+]);
+check("свежий неизвестный не упаковка", freshUnknown?.parts?.[0]?.source !== "label", freshUnknown?.parts?.[0]?.source);
+
 check("арахисовая паста не путается с пастой отварной", matchFood("арахисовая паста")?.name === "Арахисовая паста");
 check("жидкий белок опознан", matchFood("жидкий белок")?.name === "Белок яичный жидкий");
 check("скуп протеина опознан", matchFood("протеин")?.name === "Протеин");

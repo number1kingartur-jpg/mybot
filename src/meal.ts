@@ -1,6 +1,14 @@
-import crypto from "crypto";
+﻿import crypto from "crypto";
 import https from "https";
-import { macrosFromItems, macrosFromText } from "./foods";
+import {
+  isPureShake,
+  isShakeIngredient,
+  isShakeMeal,
+  macrosFromItems,
+  macrosFromText,
+  matchFood,
+  photoEdibleGrams,
+} from "./foods";
 import { analyzeMealFromTextLocal } from "./meal-fallback";
 import { factsByBarcode, isOffImage, productDbEnabled, validGtin } from "./product-db";
 
@@ -68,7 +76,11 @@ export const IDENTIFY_PROMPT =
   "Гарнир, салат, зелень, хлеб, соус, напиток идут в состав лишь тогда, когда они на снимке. " +
   "Одно яблоко в руке — это одна позиция, а не яблоко с салатом. Стол, скатерть, салфетка, " +
   "посуда, приборы, ткань, растения и декор — не еда. Сомневаешься, еда это или фон — не добавляй: " +
-  "лишняя позиция портит расчёт сильнее, чем недостающая.\n" +
+  "лишняя позиция портит расчёт сильнее, чем недостающая. " +
+  "Если на кадре только тарелка, не добавляй воду, сок, чай, кофе и стакан.\n" +
+  "13a. Очищенные варёные яйца (овальные, белый белок, гладкая поверхность) — " +
+  "это яйца отварные. Не пиши «курица», «грудка» и «белок яичный жидкий». " +
+  "Посчитай штуки: «N яйца отварные». Курица — волокна мяса, корочка или кожа, не овальные белки.\n" +
   "14. У фрукта укажи цвет, если он виден: «яблоко зелёное», «яблоко красное», " +
   "«виноград красный». Одно слово «яблоко» недостаточно: картинка в дневнике берётся из названия.\n" +
   "15. Молоко: таиландское UHT (коробка 7-Eleven, Tops, Foremost, Meiji) и российское " +
@@ -85,6 +97,16 @@ export const IDENTIFY_PROMPT =
   "ВкусВилл, Лента, Перекрёсток. Этикетка может быть на тайском, русском или английском: " +
   "марку спиши как есть латиницей, если так на упаковке. Штрихкод (EAN, цифры под полосами) " +
   "перепиши в barcode целиком: по нему находится точный продукт и фото упаковки.\n" +
+  "20. Граммы фрукта — только съедобное. Кожура маракуйи, ананаса, арбуза, папайи, " +
+  "банана и корка цитруса в grams не входят. Разрезанная маракуйя: жёлтые чашки это кожура, " +
+  "считай мякоть с семенами. Одна жёлтая маракуйя целиком 60–80 г, съедобного 25–40 г. " +
+  "Несколько половинок: штуки × 30–40 г, не визуальная масса вместе с коркой.\n" +
+  "21. Свежий фрукт на доске, в руке или в миске — не упаковка. packaged:true только если " +
+  "видна заводская тара, этикетка или штрихкод. Не ставь цифры «с упаковки» на свежий фрукт.\n" +
+  "22. Протеиновый коктейль, смузи, шейкер, бутылка с однородной бежевой или белой жидкостью, " +
+  "блендер, стакан с густым напитком: это коктейль (белок, молоко, банан, овсянка, протеин). " +
+  "Не пиши курицу, рис, макароны и гарнир. Если видна только жидкость без кусков — " +
+  "«протеиновый коктейль» и объём в мл, не угадывай тарелку с мясом.\n" +
   '\nЕсли не еда: {"items":[],"note":"не еда: что на кадре"}';
 
 const GEMINI_MODELS = [
@@ -218,16 +240,116 @@ export function mealPartLines(meal: MealAnalysis): string[] {
   return meal.parts.map((p) => `${p.name}, ${p.grams} г, ${p.kcal} ккал${FROM[p.source]}`);
 }
 
-/** Правка разбора до записи: убрать позицию или поправить её вес. */
+/** Правка разбора до записи: убрать позицию, поправить вес или добавить продукт. */
 export interface MealEdit {
   /** Номер позиции на выброс. */
   drop?: number;
   /** Новый вес позиции: `{ index, value }`. */
   grams?: { index: number; value: number };
+  /** Новая позиция из справочника: имя и граммы. */
+  add?: { name: string; grams: number };
+}
+
+/**
+ * Повтор вчерашнего коктейля: если состав сохранён, правим его, а не одну строку.
+ * Старые записи без состава разбираем по названию. Хвост «и ещё N» отрезаем:
+ * этих позиций в строке нет.
+ */
+export function mealFromHistory(row: {
+  name: string;
+  kcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  slug?: string;
+  photoUrl?: string;
+  parts?: Array<Omit<MealPart, "source"> & { source?: MealPart["source"] }>;
+}): MealAnalysis {
+  if (row.parts?.length) {
+    return {
+      name: row.name,
+      kcal: row.kcal,
+      proteinG: row.proteinG,
+      fatG: row.fatG,
+      carbsG: row.carbsG,
+      slug: row.slug,
+      photoUrl: row.photoUrl,
+      parts: row.parts.map((p) => ({
+        ...p,
+        source: p.source ?? "catalog",
+      })),
+    };
+  }
+  // Хвост «и ещё N» в названии не содержит имён. Разбор четырёх слов даёт ~600
+  // вместо 1200. Цифры записи оставляем, состав не выдумываем.
+  if (/и ещё \d+/i.test(row.name)) {
+    return {
+      name: row.name,
+      kcal: row.kcal,
+      proteinG: row.proteinG,
+      fatG: row.fatG,
+      carbsG: row.carbsG,
+      slug: row.slug,
+      photoUrl: row.photoUrl,
+    };
+  }
+  const text = row.name;
+  return (
+    macrosFromText(text) ?? {
+      name: row.name,
+      kcal: row.kcal,
+      proteinG: row.proteinG,
+      fatG: row.fatG,
+      carbsG: row.carbsG,
+      slug: row.slug,
+      photoUrl: row.photoUrl,
+    }
+  );
+}
+
+function catalogName(name: string): string {
+  return matchFood(name)?.name ?? name.trim().toLowerCase();
+}
+
+/** Полный шейкер: жидкий белок или протеин плюс овсянка и протеиновый порошок. */
+export function isCompleteShake(parts: { name: string }[] | undefined): boolean {
+  if (!parts?.length || !isShakeMeal(parts)) return false;
+  const names = new Set(parts.map((p) => catalogName(p.name)));
+  const oats = names.has("Овсяные хлопья сухие") || names.has("Овсянка на воде");
+  const scoop = names.has("Протеин") || names.has("Гейнер");
+  return oats && scoop;
+}
+
+/**
+ * Фото и старое название видят четыре позиции. Овсянка, протеин и креатин
+ * живут в прошлом полном коктейле — их дописываем, а не просим набрать снова.
+ */
+export function mergeShakeFromUsual(
+  meal: MealAnalysis,
+  usual: NonNullable<MealAnalysis["parts"]> | undefined
+): MealAnalysis {
+  if (!usual?.length || !meal.parts?.length) return meal;
+  if (!isPureShake(meal.parts) || isCompleteShake(meal.parts)) return meal;
+  const have = new Set(meal.parts.map((p) => catalogName(p.name)));
+  const extra = usual.filter((p) => isShakeIngredient(p.name) && !have.has(catalogName(p.name)));
+  if (!extra.length) return meal;
+  let out = meal;
+  const added: string[] = [];
+  for (const p of extra) {
+    const next = editMeal(out, { add: { name: p.name, grams: p.grams } });
+    if (!next) continue;
+    out = next;
+    added.push(p.name.replace(/\s*~\d+\s*г\s*$/i, "").toLowerCase());
+  }
+  if (out === meal) return meal;
+  if (isShakeMeal(out.parts ?? []) && (out.parts?.length ?? 0) > 4) out.name = "Коктейль";
+  out.note = `Дописал как обычно: ${added.join(", ")}.`;
+  return out;
 }
 
 /** Заголовок приёма из состава: те же правила, что при разборе. */
 function titleFromParts(parts: MealPart[]): string {
+  if (isShakeMeal(parts) && parts.length > 4) return "Коктейль";
   const lines = parts.map((p) => `${p.name} ~${p.grams} г`);
   const shown = lines.slice(0, 4);
   const hidden = lines.length - shown.length;
@@ -294,6 +416,13 @@ export function editMeal(meal: MealAnalysis, edit: MealEdit): MealAnalysis | nul
       fatG: Math.round(part.fatG * ratio * 10) / 10,
       carbsG: Math.round(part.carbsG * ratio * 10) / 10,
     };
+  } else if (edit.add) {
+    const name = String(edit.add.name ?? "").trim();
+    const grams = Math.round(Number(edit.add.grams));
+    if (!name || !(grams >= 1 && grams <= 3000)) return null;
+    const extra = macrosFromItems([{ name, grams }]);
+    if (!extra?.parts?.length) return null;
+    parts.push(...extra.parts.map((p) => ({ ...p })));
   } else {
     return null;
   }
@@ -509,9 +638,13 @@ function buildFromParsed(parsed: { items: IdentifiedItem[]; note?: string }): Me
     throw new MealPhotoUnreadableError(notFood ? "not_food" : "no_foods", "", saw);
   }
 
+  // Кожура в кадр попадает, в желудок нет. Модель часто ставит визуальную массу.
+  const items = parsed.items.map((i) =>
+    i.packaged || i.fromDb ? i : { ...i, grams: photoEdibleGrams(i.name, i.grams) }
+  );
   // Что модель увидела — на случай отказа: человеку нужен путь дальше, а не тупик.
-  const seen = parsed.items.map((i) => `${i.name} ${i.grams} г`).join(", ");
-  const meal = macrosFromItems(parsed.items);
+  const seen = items.map((i) => `${i.name} ${i.grams} г`).join(", ");
+  const meal = macrosFromItems(items);
   if (!meal || meal.kcal === 0) throw new MealPhotoUnreadableError("no_match", seen);
 
   // Слова модели держим отдельно от нашей строки про точность: в объяснении это

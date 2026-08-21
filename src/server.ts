@@ -15,13 +15,15 @@ import {
   type NutritionProfile, type Lift, type Program,
 } from "./db";
 import {
-  analyzeMealPhoto, analyzeMealText, editMeal, mealPartLines, mealVisionEnabled, MealPhotoUnreadableError,
+  analyzeMealPhoto, analyzeMealText, editMeal, isCompleteShake, mealFromHistory, mealPartLines,
+  mealVisionEnabled, mergeShakeFromUsual, MealPhotoUnreadableError,
 } from "./meal";
+import { lastCompleteShake, resolveUsualShakeMeal, usualShakeBrief } from "./meal-shake";
 import { dropPending, latestPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, imageSlug, macrosFromItems, matchFood, resolveMealThumb } from "./foods";
 import { hasFoodImage } from "./food-images";
-import { isOffImage } from "./product-db";
-import { bangkokHour, sameAsYesterday, shiftDate, usualNames } from "./meal-same";
+import { publicMealPhoto, readMealThumb, saveMealThumb } from "./meal-thumbs";
+import { bangkokHour, sameAsAllSlots, shiftDate, slotByHour, splitOffer } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { parseSplit, plansForProgram, splitLevel, type Place, type SplitId } from "./simple";
@@ -261,6 +263,20 @@ function waterState(userId: number, date: string) {
   };
 }
 
+function looksLikeShakeName(name: string): boolean {
+  const n = name.toLowerCase();
+  return /^коктейль\b/.test(n)
+    || (/протеин|гейнер|белок яичн|жидк/.test(n) && /банан|овсян|арахис|молок|креатин|и ещё/.test(n));
+}
+
+function withUsualShake(userId: number, meal: ReturnType<typeof mealFromHistory>) {
+  const usual = resolveUsualShakeMeal(userId);
+  if (!meal.parts?.length && looksLikeShakeName(meal.name) && usual?.parts?.length) {
+    return { ...usual, photoUrl: meal.photoUrl ?? usual.photoUrl };
+  }
+  return mergeShakeFromUsual(meal, usual?.parts);
+}
+
 function dayState(userId: number, date: string) {
   const u = getUser(userId);
   const weights = getBodyweight(userId, 60);
@@ -282,7 +298,8 @@ function dayState(userId: number, date: string) {
       fatG: m.fatG,
       carbsG: m.carbsG,
       slug: resolveMealThumb(m.name, m.slug),
-      photoUrl: m.photoUrl && isOffImage(m.photoUrl) ? m.photoUrl : undefined,
+      photoUrl: publicMealPhoto(m.photoUrl),
+      parts: m.parts,
     })),
     totals: mealTotals(userId, date),
     // Серия и частые блюда считаются всегда от сегодняшнего дня, а не от
@@ -290,23 +307,29 @@ function dayState(userId: number, date: string) {
     streak: mealStreak(userId, today()),
     progress: progressSnapshot(userId, today()),
     frequent: frequentMeals(userId, today()),
+    usualShake: usualShakeBrief(userId),
+    mealRemind: { on: !u?.mealRemindPaused, hours: [8, 13, 19] },
     sameAs:
       date === today()
         ? (() => {
-            const same = sameAsYesterday(
-              getMeals(userId, shiftDate(date, -1)),
-              getMeals(userId, date),
-              bangkokHour(),
-              usualNames(
-                Array.from({ length: 7 }, (_, i) => getMeals(userId, shiftDate(date, -(i + 1)))),
-                2
-              )
-            );
-            if (!same) return null;
-            return {
-              ...same,
-              meals: same.meals.map((m) => ({ ...m, slug: resolveMealThumb(m.name, m.slug) })),
-            };
+            const yesterday = getMeals(userId, shiftDate(date, -1));
+            const todayMeals = getMeals(userId, date);
+            const slots = sameAsAllSlots(yesterday, todayMeals).map((same) => {
+              const meals = same.meals.map((m) => {
+                const full = mealFromHistory(m);
+                return {
+                  ...m,
+                  slug: resolveMealThumb(m.name, m.slug),
+                  parts: full.parts ?? m.parts,
+                };
+              });
+              return { ...same, meals, units: splitOffer(meals, same.slot) };
+            });
+            const hour = bangkokHour();
+            const current =
+              slots.find((s) => s.slot === slotByHour(hour)) ?? slots[0] ?? null;
+            if (!current && !slots.length) return null;
+            return { ...current, slots };
           })()
         : null,
     photo: photoQuota(userId),
@@ -434,6 +457,20 @@ function validProfile(x: unknown): NutritionProfile | null {
 }
 
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPath: string): void {
+  if (urlPath.startsWith("/img/meal/")) {
+    const shot = readMealThumb(urlPath);
+    if (!shot) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("not found");
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": shot.mime,
+      "Content-Length": shot.buf.length,
+      "Cache-Control": "public, max-age=604800",
+    });
+    res.end(shot.buf);
+    return;
+  }
   const full = resolveUnder(WEBAPP_DIR, urlPath, path);
   if (!full) {
     res.writeHead(403).end("forbidden");
@@ -765,6 +802,7 @@ async function handleApi(
       level?: string;
       split?: string;
       rest?: boolean;
+      mealRemind?: boolean;
     };
     const u = getUser(user.id);
     const patch: {
@@ -773,6 +811,8 @@ async function handleApi(
       simpleSplit?: SplitId;
       simpleIdx?: number;
       restDate?: string;
+      mealRemindPaused?: boolean;
+      mealRemindMissed?: number;
     } = {};
     if (body.place === "home" || body.place === "gym") patch.simplePlace = body.place;
     if (body.level === "start" || body.level === "train") patch.simpleLevel = body.level;
@@ -783,6 +823,11 @@ async function handleApi(
     }
     if (body.rest === true) patch.restDate = date;
     if (body.rest === false) patch.restDate = "";
+    if (body.mealRemind === true) {
+      patch.mealRemindPaused = false;
+      patch.mealRemindMissed = 0;
+    }
+    if (body.mealRemind === false) patch.mealRemindPaused = true;
     if (Object.keys(patch).length) updateUser(user.id, patch);
     json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;
@@ -885,7 +930,9 @@ async function handleApi(
     try {
       // Квота до вызова модели: иначе 502 можно крутить бесконечно и выжечь Gemini.
       bumpPhotoCount(user.id, wk, date);
-      const meal = await analyzeMealPhoto(buf, mime);
+      const meal = withUsualShake(user.id, await analyzeMealPhoto(buf, mime));
+      // Свой файл в справочнике появляется позже. Кадр с телефона — картинка записи.
+      if (!meal.photoUrl) meal.photoUrl = saveMealThumb(buf, mime);
       // В дневник не пишем: сначала человек смотрит, что распознано, и отвечает
       // «это оно». Раньше запись появлялась молча, и неверную догадку
       // приходилось удалять вместо того, чтобы просто не соглашаться.
@@ -944,7 +991,7 @@ async function handleApi(
     }
     try {
       bumpPhotoCount(user.id, wk, date);
-      const meal = await analyzeMealText(text);
+      const meal = withUsualShake(user.id, await analyzeMealText(text));
       // Текст тоже догадка: «8 ложек овсянки» превращаются в граммы правилами,
       // а «салат» — в порцию по умолчанию. Показываем разбор до записи.
       const token = putPending(user.id, meal, date, "text");
@@ -979,8 +1026,9 @@ async function handleApi(
     const meal = found.meal;
     const row = addMeal({
       userId: user.id, date: found.date,
-      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: meal.photoUrl && isOffImage(meal.photoUrl) ? meal.photoUrl : undefined,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
       hour: mealHour(found.date),
+      parts: meal.parts,
     });
     console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
     json(res, 200, { meal, mealId: row.id, note: meal.note, ...dayState(user.id, found.date) });
@@ -1001,6 +1049,7 @@ async function handleApi(
       drop?: number;
       index?: number;
       grams?: number;
+      add?: { name?: string; grams?: number };
     };
     const token = String(body.token ?? "");
     const found = peekPending(user.id, token);
@@ -1011,7 +1060,9 @@ async function handleApi(
     const edit =
       body.drop !== undefined
         ? { drop: Number(body.drop) }
-        : { grams: { index: Number(body.index), value: Number(body.grams) } };
+        : body.add
+          ? { add: { name: String(body.add.name ?? ""), grams: Number(body.add.grams) } }
+          : { grams: { index: Number(body.index), value: Number(body.grams) } };
     const meal = editMeal(found.meal, edit);
     if (!meal) {
       json(res, 400, { error: "bad_edit", message: "Так поправить нельзя." });
@@ -1023,6 +1074,87 @@ async function handleApi(
         `, стало ${meal.kcal} ккал, user=${user.id}`
     );
     json(res, 200, dayState(user.id, found.date));
+    return;
+  }
+
+  /**
+   * Вчерашний приём в редактор состава: снять арахисовую пасту, убавить банан.
+   * Цифры из сохранённого состава или из названия, модель не дергаем.
+   */
+  if (req.method === "POST" && urlPath === "/api/meal/revise") {
+    const body = await readJson(req) as { name?: string; items?: { name?: string; grams?: number }[] };
+    const items = Array.isArray(body.items)
+      ? body.items
+          .map((x) => ({ name: String(x?.name ?? "").trim(), grams: Math.round(Number(x?.grams)) }))
+          .filter((x) => x.name && x.grams >= 1 && x.grams <= 3000)
+          .slice(0, 12)
+      : [];
+    if (items.length) {
+      const meal = macrosFromItems(items);
+      if (!meal?.parts?.length) {
+        json(res, 422, { error: "bad_parts", message: "Такой состав не собрался. Напиши напиток текстом." });
+        return;
+      }
+      putPending(user.id, withUsualShake(user.id, meal), date, "text");
+      json(res, 200, dayState(user.id, date));
+      return;
+    }
+    const name = String(body.name ?? "").trim();
+    if (!name) {
+      json(res, 400, { error: "no_name" });
+      return;
+    }
+    const prev = [...getMeals(user.id)].reverse().find((m) => m.name.trim().toLowerCase() === name.toLowerCase());
+    if (!prev) {
+      json(res, 404, { error: "not_found", message: "Такого блюда нет в истории." });
+      return;
+    }
+    const meal = withUsualShake(user.id, mealFromHistory(prev));
+    if (!meal.parts?.length) {
+      json(res, 422, {
+        error: "no_parts",
+        message: "Состав этой записи не сохранился. Напиши напиток текстом и поправь позиции.",
+      });
+      return;
+    }
+    putPending(user.id, meal, date, "text");
+    json(res, 200, dayState(user.id, date));
+    return;
+  }
+
+  /** Записать отмеченное: коктейль без винограда, без повторного распознавания. */
+  if (req.method === "POST" && urlPath === "/api/meal/pick") {
+    const body = await readJson(req) as { units?: { items?: { name?: string; grams?: number }[] }[] };
+    const units = (Array.isArray(body.units) ? body.units : []).slice(0, 8);
+    const added: { name: string; kcal: number }[] = [];
+    for (const unit of units) {
+      const items = (Array.isArray(unit.items) ? unit.items : [])
+        .map((x) => ({ name: String(x?.name ?? "").trim(), grams: Math.round(Number(x?.grams)) }))
+        .filter((x) => x.name && x.grams >= 1 && x.grams <= 3000)
+        .slice(0, 12);
+      if (!items.length) continue;
+      const meal = macrosFromItems(items);
+      if (!meal || meal.kcal <= 0) continue;
+      addMeal({
+        userId: user.id,
+        date,
+        name: meal.name,
+        kcal: meal.kcal,
+        proteinG: meal.proteinG,
+        fatG: meal.fatG,
+        carbsG: meal.carbsG,
+        slug: meal.slug,
+        photoUrl: publicMealPhoto(meal.photoUrl),
+        hour: mealHour(date),
+        parts: meal.parts,
+      });
+      added.push({ name: meal.name, kcal: meal.kcal });
+    }
+    if (!added.length) {
+      json(res, 400, { error: "no_pick", message: "Отметь хотя бы одну позицию." });
+      return;
+    }
+    json(res, 200, { ...dayState(user.id, date), meal: added[0], copied: added });
     return;
   }
 
@@ -1049,8 +1181,9 @@ async function handleApi(
     }
     const row = addMeal({
       userId: user.id, date,
-      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: meal.photoUrl && isOffImage(meal.photoUrl) ? meal.photoUrl : undefined,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
       hour: mealHour(date),
+      parts: meal.parts,
     });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
@@ -1061,6 +1194,36 @@ async function handleApi(
    * запись с этим названием и копируем её в выбранный день — распознавание тут
    * ничего не уточнит, а фото и текст стоят запроса к модели.
    */
+  if (req.method === "POST" && urlPath === "/api/meal/usual-shake") {
+    const meal = resolveUsualShakeMeal(user.id);
+    if (!meal?.parts?.length) {
+      json(res, 422, { error: "no_shake", message: "Коктейль не собрался. Напиши состав текстом." });
+      return;
+    }
+    const live = latestPending(user.id);
+    if (live) dropPending(user.id, live.token);
+    const row = addMeal({
+      userId: user.id,
+      date,
+      name: meal.name,
+      kcal: meal.kcal,
+      proteinG: meal.proteinG,
+      fatG: meal.fatG,
+      carbsG: meal.carbsG,
+      slug: meal.slug,
+      photoUrl: publicMealPhoto(meal.photoUrl),
+      hour: mealHour(date),
+      parts: meal.parts,
+    });
+    console.log(`api meal usual-shake: ${meal.kcal} kcal, user=${user.id}`);
+    json(res, 200, {
+      ...dayState(user.id, date),
+      meal: { name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug },
+      mealId: row.id,
+    });
+    return;
+  }
+
   if (req.method === "POST" && urlPath === "/api/meal/repeat") {
     const body = await readJson(req) as { name?: string; names?: string[] };
     const names = (Array.isArray(body.names) ? body.names : body.name ? [body.name] : [])
@@ -1084,8 +1247,9 @@ async function handleApi(
         fatG: prev.fatG,
         carbsG: prev.carbsG,
         slug: prev.slug,
-        photoUrl: prev.photoUrl && isOffImage(prev.photoUrl) ? prev.photoUrl : undefined,
+        photoUrl: publicMealPhoto(prev.photoUrl),
         hour: mealHour(date),
+        parts: prev.parts,
       };
       addMeal({ userId: user.id, date, ...meal });
       added.push(meal);

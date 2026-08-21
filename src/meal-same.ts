@@ -5,6 +5,8 @@
  * записан, иначе из порядка за день: первое это завтрак, последнее это ужин.
  */
 
+import { isShakeIngredient, isShakePowder } from "./foods";
+
 export type MealSlot = "breakfast" | "lunch" | "snack" | "dinner";
 
 export interface SameMeal {
@@ -16,6 +18,16 @@ export interface SameMeal {
   slug?: string;
   photoUrl?: string;
   hour?: number;
+  parts?: {
+    name: string;
+    grams: number;
+    kcal: number;
+    proteinG: number;
+    fatG: number;
+    carbsG: number;
+    slug?: string;
+    source?: "catalog" | "barcode" | "label" | "similar";
+  }[];
 }
 
 export interface SameAs {
@@ -69,6 +81,8 @@ export function slotByHour(hour: number): MealSlot {
 export function slotLabel(slot: MealSlot): string {
   return { breakfast: "завтрак", lunch: "обед", snack: "перекус", dinner: "ужин" }[slot];
 }
+
+export const MEAL_SLOTS: MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
 
 /** Порядок за день, когда часа в записи нет. */
 export function inferSlots(count: number): MealSlot[] {
@@ -145,6 +159,102 @@ export function sameAsYesterday(
       carbsG: m.carbsG,
       slug: m.slug,
       photoUrl: m.photoUrl,
+      parts: m.parts,
     })),
   };
+}
+
+export type SameUnit = {
+  id: string;
+  title: string;
+  kcal: number;
+  items: { name: string; grams: number }[];
+  mealName?: string;
+};
+
+function unitFromParts(id: string, title: string, parts: NonNullable<SameMeal["parts"]>): SameUnit {
+  return {
+    id,
+    title,
+    kcal: Math.round(parts.reduce((a, p) => a + p.kcal, 0)),
+    items: parts.map((p) => ({ name: p.name, grams: p.grams })),
+  };
+}
+
+function partLabel(name: string): string {
+  return name.replace(/\s*~\d+\s*г\s*$/i, "").trim() || name;
+}
+
+/**
+ * Коктейль, виноград и стакан в одной записи вчера это одна строка.
+ * Здесь режем: шейкер отдельно, остальное по позициям. Иначе выбрать
+ * «только коктейль» нельзя.
+ */
+export function splitOffer(meals: SameMeal[], prefix = ""): SameUnit[] {
+  const units: SameUnit[] = [];
+  meals.forEach((m, mi) => {
+    const parts = m.parts ?? [];
+    const shake = parts.filter((p) => isShakeIngredient(p.name));
+    const rest = parts.filter((p) => !isShakeIngredient(p.name));
+    const drink = shake.some((p) => isShakePowder(p.name)) && shake.length >= 2;
+    const id = prefix ? `${prefix}-s${mi}` : `s${mi}`;
+    if (drink && rest.length) {
+      units.push(unitFromParts(id, "Коктейль", shake));
+      rest.forEach((p, pi) => units.push(unitFromParts(`${id}p${pi}`, partLabel(p.name), [p])));
+      return;
+    }
+    if (drink) {
+      units.push(unitFromParts(id, "Коктейль", shake));
+      return;
+    }
+    if (parts.length >= 2) {
+      parts.forEach((p, pi) => units.push(unitFromParts(`${id}p${pi}`, partLabel(p.name), [p])));
+      return;
+    }
+    units.push({
+      id: prefix ? `${prefix}-m${mi}` : `m${mi}`,
+      title: m.name,
+      kcal: m.kcal,
+      items: parts.map((p) => ({ name: p.name, grams: p.grams })),
+      mealName: m.name,
+    });
+  });
+  return units;
+}
+
+function copyMeals(list: SameMeal[]): SameMeal[] {
+  return list.map((m) => ({
+    name: m.name,
+    kcal: m.kcal,
+    proteinG: m.proteinG,
+    fatG: m.fatG,
+    carbsG: m.carbsG,
+    slug: m.slug,
+    photoUrl: m.photoUrl,
+    parts: m.parts,
+  }));
+}
+
+/**
+ * Все вчерашние приёмы по слотам, без часов Бангкока.
+ * Иначе в 11:19 виден только обед, а коктейль уже не выбрать.
+ */
+export function sameAsAllSlots(yesterday: SameMeal[], todayMeals: { name: string }[]): SameAs[] {
+  if (!yesterday.length) return [];
+  const have = new Set(todayMeals.map((m) => m.name.trim().toLowerCase()));
+  const noHours = yesterday.every((m) => m.hour === undefined);
+  if (noHours && yesterday.length === 1) {
+    const m = yesterday[0];
+    if (have.has(m.name.trim().toLowerCase())) return [];
+    return [{ slot: "breakfast", title: "вчера", meals: copyMeals([m]) }];
+  }
+  const out: SameAs[] = [];
+  for (const slot of MEAL_SLOTS) {
+    const inSlot = uniqueMeals(
+      yesterday.filter((m, i) => slotOfMeal(m, i, yesterday.length) === slot)
+    ).filter((m) => !have.has(m.name.trim().toLowerCase()));
+    if (!inSlot.length) continue;
+    out.push({ slot, title: slotLabel(slot), meals: copyMeals(inSlot) });
+  }
+  return out;
 }

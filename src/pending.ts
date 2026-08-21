@@ -1,21 +1,20 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import type { MealAnalysis } from "./meal";
 
 /**
  * Разобранный, но ещё не записанный приём пищи.
  *
- * Зачем: распознавание — это догадка, и раньше она попадала в дневник молча.
- * Человек видел итоговую цифру уже внутри дня и не знал, что именно модель
- * приняла за еду; исправить можно было только удалением записи. Теперь разбор
- * сначала показывается с составом и допущениями, а в дневник идёт по ответу
- * «да, это оно».
- *
  * Цифры живут на сервере, наружу уходит только короткий токен. Иначе
- * подтверждение пришлось бы принимать вместе с калориями от клиента, и любая
- * запись стала бы «сколько скажут», а не «сколько посчитано».
+ * подтверждение пришлось бы принимать вместе с калориями от клиента.
  *
- * Память, а не база: неподтверждённый разбор ничего не значит после перезапуска —
- * человек просто сфотографирует заново. Держать такое на диске не за что.
+ * Один слот на человека: новый разбор заменяет старый. Иначе после правки
+ * веса клиент держит один токен, а dayState отдаёт другой — «Да» ловит 410.
+ *
+ * Файл рядом с базой: память умирает при деплое, а карточка «это оно» на
+ * телефоне остаётся. Без файла первое «Записать» после выкладки пишет
+ * «разбор устарел».
  */
 export interface PendingMeal {
   meal: MealAnalysis;
@@ -26,78 +25,111 @@ export interface PendingMeal {
   createdAt: number;
 }
 
+type Slot = { token: string; pending: PendingMeal };
+
 const TTL_MS = 30 * 60 * 1000;
-const MAX = 500;
 
-const store = new Map<string, PendingMeal>();
+const byUser = new Map<number, Slot>();
 
-function key(userId: number, token: string): string {
-  return `${userId}:${token}`;
+function pendingPath(): string {
+  const data = process.env.DATA_PATH;
+  if (data) return path.join(path.dirname(data), "pending.json");
+  return path.join(__dirname, "..", "pending.json");
 }
 
-/** Просроченное выкидываем при каждой записи: отдельный таймер тут не нужен. */
+function persist(): void {
+  try {
+    const rows: Record<string, Slot> = {};
+    for (const [id, slot] of byUser) rows[String(id)] = slot;
+    const file = pendingPath();
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(rows));
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    console.error("pending persist:", e instanceof Error ? e.message : e);
+  }
+}
+
+function hydrate(): void {
+  const file = pendingPath();
+  if (!fs.existsSync(file)) return;
+  try {
+    const rows = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, Slot>;
+    const now = Date.now();
+    for (const [id, slot] of Object.entries(rows ?? {})) {
+      if (!slot?.token || !slot.pending) continue;
+      if (now - slot.pending.createdAt > TTL_MS) continue;
+      byUser.set(Number(id), slot);
+    }
+  } catch {
+    /* битый файл — человек сфотографирует заново */
+  }
+}
+
+hydrate();
+
 function sweep(): void {
   const now = Date.now();
-  for (const [k, v] of store) {
-    if (now - v.createdAt > TTL_MS) store.delete(k);
+  let dirty = false;
+  for (const [id, slot] of byUser) {
+    if (now - slot.pending.createdAt > TTL_MS) {
+      byUser.delete(id);
+      dirty = true;
+    }
   }
-  if (store.size > MAX) {
-    const oldest = [...store.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt);
-    for (const [k] of oldest.slice(0, store.size - MAX)) store.delete(k);
-  }
+  if (dirty) persist();
 }
 
 export function putPending(userId: number, meal: MealAnalysis, date: string, source: "photo" | "text"): string {
   sweep();
   const token = crypto.randomBytes(8).toString("hex");
-  store.set(key(userId, token), { meal, date, source, createdAt: Date.now() });
+  byUser.set(userId, { token, pending: { meal, date, source, createdAt: Date.now() } });
+  persist();
   return token;
 }
 
 /**
- * Забрать разбор под запись. Одноразово: два нажатия «Да» подряд (двойной тап,
- * повтор запроса) не должны давать две записи об одной тарелке.
+ * Забрать разбор под запись. Одноразово: два нажатия «Да» подряд не должны
+ * давать две записи об одной тарелке.
+ *
+ * Чужой токен того же человека принимаем: после замены слота на телефоне
+ * мог остаться прежний.
  */
 export function takePending(userId: number, token: string): PendingMeal | null {
   sweep();
-  const k = key(userId, token);
-  const found = store.get(k);
-  if (!found) return null;
-  store.delete(k);
-  return found;
+  const slot = byUser.get(userId);
+  if (!slot) return null;
+  if (token && slot.token !== token) {
+    /* слот один — это та же тарелка, не чужой разбор */
+  }
+  byUser.delete(userId);
+  persist();
+  return slot.pending;
 }
 
-/**
- * Посмотреть разбор, не забирая его: нужно для правки состава до записи.
- * Токен остаётся живым, потому что после правки человек ещё скажет «да».
- */
 export function peekPending(userId: number, token: string): PendingMeal | null {
   sweep();
-  return store.get(key(userId, token)) ?? null;
+  const slot = byUser.get(userId);
+  if (!slot) return null;
+  if (token && slot.token !== token) return slot.pending;
+  return slot.pending;
 }
 
-/** Заменить разбор поправленным. Токен и срок те же: это та же тарелка. */
-export function updatePending(userId: number, token: string, meal: MealAnalysis): boolean {
-  const found = store.get(key(userId, token));
-  if (!found) return false;
-  found.meal = meal;
+export function updatePending(userId: number, _token: string, meal: MealAnalysis): boolean {
+  const slot = byUser.get(userId);
+  if (!slot) return false;
+  slot.pending.meal = meal;
+  persist();
   return true;
 }
 
-export function dropPending(userId: number, token: string): void {
-  store.delete(key(userId, token));
+export function dropPending(userId: number, _token: string): void {
+  if (!byUser.has(userId)) return;
+  byUser.delete(userId);
+  persist();
 }
 
-/** Неподтверждённый разбор пользователя, если ещё не протух (для восстановления в UI). */
 export function latestPending(userId: number): { token: string; pending: PendingMeal } | null {
   sweep();
-  const prefix = `${userId}:`;
-  let best: { token: string; pending: PendingMeal } | null = null;
-  for (const [k, v] of store) {
-    if (!k.startsWith(prefix)) continue;
-    if (!best || v.createdAt > best.pending.createdAt) {
-      best = { token: k.slice(prefix.length), pending: v };
-    }
-  }
-  return best;
+  return byUser.get(userId) ?? null;
 }

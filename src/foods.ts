@@ -178,6 +178,18 @@ export const FOODS: FoodItem[] = [
   { aliases: ["киви", "kiwi"], name: "Киви", kcal100: 61, p100: 1.1, f100: 0.5, c100: 15, defaultG: 80, category: "carb", pieceG: 75, minG: 30 },
   { aliases: ["ананас", "pineapple"], name: "Ананас", kcal100: 50, p100: 0.5, f100: 0.1, c100: 13, defaultG: 150, category: "carb" },
   { aliases: ["папайя", "papaya"], name: "Папайя", kcal100: 43, p100: 0.5, f100: 0.3, c100: 11, defaultG: 150, category: "carb" },
+  {
+    aliases: ["маракуйя", "маракуйа", "маракуйя свежая", "passion fruit", "passionfruit", "maracuja", "maracuya"],
+    name: "Маракуйя",
+    kcal100: 97,
+    p100: 2.2,
+    f100: 0.7,
+    c100: 23.4,
+    defaultG: 70,
+    category: "carb",
+    pieceG: 35,
+    minG: 20,
+  },
   { aliases: ["арбуз", "watermelon"], name: "Арбуз", kcal100: 30, p100: 0.6, f100: 0.2, c100: 8, defaultG: 250, category: "carb" },
   // ── Домашние составные блюда ───────────────────────────────────────────────
   { aliases: ["плов", "pilaf", "плов с курицей"], name: "Плов", kcal100: 190, p100: 9, f100: 7, c100: 22, defaultG: 250, category: "other", fatIncluded: true },
@@ -401,6 +413,7 @@ export const STAPLE_ROLE: Record<string, FoodRole> = {
   "Киви": "fiber",
   "Ананас": "fiber",
   "Папайя": "fiber",
+  "Маракуйя": "fiber",
   "Арбуз": "water",
   "Вода": "water",
   "Чай без сахара": "water",
@@ -456,8 +469,34 @@ export function imageSlug(food: FoodItem): string {
   if (hasFoodImage(own)) return own;
   const mapped = IMAGE_FALLBACK[food.name];
   if (mapped && hasFoodImage(mapped)) return mapped;
-  if (food.brand && food.variantOf) return foodSlug(food.variantOf);
+  if (food.brand && food.variantOf) {
+    const cat = foodSlug(food.variantOf);
+    return hasFoodImage(cat) ? cat : own;
+  }
   return own;
+}
+
+/**
+ * Доля мякоти у плода с толстой несъедобной кожурой.
+ * Цифры справочника — на 100 г съедобного. Модель по фото часто ставит
+ * визуальную массу вместе с коркой.
+ */
+export const EDIBLE_YIELD: Record<string, number> = {
+  "Маракуйя": 0.45,
+  "Ананас": 0.52,
+  "Арбуз": 0.52,
+  "Папайя": 0.7,
+};
+
+/** Вес с фото: если граммы похожи на целый плод с коркой — оставляем мякоть. */
+export function photoEdibleGrams(name: string, grams: number): number {
+  const food = matchFood(name);
+  if (!food) return grams;
+  const y = EDIBLE_YIELD[food.name];
+  if (!y) return grams;
+  const typical = food.defaultG ?? 100;
+  if (grams <= typical * 1.2) return grams;
+  return Math.max(food.minG ?? 20, Math.round(grams * y));
 }
 
 /** У скольких штук есть свой кадр: иначе 3 яйца получают фото двух. */
@@ -516,9 +555,29 @@ const SHAKE_EXTRA = new Set([
 ]);
 
 export function isShakeMeal(foods: { name: string }[]): boolean {
-  const names = new Set(foods.map((f) => f.name));
+  const names = new Set(
+    foods.map((f) => matchFood(f.name)?.name).filter((n): n is string => !!n)
+  );
   if (![...SHAKE_POWDER].some((n) => names.has(n))) return false;
   return [...SHAKE_EXTRA].some((n) => names.has(n));
+}
+
+/** Весь состав из шейкера. Рис с курицей плюс скуп — не коктейль. */
+export function isPureShake(foods: { name: string }[]): boolean {
+  if (!foods.length || !isShakeMeal(foods)) return false;
+  return foods.every((f) => isShakeIngredient(f.name));
+}
+
+/** Позиция из шейкера, не виноград и не отдельный стакан. */
+export function isShakeIngredient(name: string): boolean {
+  const food = matchFood(name);
+  if (!food) return false;
+  return SHAKE_POWDER.has(food.name) || SHAKE_EXTRA.has(food.name);
+}
+
+export function isShakePowder(name: string): boolean {
+  const food = matchFood(name);
+  return !!food && SHAKE_POWDER.has(food.name);
 }
 
 /** Старые записи коктейля хранят слаг овсянки или банана. По имени чиним. */
@@ -990,7 +1049,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
       proteinG: Math.round(food.p100 * mul * 10) / 10,
       fatG: Math.round(food.f100 * mul * 10) / 10,
       carbsG: Math.round(food.c100 * mul * 10) / 10,
-      slug: imageSlug(food),
+      slug: existingFoodSlug(imageSlug(food)),
       photoUrl: food.photoUrl,
       source: similar ? "similar" : food.fromBarcode ? "barcode" : food.fromLabel ? "label" : "catalog",
     });
@@ -1002,7 +1061,14 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
   // прячем в счётчик, иначе человек не поймёт, всё ли попало в расчёт.
   const shown = parts.slice(0, 4);
   const hidden = parts.length - shown.length;
-  const title = hidden > 0 ? `${shown.join(", ")} и ещё ${hidden}` : shown.join(", ");
+  const shake = isShakeMeal(unique.map((u) => u.food));
+  // Коктейль из семи позиций раньше прятал овсянку и протеин в «и ещё N».
+  // Потом правка читала только четыре слова в названии и считала 600 вместо 1200.
+  const title = shake && parts.length > 4
+    ? "Коктейль"
+    : hidden > 0
+      ? `${shown.join(", ")} и ещё ${hidden}`
+      : shown.join(", ");
 
   // Картинка приёма — по самой тяжёлой позиции: в тарелке «курица + рис + салат»
   // человек узнаёт запись по мясу, а не по первому слову в строке.
@@ -1018,7 +1084,7 @@ function buildMeal(matched: { food: FoodItem; grams: number; similar?: boolean }
     // У марки своей картинки нет: показываем миниатюру её категории, иначе на
     // месте фото остаётся монограмма. Коктейль не тарелка: тяжёлая позиция
     // (овсянка, банан) даёт чужой файл, которого нет.
-    slug: isShakeMeal(unique.map((u) => u.food)) ? SHAKE_SLUG : imageSlug(main.food),
+    slug: existingFoodSlug(isShakeMeal(unique.map((u) => u.food)) ? SHAKE_SLUG : imageSlug(main.food)),
     photoUrl: main.food.photoUrl,
     parts: detail,
   };
@@ -1065,10 +1131,16 @@ function labelFood(item: IdentifiedFood): FoodItem | null {
     defaultG: 100,
     category: "other",
     minG: 5,
-    fromLabel: true,
+    fromLabel: isLabelSource(item),
     fromBarcode: item.fromDb,
     photoUrl: item.photoUrl,
   };
+}
+
+/** Этикетка — только тара, штрихкод или латинская марка. Свежий фрукт на доске — нет. */
+function isLabelSource(item: IdentifiedFood): boolean {
+  if (item.fromDb || item.packaged) return true;
+  return /[A-Za-z]{2,}/.test(item.name);
 }
 
 /**
@@ -1115,7 +1187,10 @@ function resolveItem(item: IdentifiedFood): { food: FoodItem; similar?: boolean 
   // Штрихкод — точный ключ к конкретной упаковке, включая местный рецепт: с ним
   // не спорит даже проверенная позиция справочника, у которой цифры средние.
   if (item.fromDb && label) return { food: label };
-  if (!m) return label ? { food: label } : null;
+  if (!m) {
+    if (!label) return null;
+    return isLabelSource(item) ? { food: label } : { food: label, similar: true };
+  }
   // Марка в справочнике проверена и повторяема: одно фото даёт одно число.
   if (m.food.brand) return { food: m.food };
 

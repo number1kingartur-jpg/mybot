@@ -17,6 +17,8 @@ import { startWebappServer } from "./server";
 import { accessEnabled, accessChatId, accessChatTitle } from "./access";
 import { analyzeMealPhoto, analyzeMealText, mealPartLines, mealVisionEnabled, mealVisionProvider, MealPhotoUnreadableError, type MealAnalysis } from "./meal";
 import { putPending, takePending } from "./pending";
+import { bangkokHour } from "./meal-same";
+import { mealPingForHour, mealPingText, shouldSendMealPing } from "./meal-remind";
 import { calcMacros, weightTrendAdvice, adaptiveTarget } from "./nutrition";
 import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KEYS, MEAL_LABELS, GOAL_KCAL, type MealGoal, type MealKey, type MenuId } from "./meals";
 import {
@@ -746,19 +748,15 @@ async function sendAppWelcome(
   name: string
 ) {
   const kb = new InlineKeyboard();
+  kb.url("📢 Канал KINGMODE", "https://t.me/kingmode_fit").row();
   if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", appUrl()).row();
-  kb.text("🌱 Старт: 3 дня", "restart_begin").row();
-  kb.url("📢 Канал", "https://t.me/kingmode_fit");
+  kb.url("💬 Написать Артуру", `https://t.me/${(process.env.KINGMODE_DM_USERNAME || "arturking10").replace(/^@/, "")}`);
 
   await ctx.reply(
     `<b>⚡️ KINGMODE</b> · <i>Artur King</i>\n${HR}\n\n` +
-    `Привет, <b>${esc(name)}</b>. Всё в приложении:\n\n` +
-    `🍗 калории и БЖУ под цель, дневник съеденного, фото еды\n` +
-    `💧 вода за день с ориентиром по весу\n` +
-    `🏋️ тренировка на сегодня и программа по неделям\n` +
-    `🧮 1ПМ и таблица процентов\n` +
-    `⚖️ вес, тренд и личный профиль\n\n` +
-    `<i>Открой кнопкой ниже или «KINGMODE» слева от поля ввода.</i>`,
+    `Привет, <b>${esc(name)}</b>. Я тренер, Пхукет, двенадцать лет в спорте.\n\n` +
+    `Сначала загляни в канал, пойми, кто я и как думаю. Потом открой приложение: питание, тренировка на сегодня, прогресс. Бесплатно.\n\n` +
+    `<i>Кнопка «KINGMODE» слева от поля ввода или ниже.</i>`,
     { reply_markup: kb, ...HTML }
   );
   // Убрать широкую клавиатуру можно только сообщением. Сразу удаляю его,
@@ -3556,23 +3554,26 @@ cron.schedule("0 * * * *", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
-// ── Напоминание про дневник еды (ежедневно 20:00 Бангкок) ──────────────────
-// Пропущенный день — это и есть точка, где дневник бросают: у всех счётчиков в
-// нише отвал начинается не с недовольства, а с одного незаписанного вечера.
-// Правила против спама те же, что у напоминаний о тренировке: пишем только тем,
-// кто уже вёл дневник на этой неделе, один раз в день, и замолкаем после трёх
-// напоминаний подряд, оставшихся без записи.
-cron.schedule(process.env.MEAL_REMIND_CRON ?? "0 20 * * *", async () => {
+// ── Напоминание поесть: 8 / 13 / 19, пустой день — 20:00 Бангкок ──────────
+// Mini App не умеет пуш. Единственное уведомление — сообщение в чат с ботом.
+// Слот, который уже записан, не трогаем. Пустой вечер оставляем как страховку.
+cron.schedule(process.env.MEAL_REMIND_CRON ?? "0 8,13,19,20 * * *", async () => {
   if (process.env.MEAL_REMIND === "0") return;
 
   const day = today();
-  for (const u of getUsers()) {
-    if (u.mealRemindPaused) continue;
-    if (!u.nutrition) continue;                       // норма не задана — напоминать нечего
-    if (getMeals(u.chatId, day).length) continue;     // сегодня уже записал
+  const ping = mealPingForHour(bangkokHour());
+  if (!ping) return;
 
+  for (const u of getUsers()) {
+    const mealsToday = getMeals(u.chatId, day);
     const recent = getMealsForDays(u.chatId, 7);
-    if (!recent.length) continue;                     // человек и не начинал — это была бы реклама
+    if (!shouldSendMealPing({
+      paused: u.mealRemindPaused,
+      hasNutrition: !!u.nutrition,
+      mealsToday,
+      loggedThisWeek: recent.length > 0,
+      ping,
+    })) continue;
 
     let missed = u.mealRemindMissed ?? 0;
     if (u.mealRemindDate && u.mealRemindDate < day) {
@@ -3585,9 +3586,9 @@ cron.schedule(process.env.MEAL_REMIND_CRON ?? "0 20 * * *", async () => {
       try {
         await bot.api.sendMessage(
           u.chatId,
-          `🔕 <b>Больше не напоминаю про дневник.</b>\n\n` +
-          `Три вечера подряд без записи — значит сейчас не до этого.\n` +
-          `<i>Захочешь вернуться — просто запиши приём в приложении, напоминания включатся сами.</i>`,
+          `🔕 <b>Больше не напоминаю про еду.</b>\n\n` +
+          `Три дня подряд без записи — значит сейчас не до этого.\n` +
+          `<i>Захочешь вернуться — запиши приём в приложении или включи напоминание в профиле.</i>`,
           { parse_mode: "HTML" }
         );
       } catch { /* пользователь заблокировал бота */ }
@@ -3595,17 +3596,11 @@ cron.schedule(process.env.MEAL_REMIND_CRON ?? "0 20 * * *", async () => {
     }
 
     const streak = mealStreak(u.chatId, day);
-    const dayWord = streak.days % 10 === 1 && streak.days % 100 !== 11 ? "день" : "дня";
-    const tail =
-      streak.days >= 2
-        ? `Серия: <b>${streak.days} ${dayWord}</b> подряд. Сегодня она ещё цела.`
-        : `Одно фото — и день записан.`;
-
     const kb = MINIAPP_URL ? new InlineKeyboard().webApp("⚡️ Записать еду", appUrl()) : undefined;
     try {
       await bot.api.sendMessage(
         u.chatId,
-        `🍽 <b>Сегодня в дневнике пусто.</b>\n\n${tail}`,
+        mealPingText(ping, streak.days),
         { parse_mode: "HTML", reply_markup: kb }
       );
       updateUser(u.chatId, { mealRemindDate: day, mealRemindMissed: missed });

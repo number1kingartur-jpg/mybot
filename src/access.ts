@@ -7,6 +7,8 @@
  * и вход закрывается для всех, кроме владельца.
  */
 
+import { take } from "./guard";
+
 export type AccessKind = "channel" | "group";
 
 export type JoinBody = {
@@ -20,7 +22,7 @@ export type JoinBody = {
 export type AccessResult = { ok: true } | { ok: false; body: JoinBody };
 
 const TTL_OK_MS = 60_000;
-const TTL_NO_MS = 2_000;
+const TTL_NO_MS = 30_000;
 
 type CacheRow = { allowed: boolean; exp: number };
 const cache = new Map<number, CacheRow>();
@@ -92,7 +94,7 @@ export function joinBody(chatId = accessChatId()): JoinBody {
     error: "join",
     kind,
     title,
-    message: `Сначала вступи в ${where} ${title}. Без этого приложение закрыто.`,
+    message: `Сначала вступи в ${where} ${title}. Там задания и разборы. Без этого приложение закрыто.`,
   };
   if (url) body.url = url;
   return body;
@@ -156,7 +158,9 @@ export async function checkAccess(opts: {
   const chatId = accessChatId();
   if (!chatId) return { ok: true };
 
-  if (opts.refresh) forgetAccess(opts.userId);
+  if (opts.refresh && take(`join-refresh:${opts.userId}`, 1, 60_000)) {
+    forgetAccess(opts.userId);
+  }
   const hit = cached(opts.userId);
   if (hit === true) return { ok: true };
   if (hit === false) return { ok: false, body: joinBody(chatId) };

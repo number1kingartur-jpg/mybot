@@ -10,7 +10,7 @@
  * Запуск: node scripts/check-meal-edit.mjs
  */
 import { macrosFromItems } from "../dist/foods.js";
-import { editMeal } from "../dist/meal.js";
+import { editMeal, isCompleteShake, mealFromHistory, mergeShakeFromUsual } from "../dist/meal.js";
 
 let fails = 0;
 function ok(cond, what) {
@@ -93,6 +93,55 @@ for (const p of phantom.parts) {
     `позиция «${p.name}» без БЖУ`);
   ok(typeof p.slug === "string" && p.slug.length > 0, `позиция «${p.name}» без картинки`);
 }
+
+const shake = macrosFromItems([
+  { name: "белок яичный жидкий", grams: 200 },
+  { name: "банан", grams: 120 },
+  { name: "арахисовая паста", grams: 16 },
+]);
+ok(shake && shake.parts.length === 3, "коктейль из трёх позиций");
+const noPaste = editMeal(shake, { drop: 2 });
+ok(noPaste && noPaste.parts.every((p) => !/арахис/i.test(p.name)), "паста снята из напитка");
+ok(noPaste.kcal < shake.kcal, "без пасты калорий меньше");
+sumMatches(noPaste, "коктейль без пасты");
+const plusOats = editMeal(noPaste, { add: { name: "овсяные хлопья сухие", grams: 40 } });
+ok(plusOats && plusOats.parts.some((p) => /овсян/i.test(p.name)), "в напиток добавили хлопья");
+sumMatches(plusOats, "коктейль плюс хлопья");
+
+const stored = mealFromHistory({
+  name: shake.name,
+  kcal: shake.kcal,
+  proteinG: shake.proteinG,
+  fatG: shake.fatG,
+  carbsG: shake.carbsG,
+  parts: shake.parts,
+});
+eq(stored.parts.length, 3, "сохранённый состав коктейля не потерялся");
+
+const usual = macrosFromItems([
+  { name: "белок яичный жидкий", grams: 250 },
+  { name: "молоко таиландское", grams: 100 },
+  { name: "банан", grams: 360 },
+  { name: "овсяные хлопья сухие", grams: 96 },
+  { name: "арахисовая паста", grams: 16 },
+  { name: "протеин", grams: 60 },
+  { name: "креатин", grams: 3 },
+]);
+ok(isCompleteShake(usual.parts), "полный коктейль: овсянка и протеин на месте");
+const stub = macrosFromItems([
+  { name: "белок яичный жидкий", grams: 258 },
+  { name: "молоко таиландское", grams: 103 },
+  { name: "банан", grams: 360 },
+  { name: "арахисовая паста", grams: 16 },
+]);
+ok(!isCompleteShake(stub.parts), "четыре позиции — не полный коктейль");
+const filled = mergeShakeFromUsual(stub, usual.parts);
+ok(isCompleteShake(filled.parts), "овсянка и протеин вернулись из вчерашнего");
+ok(filled.kcal > 1000, "после дописи это ~1200, не 600");
+ok(/овсян/i.test(filled.note + filled.parts.map((p) => p.name).join(" ")), "овсянка в составе");
+ok(/протеин/i.test(filled.parts.map((p) => p.name).join(" ")), "протеин в составе");
+ok(filled.name === "Коктейль", "полный коктейль пишется одним словом, не хвостом «и ещё»");
+sumMatches(filled, "коктейль после дописи");
 
 if (fails) {
   console.error(`check-meal-edit: ${fails} провал(ов)`);

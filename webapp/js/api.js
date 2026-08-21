@@ -282,6 +282,15 @@ window.KM_API = (function () {
     partGrams: function (token, index, grams) {
       return request("POST", "/api/meal/pending", { token: token, index: index, grams: grams });
     },
+    addPart: function (token, name, grams) {
+      return request("POST", "/api/meal/pending", { token: token, add: { name: name, grams: grams } });
+    },
+    revise: function (name, items) {
+      return request("POST", "/api/meal/revise", items && items.length ? { items: items } : { name: name });
+    },
+    pick: function (units) {
+      return request("POST", "/api/meal/pick", { units: units });
+    },
     food: function (name, grams) {
       return request("POST", "/api/meal/food", { name: name, grams: grams });
     },
@@ -291,6 +300,9 @@ window.KM_API = (function () {
     repeat: function (name) {
       var names = Array.isArray(name) ? name : [name];
       return request("POST", "/api/meal/repeat", { names: names });
+    },
+    usualShake: function () {
+      return request("POST", "/api/meal/usual-shake", {});
     },
     scaleMeal: function (id, factor) {
       return request("PATCH", "/api/meal", { id: id, factor: factor });
