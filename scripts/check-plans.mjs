@@ -250,12 +250,22 @@ if (typeof APP.gymClips === "function") {
       APP.scheme(appSample, "maint", c)
     );
   }
+  check("RPE цикла 4 интенсив", cycleLoad(3).rpe === 9 && APP.rpeOf(3) === 9);
   check(
-    "цикл 3 добавляет подход",
-    setsFor(sample, "maint", 3) === setsFor(sample, "maint", 0) + 1,
-    String(setsFor(sample, "maint", 3))
+    "цикл 1 и цикл 4 дают разную схему",
+    schemeFor(sample, "maint", { cycle: 0 }) !== schemeFor(sample, "maint", { cycle: 3 }),
+    schemeFor(sample, "maint", { cycle: 3 })
   );
-  check("RPE цикла 3", cycleLoad(3).rpe === 9 && APP.rpeOf(3) === 9);
+  check(
+    "день сила и день объем разные",
+    schemeFor(sample, "maint", { day: 0 }) !== schemeFor(sample, "maint", { day: 1 }),
+    schemeFor(sample, "maint", { day: 1 })
+  );
+  check(
+    "день 2 схема",
+    schemeFor(sample, "maint", { cycle: 0, day: 1 }) === APP.scheme(appSample, "maint", 0, 1),
+    APP.scheme(appSample, "maint", 0, 1)
+  );
   check(
     "на поддержании схема это диапазон",
     /× \d+–\d+/.test(schemeFor(sample, "maint")),

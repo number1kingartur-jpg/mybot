@@ -807,37 +807,53 @@ var KM_PLANS = (function () {
    * объём не наращивают — восстановление хуже, а задача силовой другая: удержать
    * мышцы и силу, поэтому вес на снаряде держим, а не снижаем.
    */
+  var CYCLE_WAVE = [
+    { name: "объем", extraSets: 0, rpe: 7 },
+    { name: "объем", extraSets: 1, rpe: 8 },
+    { name: "сила", extraSets: 0, rpe: 8 },
+    { name: "интенсив", extraSets: 0, rpe: 9 },
+    { name: "разгрузка", extraSets: -1, rpe: 6 }
+  ];
+  var DAY_WAVE = [
+    { name: "сила", extraSets: 0, repShift: -3 },
+    { name: "объем", extraSets: 1, repShift: 2 },
+    { name: "восстановление", extraSets: -1, repShift: 0 }
+  ];
+  var CYCLE_REP_SHIFT = [1, 2, -2, -4, 0];
+
   function clampCycle(n) {
     var c = Number(n);
     if (!isFinite(c) || c < 0) return 0;
     return Math.min(4, Math.floor(c));
   }
 
+  function clampDay(n) {
+    var d = Number(n);
+    if (!isFinite(d) || d < 0) return 0;
+    return Math.floor(d);
+  }
+
   function cycleLoad(cycle) {
-    var table = [
-      { extraSets: 0, rpe: 7 },
-      { extraSets: 0, rpe: 8 },
-      { extraSets: 1, rpe: 8 },
-      { extraSets: 1, rpe: 9 },
-      { extraSets: -1, rpe: 6 }
-    ];
-    return table[clampCycle(cycle)];
+    return CYCLE_WAVE[clampCycle(cycle)];
   }
 
-  function setsOf(e, goal, cycle) {
+  function waveOf(cycle, day) {
+    var c = CYCLE_WAVE[clampCycle(cycle)];
+    var d = DAY_WAVE[clampDay(day) % 3];
+    var recover = c.name === "разгрузка" || d.name === "восстановление";
+    return {
+      cycleName: c.name,
+      dayName: d.name,
+      extraSets: c.extraSets + d.extraSets,
+      repShift: CYCLE_REP_SHIFT[clampCycle(cycle)] + d.repShift,
+      rpe: recover ? Math.min(c.rpe, 6) : c.rpe
+    };
+  }
+
+  function loadOf(e, goal, cycle, day) {
     var d = dose(e);
-    return Math.max(2, d.sets + (goal === "bulk" ? 1 : 0) + cycleLoad(cycle).extraSets);
-  }
-
-  function rpeOf(cycle) {
-    return cycleLoad(cycle).rpe;
-  }
-
-  function scheme(e, goal, cycle) {
-    var d = dose(e);
-    var sets = setsOf(e, goal, cycle);
-    var setsText = sets + " " + plural(sets, "подход", "подхода", "подходов");
-
+    var w = waveOf(cycle, day);
+    var sets = Math.max(2, d.sets + (goal === "bulk" ? 1 : 0) + w.extraSets);
     if (d.secs) {
       var lo = d.secs[0];
       var hi = d.secs[1];
@@ -845,14 +861,63 @@ var KM_PLANS = (function () {
         lo = Math.round((lo * 1.5) / 5) * 5;
         hi = Math.round((hi * 1.5) / 5) * 5;
       }
-      return setsText + " × " + lo + "–" + hi + " " + plural(hi, "секунда", "секунды", "секунд");
+      lo = Math.max(10, lo + w.repShift * 5);
+      hi = Math.max(lo + 10, hi + w.repShift * 5);
+      return {
+        cycleName: w.cycleName,
+        dayName: w.dayName,
+        extraSets: w.extraSets,
+        rpe: w.rpe,
+        sets: sets,
+        lo: lo,
+        hi: hi,
+        hold: true,
+        unit: "с",
+        tail: ""
+      };
     }
-
     var reps = d.reps || 10;
-    var lo = goal === "bulk" ? reps : Math.max(5, reps - 2);
-    var hi = goal === "bulk" ? reps + 2 : reps;
-    var unit = d.unit || plural(hi, "раз", "раза", "раз");
-    return setsText + " × " + lo + "–" + hi + " " + unit + (d.tail ? " " + d.tail : "");
+    var rlo = (goal === "bulk" ? reps : Math.max(5, reps - 2)) + w.repShift;
+    var rhi = (goal === "bulk" ? reps + 2 : reps) + w.repShift;
+    rlo = Math.max(3, rlo);
+    rhi = Math.max(rlo + 2, rhi);
+    return {
+      cycleName: w.cycleName,
+      dayName: w.dayName,
+      extraSets: w.extraSets,
+      rpe: w.rpe,
+      sets: sets,
+      lo: rlo,
+      hi: rhi,
+      hold: false,
+      unit: d.unit || plural(rhi, "раз", "раза", "раз"),
+      tail: d.tail || ""
+    };
+  }
+
+  function setsOf(e, goal, cycle, day) {
+    return loadOf(e, goal, cycle, day).sets;
+  }
+
+  function rpeOf(cycle, day) {
+    return waveOf(cycle, day).rpe;
+  }
+
+  function scheme(e, goal, cycle, day) {
+    var load = loadOf(e, goal, cycle, day);
+    var setsText = load.sets + " " + plural(load.sets, "подход", "подхода", "подходов");
+    if (load.hold) {
+      return (
+        setsText +
+        " × " +
+        load.lo +
+        "–" +
+        load.hi +
+        " " +
+        plural(load.hi, "секунда", "секунды", "секунд")
+      );
+    }
+    return setsText + " × " + load.lo + "–" + load.hi + " " + load.unit + (load.tail ? " " + load.tail : "");
   }
 
   function rest(goal) {
@@ -1032,7 +1097,10 @@ var KM_PLANS = (function () {
     localVideo: localVideo,
     dose: dose,
     clampCycle: clampCycle,
+    clampDay: clampDay,
     cycleLoad: cycleLoad,
+    waveOf: waveOf,
+    loadOf: loadOf,
     setsOf: setsOf,
     rpeOf: rpeOf,
     scheme: scheme,

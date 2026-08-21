@@ -837,48 +837,114 @@ function plural(n: number, one: string, few: string, many: string): string {
  * дефиците объём не наращивают: восстановление хуже, а задача силовой другая —
  * удержать мышцы и силу, поэтому вес на снаряде держим, а не снижаем.
  */
-export type CycleLoad = { extraSets: number; rpe: number };
+export type CycleLoad = { extraSets: number; rpe: number; name: string };
+export type DayLoad = { extraSets: number; repShift: number; name: string };
+export type WaveLoad = {
+  cycleName: string;
+  dayName: string;
+  extraSets: number;
+  repShift: number;
+  rpe: number;
+  sets: number;
+  lo: number;
+  hi: number;
+  hold: boolean;
+  unit: string;
+  tail: string;
+};
 
-/** Цикл 1..5 как у Drop It: одни движения, меняется объём и RPE. */
+const CYCLE_WAVE: CycleLoad[] = [
+  { name: "объем", extraSets: 0, rpe: 7 },
+  { name: "объем", extraSets: 1, rpe: 8 },
+  { name: "сила", extraSets: 0, rpe: 8 },
+  { name: "интенсив", extraSets: 0, rpe: 9 },
+  { name: "разгрузка", extraSets: -1, rpe: 6 },
+];
+
+const DAY_WAVE: DayLoad[] = [
+  { name: "сила", extraSets: 0, repShift: -3 },
+  { name: "объем", extraSets: 1, repShift: 2 },
+  { name: "восстановление", extraSets: -1, repShift: 0 },
+];
+
+const CYCLE_REP_SHIFT = [1, 2, -2, -4, 0];
+
 export function clampCycle(n: unknown): number {
   const c = Number(n);
   if (!Number.isFinite(c) || c < 0) return 0;
   return Math.min(4, Math.floor(c));
 }
 
+export function clampDay(n: unknown): number {
+  const d = Number(n);
+  if (!Number.isFinite(d) || d < 0) return 0;
+  return Math.floor(d);
+}
+
 export function cycleLoad(cycle?: number): CycleLoad {
-  const table: CycleLoad[] = [
-    { extraSets: 0, rpe: 7 },
-    { extraSets: 0, rpe: 8 },
-    { extraSets: 1, rpe: 8 },
-    { extraSets: 1, rpe: 9 },
-    { extraSets: -1, rpe: 6 },
-  ];
-  return table[clampCycle(cycle)];
+  return CYCLE_WAVE[clampCycle(cycle)];
 }
 
-export function setsFor(e: SimpleExercise, goal: Goal, cycle?: number): number {
-  const dose = exerciseDose(e);
-  return Math.max(2, dose.sets + (goal === "bulk" ? 1 : 0) + cycleLoad(cycle).extraSets);
+export function waveOf(cycle?: number, day?: number): Omit<WaveLoad, "sets" | "lo" | "hi" | "hold" | "unit" | "tail"> {
+  const c = CYCLE_WAVE[clampCycle(cycle)];
+  const d = DAY_WAVE[clampDay(day) % 3];
+  const recover = c.name === "разгрузка" || d.name === "восстановление";
+  return {
+    cycleName: c.name,
+    dayName: d.name,
+    extraSets: c.extraSets + d.extraSets,
+    repShift: CYCLE_REP_SHIFT[clampCycle(cycle)] + d.repShift,
+    rpe: recover ? Math.min(c.rpe, 6) : c.rpe,
+  };
 }
 
-export function schemeFor(e: SimpleExercise, goal: Goal, opts?: { sets?: number; cycle?: number }): string {
+export function loadOf(e: SimpleExercise, goal: Goal, cycle?: number, day?: number): WaveLoad {
   const dose = exerciseDose(e);
-  const sets = opts?.sets ?? setsFor(e, goal, opts?.cycle);
-  const setsText = `${sets} ${plural(sets, "подход", "подхода", "подходов")}`;
-
+  const w = waveOf(cycle, day);
+  const sets = Math.max(2, dose.sets + (goal === "bulk" ? 1 : 0) + w.extraSets);
   if (dose.secs) {
-    const [lo, hi] = goal === "bulk"
-      ? [Math.round((dose.secs[0] * 1.5) / 5) * 5, Math.round((dose.secs[1] * 1.5) / 5) * 5]
-      : dose.secs;
-    return `${setsText} × ${lo}–${hi} ${plural(hi, "секунда", "секунды", "секунд")}`;
+    let lo = dose.secs[0];
+    let hi = dose.secs[1];
+    if (goal === "bulk") {
+      lo = Math.round((lo * 1.5) / 5) * 5;
+      hi = Math.round((hi * 1.5) / 5) * 5;
+    }
+    lo = Math.max(10, lo + w.repShift * 5);
+    hi = Math.max(lo + 10, hi + w.repShift * 5);
+    return { ...w, sets, lo, hi, hold: true, unit: "с", tail: "" };
   }
-
   const reps = dose.reps ?? 10;
-  const lo = goal === "bulk" ? reps : Math.max(5, reps - 2);
-  const hi = goal === "bulk" ? reps + 2 : reps;
-  const unit = dose.unit ?? plural(hi, "раз", "раза", "раз");
-  return `${setsText} × ${lo}–${hi} ${unit}${dose.tail ? ` ${dose.tail}` : ""}`;
+  let lo = (goal === "bulk" ? reps : Math.max(5, reps - 2)) + w.repShift;
+  let hi = (goal === "bulk" ? reps + 2 : reps) + w.repShift;
+  lo = Math.max(3, lo);
+  hi = Math.max(lo + 2, hi);
+  return {
+    ...w,
+    sets,
+    lo,
+    hi,
+    hold: false,
+    unit: dose.unit ?? plural(hi, "раз", "раза", "раз"),
+    tail: dose.tail ?? "",
+  };
+}
+
+export function setsFor(e: SimpleExercise, goal: Goal, cycle?: number, day?: number): number {
+  return loadOf(e, goal, cycle, day).sets;
+}
+
+export function schemeFor(
+  e: SimpleExercise,
+  goal: Goal,
+  opts?: { sets?: number; cycle?: number; day?: number }
+): string {
+  const load = loadOf(e, goal, opts?.cycle, opts?.day);
+  const sets = opts?.sets ?? load.sets;
+  const setsText = `${sets} ${plural(sets, "подход", "подхода", "подходов")}`;
+  if (load.hold) {
+    return `${setsText} × ${load.lo}–${load.hi} ${plural(load.hi, "секунда", "секунды", "секунд")}`;
+  }
+  return `${setsText} × ${load.lo}–${load.hi} ${load.unit}${load.tail ? ` ${load.tail}` : ""}`;
 }
 
 /** Отдых между подходами: на массе длиннее, на дефиците короче. */

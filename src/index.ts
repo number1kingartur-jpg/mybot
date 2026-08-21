@@ -65,6 +65,13 @@ import {
   sendGuideFile,
   parseGuidePayload,
 } from "./guides";
+import {
+  registerRestartBot,
+  isRestartPayload,
+  beginRestart,
+  usersForRestartReminder,
+  buildRestartReminderText,
+} from "./restart-bot";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -740,6 +747,7 @@ async function sendAppWelcome(
 ) {
   const kb = new InlineKeyboard();
   if (MINIAPP_URL) kb.webApp("⚡️ Открыть KINGMODE", appUrl()).row();
+  kb.text("🌱 Старт: 3 дня", "restart_begin").row();
   kb.url("📢 Канал", "https://t.me/kingmode_fit");
 
   await ctx.reply(
@@ -799,6 +807,11 @@ bot.command("start", async (ctx) => {
   // Диплинк из канала: t.me/<bot>?start=kingmode
   if (payload === "kingmode") {
     updateUser(ctx.from!.id, { ref: "kingmode" });
+  }
+
+  if (isRestartPayload(payload)) {
+    await beginRestart(ctx, ctx.from?.first_name ?? "друг");
+    return;
   }
 
   const guideKey = parseGuidePayload(payload);
@@ -956,12 +969,12 @@ function diffAdvice(userId: number, place: Place): string {
 }
 
 function buildSimpleWorkoutText(userId: number): string {
-  const { place, w, split } = currentSimpleWorkout(userId);
+  const { place, w, split, idx } = currentSimpleWorkout(userId);
   const prog = programById(split);
   const goal = simpleGoal(userId);
   const items = w.items
     .map((e, i) =>
-      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(schemeFor(e, goal))}\n` +
+      `<b>${i + 1}. ${esc(e.name)}</b> ${DOT} ${esc(schemeFor(e, goal, { day: idx }))}\n` +
       `<i>${esc(e.short)}</i>`
     )
     .join("\n\n");
@@ -2262,7 +2275,7 @@ bot.hears("📔 Сегодня", async (ctx) => {
 });
 
 bot.callbackQuery(/^del_(.+)$/, async (ctx) => {
-  removeWorkouts([ctx.match[1]]);
+  removeWorkouts([ctx.match[1]], ctx.from.id);
   await ctx.answerCallbackQuery("Удалено");
   const { text, kb } = buildTodayView(ctx.from.id);
   try {
@@ -2682,7 +2695,7 @@ bot.callbackQuery(/^undo_(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery("Уже нельзя отменить");
     return;
   }
-  removeWorkouts(ids);
+  removeWorkouts(ids, ctx.from.id);
   undoStore.delete(undoId);
   await ctx.answerCallbackQuery("Запись удалена");
   await ctx.editMessageText(`↩️ <b>Запись отменена</b>`, HTML);
@@ -3627,6 +3640,20 @@ cron.schedule("0 21 * * *", async () => {
   }
 }, { timezone: "Asia/Bangkok" });
 
+// ── Напоминание «Старт 3 дня» (08:00 Bangkok) ───────────────────────────────
+cron.schedule("0 8 * * *", async () => {
+  for (const u of usersForRestartReminder()) {
+    try {
+      await bot.api.sendMessage(u.chatId, buildRestartReminderText(u), {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "📋 Открыть задание", callback_data: "restart_today" }]],
+        },
+      });
+    } catch { /* пользователь заблокировал бота */ }
+  }
+}, { timezone: "Asia/Bangkok" });
+
 // ── Автовыкладка в Telegram-канал (по умолчанию пн/ср/пт 10:00 Bangkok) ───
 if (channelPostingEnabled()) {
   const slots = channelPostSlots();
@@ -3652,6 +3679,8 @@ if (channelPostingEnabled()) {
 }
 
 // ── Отказоустойчивость ─────────────────────────────────────────────────────
+registerRestartBot(bot, { appOnly: APP_ONLY });
+
 bot.catch((err) => {
   console.error("Handler error:", err.error);
 });

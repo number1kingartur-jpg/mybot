@@ -871,7 +871,8 @@
               .join("") +
             "</ul>" +
             '<div class="edit__add">' +
-            '<input class="input" type="text" data-path="partAdd" placeholder="арахисовая паста, банан" value="' +
+            '<p class="muted">Не хватает овсянки, протеина или креатина: допиши здесь, потом «Добавить».</p>' +
+            '<input class="input" type="text" data-path="partAdd" placeholder="овсянка, протеин, креатин" value="' +
             esc(state.partAdd || "") +
             '" />' +
             '<input class="input edit__add-g" type="number" inputmode="numeric" min="1" max="3000" data-path="partAddG" placeholder="г" value="' +
@@ -1729,7 +1730,7 @@
       pendingTeaserCard() +
       heroCard +
       routeCard() +
-      (!state.busy && !state.pending && !state.repeatAsk ? sameAsCards() : "") +
+      (!state.busy && !state.repeatAsk ? sameAsCards() : "") +
       '<div class="tiles">' +
       // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
       // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
@@ -2435,7 +2436,7 @@
     // добавляет второй приём вместо подтверждения первого. Выход из вопроса —
     // кнопка «Не то», она же открывает ввод текстом.
     if (state.repeatAsk) return repeatAskCard();
-    if (state.pending) return pendingCard();
+    if (state.pending) return pendingCard() + sameAsCards();
     return sameAsCards() + portionCard() + addBlock(quota);
   }
 
@@ -2456,6 +2457,10 @@
     }
   }
 
+  function isMealThumb(url) {
+    return /^\/img\/meal\/[a-f0-9]{16,32}\.(jpg|jpeg|png|webp)$/i.test(String(url || ""));
+  }
+
   function assetVer() {
     return KM_API && KM_API.build ? KM_API.build() : "";
   }
@@ -2468,7 +2473,7 @@
 
   function thumb(slug, title, folder, photoUrl) {
     var src = "";
-    if (photoUrl && isOffImage(photoUrl)) src = photoUrl;
+    if (photoUrl && (isOffImage(photoUrl) || isMealThumb(photoUrl))) src = photoUrl;
     else if (slug) {
       src = (folder || "food") === "ex" ? exSrc(slug) : "img/" + (folder || "food") + "/" + slug + ".webp";
     }
@@ -3471,23 +3476,34 @@
     return KM_PLANS.clampCycle ? KM_PLANS.clampCycle(state.workout.cycle) : 0;
   }
 
+  function workoutDay() {
+    return Number(state.workout.plan) || 0;
+  }
+
+  function workoutWave() {
+    return KM_PLANS.waveOf
+      ? KM_PLANS.waveOf(workoutCycle(), workoutDay())
+      : { cycleName: "", dayName: "", rpe: 0 };
+  }
+
   function schemeBadge(e, goal) {
-    var d = KM_PLANS.dose(e);
-    var cycle = workoutCycle();
-    var sets = KM_PLANS.setsOf ? KM_PLANS.setsOf(e, goal, cycle) : d.sets + (goal === "bulk" ? 1 : 0);
-    var rpe = KM_PLANS.rpeOf ? KM_PLANS.rpeOf(cycle) : 0;
-    var body;
-    if (d.secs) {
-      var lo = goal === "bulk" ? Math.round((d.secs[0] * 1.5) / 5) * 5 : d.secs[0];
-      var hi = goal === "bulk" ? Math.round((d.secs[1] * 1.5) / 5) * 5 : d.secs[1];
-      body = sets + "×" + lo + "–" + hi + " с";
-    } else {
-      var reps = d.reps || 10;
-      var lo = goal === "bulk" ? reps : Math.max(5, reps - 2);
-      var hi = goal === "bulk" ? reps + 2 : reps;
-      body = sets + "×" + lo + "–" + hi;
+    var load = KM_PLANS.loadOf
+      ? KM_PLANS.loadOf(e, goal, workoutCycle(), workoutDay())
+      : null;
+    if (!load) {
+      var d = KM_PLANS.dose(e);
+      return (d.sets || 3) + "×" + (d.reps || 10);
     }
-    return rpe ? body + " · RPE " + rpe : body;
+    return (
+      load.sets +
+      "×" +
+      load.lo +
+      "–" +
+      load.hi +
+      (load.hold ? " с" : "") +
+      " · RPE " +
+      load.rpe
+    );
   }
 
   function dayChipLabel(p) {
@@ -3591,13 +3607,20 @@
   function defaultSets(e) {
     var d = KM_PLANS.dose(e);
     var goal = workoutGoal();
-    var n = KM_PLANS.setsOf ? KM_PLANS.setsOf(e, goal, workoutCycle()) : d.sets + (goal === "bulk" ? 1 : 0);
+    var load = KM_PLANS.loadOf ? KM_PLANS.loadOf(e, goal, workoutCycle(), workoutDay()) : null;
+    var n = load
+      ? load.sets
+      : KM_PLANS.setsOf
+        ? KM_PLANS.setsOf(e, goal, workoutCycle(), workoutDay())
+        : d.sets + (goal === "bulk" ? 1 : 0);
     var prev = lastLog(e.name);
-    var reps = d.secs
-      ? goal === "bulk"
-        ? Math.round((d.secs[1] * 1.5) / 5) * 5
-        : d.secs[0]
-      : d.reps || 10;
+    var reps = load
+      ? load.hi
+      : d.secs
+        ? goal === "bulk"
+          ? Math.round((d.secs[1] * 1.5) / 5) * 5
+          : d.secs[0]
+        : d.reps || 10;
     var out = [];
     var i;
     for (i = 0; i < n; i++) {
@@ -3719,7 +3742,8 @@
         "w_cycle",
         workoutCycle(),
         [0, 1, 2, 3, 4].map(function (i) {
-          return [i, "Цикл " + (i + 1)];
+          var name = KM_PLANS.cycleLoad ? KM_PLANS.cycleLoad(i).name : "";
+          return [i, "Цикл " + (i + 1) + (name ? " · " + name : "")];
         }),
         true
       ) +
@@ -3728,12 +3752,19 @@
         "w_plan",
         wk.plan,
         list.map(function (p, i) {
-          return [i, dayChipLabel(p)];
+          var role = KM_PLANS.waveOf ? KM_PLANS.waveOf(workoutCycle(), i).dayName : "";
+          return [i, dayChipLabel(p) + (role ? " · " + role : "")];
         })
       ) +
       card(
         cardHead(
-          dayChipLabel(plan) + ". Цикл " + (workoutCycle() + 1),
+          dayChipLabel(plan) +
+            " · " +
+            esc(workoutWave().dayName) +
+            ". Цикл " +
+            (workoutCycle() + 1) +
+            " · " +
+            esc(workoutWave().cycleName),
           programTitle(split) +
             (dayMuscles(plan) ? " · " + dayMuscles(plan) : "") +
             " · " +
@@ -3742,11 +3773,13 @@
             plural(plan.items.length, "упражнение", "упражнения", "упражнений"),
           prog.shelf === "start" ? "новичок" : "уже тренируюсь"
         ) +
-          '<p class="note note--plain" style="margin-top:12px">Цель ' +
-          esc(KM_PLANS.doseLabel(goal)) +
+          '<p class="note note--plain" style="margin-top:12px">Формула сама ставит подходы и повторы: цикл ' +
+          esc(workoutWave().cycleName) +
+          ", день " +
+          esc(workoutWave().dayName) +
           ". Отдых " +
           esc(KM_PLANS.rest(goal)) +
-          ".</p>",
+          ". Вес в журнал пишешь сам.</p>",
         { gold: true }
       ) +
       noticeHtml() +
@@ -3887,13 +3920,17 @@
     var doneN = sets.filter(function (s) {
       return s.done;
     }).length;
-    var rpe = KM_PLANS.rpeOf ? KM_PLANS.rpeOf(workoutCycle()) : 0;
-    var planText = KM_PLANS.scheme(e, goal, workoutCycle());
+    var wave = workoutWave();
+    var planText = KM_PLANS.scheme(e, goal, workoutCycle(), workoutDay());
     var log =
       '<div class="sets"><p class="sets__plan">План: <strong>' +
       esc(planText) +
       "</strong>" +
-      (rpe ? " · RPE " + rpe : "") +
+      (wave.rpe ? " · RPE " + wave.rpe : "") +
+      ". Цикл " +
+      esc(wave.cycleName) +
+      ", день " +
+      esc(wave.dayName) +
       ". Делай в этом диапазоне.</p><div class=\"sets__head\">" +
       "<span>#</span><span>прошлый</span><span>" +
       (hold ? "сек" : "кг") +
