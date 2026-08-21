@@ -176,6 +176,25 @@ check("ppl зал: три дня", plansForProgram("gym", "ppl").map((d) => d.la
 check("ppl дом: честные дни", plansForProgram("home", "ppl").map((d) => d.label).join("/") === "Жим/Спина/Ноги");
 check("ul зал: четыре дня", plansForProgram("gym", "ul").length === 4);
 
+const programNames = [];
+for (const split of SPLITS) {
+  for (const place of PLACES) {
+    for (const plan of plansForProgram(place, split)) {
+      for (const e of plan.items) programNames.push(e.name);
+    }
+  }
+}
+check(
+  "в программах нет одноногой румынской",
+  !programNames.includes("Румынская тяга на одной ноге")
+);
+check(
+  "в программах нет одноногого мостика",
+  !programNames.includes("Ягодичный мостик на одной ноге")
+);
+check("зал: есть молоты", programNames.includes("Молоты двумя руками"));
+check("зал: есть разгибание на блоке", programNames.includes("Разгибание рук с канатом"));
+
 const squat = SIMPLE_PLANS.home[0].items[0];
 check("набор: 4 подхода", schemeFor(squat, "bulk").startsWith("4 подхода"), schemeFor(squat, "bulk"));
 check("снижение: 3 подхода", schemeFor(squat, "cut").startsWith("3 подхода"), schemeFor(squat, "cut"));
