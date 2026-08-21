@@ -756,6 +756,31 @@ button {
   text-transform: uppercase;
 }
 
+.progbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-gold);
+  background: var(--gold-fill);
+}
+
+.progbar__name {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.progbar__meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 /* ── Формы ──────────────────────────────────────────────────────────────── */
 
 .field {

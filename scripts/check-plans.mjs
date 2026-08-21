@@ -173,6 +173,7 @@ for (const split of SPLITS) {
 }
 
 check("ppl зал: три дня", plansForProgram("gym", "ppl").map((d) => d.label).join("/") === "Push/Pull/Squeeze");
+check("ppl дом: честные дни", plansForProgram("home", "ppl").map((d) => d.label).join("/") === "Жим/Спина/Ноги");
 check("ul зал: четыре дня", plansForProgram("gym", "ul").length === 4);
 
 const squat = SIMPLE_PLANS.home[0].items[0];

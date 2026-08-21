@@ -545,6 +545,7 @@
   }
 
   var workoutTouched = false;
+  var workoutPick = false;
 
   /**
    * Разовый перенос дневника веса с устройства в базу бота. Локальные записи
@@ -1607,12 +1608,11 @@
       ) +
       "</div>" +
       waterHomeChips() +
-      programCard() +
       card(
         cardHead(
           (workoutLoggedToday() ? "Записана" : "Продолжить") +
             " · " +
-            programById(workoutSplit()).title +
+            programTitle() +
             " · " +
             esc(plan.label),
           (dayMuscles(plan) || programById(workoutSplit()).blurb) +
@@ -1858,7 +1858,7 @@
             (state.busy === "program"
               ? '<p class="muted" style="margin-top:12px">Записываю…</p>'
               : '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--primary" data-action="program-done">Выполнил, записать</button></div>')
-          : '<p class="lead">Цикл пройден. Построй новый в разделе «Расчёты».</p>')
+          : '<p class="lead">Цикл пройден. Новый соберешь в профиле, в циклах.</p>')
     );
   }
 
@@ -3176,6 +3176,12 @@
     return KM_PLANS.programById(id);
   }
 
+  function programTitle(id) {
+    var prog = programById(id || workoutSplit());
+    if (prog.id === "ppl" && state.workout.place === "home") return "Жим / Спина / Ноги";
+    return prog.title;
+  }
+
   var PROG_COVER = {
     "fb-start": "prisedaniya-na-stul",
     "fb-train": "prisedaniya-do-paralleli",
@@ -3216,14 +3222,18 @@
             '"' +
             bg +
             '><span class="prog__name">' +
-            esc(p.title) +
+            esc(p.id === "ppl" && state.workout.place === "home" ? "Жим / Спина / Ноги" : p.title) +
             '</span><span class="prog__meta">' +
             p.daysPerWeek +
             " " +
             plural(p.daysPerWeek, "день", "дня", "дней") +
             (p.shelf === "start" ? " · с нуля" : "") +
             '</span><span class="prog__blurb">' +
-            esc(p.blurb) +
+            esc(
+              p.id === "ppl" && state.workout.place === "home"
+                ? "Один круг: жим, спина, ноги. Пн ср пт, не шесть дней."
+                : p.blurb
+            ) +
             "</span></button>"
           );
         })
@@ -3409,10 +3419,31 @@
     var goal = workoutGoal();
     var split = workoutSplit();
     var prog = programById(split);
+    var placeChips = chips("w_place", wk.place, [["home", "Дома"], ["gym", "В зале"]]);
+
+    if (workoutPick) {
+      return (
+        placeChips +
+        '<p class="shelf__label">Программа</p>' +
+        programShelfHtml("w_split", split) +
+        '<div class="btn-stack"><button class="btn btn--primary" data-action="workout-session">Открыть день</button></div>'
+      );
+    }
 
     return (
-      chips("w_place", wk.place, [["home", "Дома"], ["gym", "В зале"]]) +
-      programShelfHtml("w_split", split) +
+      placeChips +
+      '<div class="progbar"><div><span class="progbar__name">' +
+      esc(programTitle(split)) +
+      " · " +
+      esc(plan.label) +
+      '</span><span class="progbar__meta">' +
+      (wk.place === "home" ? "дома" : "зал") +
+      " · " +
+      prog.daysPerWeek +
+      " " +
+      plural(prog.daysPerWeek, "день", "дня", "дней") +
+      " в неделю</span></div>" +
+      '<button type="button" class="btn btn--outline btn--slim" data-action="workout-pick">Другая программа</button></div>' +
       '<p class="shelf__label">День</p>' +
       chips(
         "w_plan",
@@ -3423,22 +3454,13 @@
       ) +
       card(
         cardHead(
-          prog.title + " · " + plan.label,
+          programTitle(split) + " · " + plan.label,
           plan.items.length +
             " " +
             plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
-            " · " +
-            (wk.place === "home" ? "дома" : "зал") +
-            " · " +
-            prog.daysPerWeek +
-            " " +
-            plural(prog.daysPerWeek, "день", "дня", "дней") +
-            " в неделю",
+            (dayMuscles(plan) ? " · " + dayMuscles(plan) : ""),
           prog.shelf === "start" ? "новичок" : "уже тренируюсь"
         ) +
-          (dayMuscles(plan)
-            ? '<p class="lead" style="margin-top:10px">' + esc(dayMuscles(plan)) + "</p>"
-            : "") +
           '<p class="note note--plain" style="margin-top:12px">Цель ' +
           esc(KM_PLANS.doseLabel(goal)) +
           ". Отдых " +
@@ -3453,22 +3475,9 @@
         ? state.busy === "workout"
           ? card('<p class="lead">Записываю подходы…</p>')
           : '<div class="btn-stack"><button class="btn btn--primary" data-action="workout-done">Записать подходы</button></div>' +
-            '<p class="note note--plain">В дневник уходит факт: вес и повторы каждого подхода, не план. ' +
-            "Всего тренировок " +
-            (state.day.workoutsTotal || 0) +
-            ". Очередь дней бот ведёт сам.</p>"
+            '<p class="note note--plain">В дневник уходит факт: вес и повторы каждого подхода, не план.</p>'
         : '<p class="note note--plain">Журнал пишется в дневник бота и работает только тогда, ' +
-          "когда приложение открыто из Telegram.</p>") +
-      '<p class="note">' +
-      esc(KM_PLANS.rule(wk.place, goal)) +
-      "</p>" +
-      '<p class="note">' +
-      esc(KM_PLANS.endurance(goal)) +
-      "</p>" +
-      '<p class="note">' +
-      esc(KM_PLANS.sexNote) +
-      "</p>" +
-      (wk.place === "gym" ? extraGymHtml() : "")
+          "когда приложение открыто из Telegram.</p>")
     );
   }
 
@@ -3989,6 +3998,7 @@
         weekMomentumCard() +
         forecastProgressCard() +
         topLiftsCard() +
+        programCard() +
         goalWeightCard() +
         recentWorkoutsCard() +
         renderDiary()
@@ -4087,6 +4097,7 @@
         "<li>Тема оформления и цель по весу хранятся на устройстве и ни на что не влияют.</li>" +
         "<li>Фото уходит на сервер бота для распознавания и не сохраняется.</li>" +
         "</ul>" +
+        '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--outline btn--slim" data-action="open-calc">Циклы 5/3/1 и DUP</button></div>' +
         '<p class="note note--plain">Версия приложения: ' +
         (when
           ? String(when.getDate()).padStart(2, "0") +
@@ -4271,7 +4282,6 @@
     ["home", "Сегодня", "Сегодня"],
     ["workout", "Тренировка", "Тренировка"],
     ["nutrition", "Питание", "Питание"],
-    ["calc", "Расчёты", "Расчёты"],
     ["profile", "Профиль", "Личный профиль"]
   ];
 
@@ -4377,6 +4387,7 @@
 
   function go(screen) {
     if (!SCREENS[screen]) return;
+    if (screen === "workout") workoutPick = false;
     state.screen = screen;
     state.result = null;
     state.notice = null;
@@ -4657,6 +4668,7 @@
         return openRouteWater();
       case "route-workout":
         if (isRestToday() && !workoutLoggedToday()) return markRestDay();
+        workoutPick = false;
         return go("workout");
       case "route-rest":
         return markRestDay();
@@ -4676,6 +4688,16 @@
         return;
       case "workout-done":
         return markWorkoutDone();
+      case "workout-pick":
+        workoutPick = true;
+        haptic("light");
+        return render();
+      case "workout-session":
+        workoutPick = false;
+        haptic("light");
+        return render();
+      case "open-calc":
+        return go("calc");
       case "program-activate":
         return activateProgram();
       case "program-done":
@@ -4884,6 +4906,7 @@
         state.workout.split = value;
         state.workout.level = KM_PLANS.splitLevel(value);
         state.workout.plan = 0;
+        workoutPick = false;
         resetSession();
         workoutTouched = true;
         persist();
@@ -5103,7 +5126,10 @@
     if (tg.BackButton) {
       tg.BackButton.onClick(function () {
         if (state.screen === "home") tg.close();
-        else go("home");
+        else if (state.screen === "workout" && workoutPick) {
+          workoutPick = false;
+          render();
+        } else go("home");
       });
       tg.BackButton.hide();
     }
