@@ -299,32 +299,65 @@ export function getAllWorkouts(userId: number): WorkoutEntry[] {
   return load().workouts.filter((w) => w.userId === userId);
 }
 
+export interface LiftHistory {
+  date: string;
+  line: string;
+  memo?: string;
+}
+
 export interface LastLift {
   date: string;
   log: SetLog[];
   weightKg: number;
   reps: number;
+  memo?: string;
+  recent: LiftHistory[];
+}
+
+export function cleanWorkoutMemo(raw: unknown): string | undefined {
+  const t = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!t || t === "log" || t === "simple") return undefined;
+  return t;
+}
+
+function setLine(log: SetLog[]): string {
+  return log.map((s) => (s.kg ? `${s.kg}×${s.reps}` : `${s.reps}`)).join(" · ");
 }
 
 /** Последний журнал по каждому движению. Отметки «сделал» без подходов пропускаем. */
 export function lastLogs(userId: number): Record<string, LastLift> {
-  const out: Record<string, LastLift> = {};
+  const buckets: Record<string, WorkoutEntry[]> = {};
   for (const w of load().workouts.filter((row) => row.userId === userId)) {
     if (!w.log || !w.log.length) continue;
-    out[w.exercise] = {
-      date: w.date,
-      log: w.log,
-      weightKg: w.weightKg,
-      reps: w.reps,
+    if (!buckets[w.exercise]) buckets[w.exercise] = [];
+    buckets[w.exercise].push(w);
+  }
+  const out: Record<string, LastLift> = {};
+  for (const [name, rows] of Object.entries(buckets)) {
+    const last = rows[rows.length - 1];
+    out[name] = {
+      date: last.date,
+      log: last.log!,
+      weightKg: last.weightKg,
+      reps: last.reps,
+      memo: cleanWorkoutMemo(last.notes),
+      recent: rows
+        .slice(-5)
+        .reverse()
+        .map((w) => ({
+          date: w.date,
+          line: setLine(w.log!),
+          memo: cleanWorkoutMemo(w.notes),
+        })),
     };
   }
   return out;
 }
 
-export function removeWorkouts(ids: string[]) {
+export function removeWorkouts(ids: string[], userId: number) {
   const db = load();
   const set = new Set(ids);
-  db.workouts = db.workouts.filter((w) => !set.has(w.id));
+  db.workouts = db.workouts.filter((w) => !(set.has(w.id) && w.userId === userId));
   save(db);
 }
 
@@ -869,11 +902,18 @@ function ownerIds(): number[] {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
-/** Владелец бота — безлимит фото без Premium. */
+/** В env задан хотя бы один владелец. Без этого команды канала молчат. */
+export function ownerConfigured(): boolean {
+  return ownerIds().length > 0;
+}
+
+/**
+ * Владелец только из ADMIN_ID / OWNER_ID.
+ * Первый в базе больше не владелец: иначе первый подписчик канала мог бы
+ * удалять посты и менять название.
+ */
 export function isOwner(chatId: number): boolean {
-  if (ownerIds().includes(chatId)) return true;
-  const users = load().users;
-  return users.length > 0 && users[0].chatId === chatId;
+  return ownerIds().includes(chatId);
 }
 
 export function isPremium(chatId: number): boolean {

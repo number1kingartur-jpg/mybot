@@ -51,7 +51,7 @@
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
     workout: { place: "home", plan: 0, level: "", split: "" },
-    session: { key: "", startedAt: 0, restUntil: 0, lifts: {} },
+    session: { key: "", startedAt: 0, restUntil: 0, lifts: {}, notes: {} },
     diary: { date: today(), weightKg: "" },
     entries: [],
     lastOrm: null,
@@ -125,7 +125,8 @@
           theme: state.theme,
           goalWeightKg: state.goalWeightKg,
           restDays: state.restDays,
-          sameAsSkip: state.sameAsSkip
+          sameAsSkip: state.sameAsSkip,
+          session: state.session
         })
       );
     } catch (e) {
@@ -149,6 +150,7 @@
       if (saved.goalWeightKg) state.goalWeightKg = saved.goalWeightKg;
       if (saved.restDays && typeof saved.restDays === "object") state.restDays = saved.restDays;
       if (saved.sameAsSkip && typeof saved.sameAsSkip === "object") state.sameAsSkip = saved.sameAsSkip;
+      restoreSession(saved.session);
       state.setupDone = Boolean(saved.setupDone);
       state.migrated = Boolean(saved.migrated);
       hadSavedProfile = Boolean(saved.profile);
@@ -3304,20 +3306,65 @@
     return g === "bulk" ? 105 : g === "cut" ? 75 : 90;
   }
 
+  function emptySession(key) {
+    return { key: key || "", startedAt: key ? Date.now() : 0, restUntil: 0, lifts: {}, notes: {} };
+  }
+
+  function restoreSession(raw) {
+    if (!raw || typeof raw !== "object") return;
+    var lifts = {};
+    if (raw.lifts && typeof raw.lifts === "object") {
+      Object.keys(raw.lifts).forEach(function (name) {
+        if (!Array.isArray(raw.lifts[name])) return;
+        lifts[name] = raw.lifts[name].slice(0, 12).map(function (s) {
+          return {
+            kg: Number(s && s.kg) || 0,
+            reps: Math.max(1, Number(s && s.reps) || 1),
+            done: Boolean(s && s.done)
+          };
+        });
+      });
+    }
+    var notes = {};
+    if (raw.notes && typeof raw.notes === "object") {
+      Object.keys(raw.notes).forEach(function (name) {
+        notes[name] = String(raw.notes[name] || "").slice(0, 80);
+      });
+    }
+    state.session = {
+      key: String(raw.key || ""),
+      startedAt: Number(raw.startedAt) || 0,
+      restUntil: 0,
+      lifts: lifts,
+      notes: notes
+    };
+  }
+
   function resetSession() {
     if (restTick) {
       clearInterval(restTick);
       restTick = null;
     }
-    state.session = { key: "", startedAt: 0, restUntil: 0, lifts: {} };
+    state.session = emptySession("");
   }
 
   function ensureSession() {
     var key = sessionKey();
     if (!state.session || state.session.key !== key) {
-      state.session = { key: key, startedAt: Date.now(), restUntil: 0, lifts: {} };
+      state.session = emptySession(key);
     }
+    if (!state.session.notes) state.session.notes = {};
+    if (!state.session.lifts) state.session.lifts = {};
     return state.session;
+  }
+
+  function sessionNote(name) {
+    var sess = ensureSession();
+    if (sess.notes[name] == null) {
+      var prev = lastLog(name);
+      sess.notes[name] = prev && prev.memo ? String(prev.memo) : "";
+    }
+    return sess.notes[name];
   }
 
   function lastLog(name) {
@@ -3387,7 +3434,10 @@
         .map(function (s) {
           return { kg: Number(s.kg) || 0, reps: Math.max(1, Number(s.reps) || 1) };
         });
-      if (sets.length) out.push({ name: name, sets: sets });
+      if (sets.length) {
+        var memo = sess.notes && sess.notes[name] ? String(sess.notes[name]).trim().slice(0, 80) : "";
+        out.push({ name: name, sets: sets, memo: memo });
+      }
     });
     return out;
   }
@@ -3574,6 +3624,28 @@
     return s.kg + " кг × " + s.reps;
   }
 
+  function historyHtml(e) {
+    var prev = lastLog(e.name);
+    var rows = prev && prev.recent ? prev.recent : [];
+    if (!rows.length) return "";
+    return (
+      '<div class="exhist"><div class="exhist__h">Прошлые</div>' +
+      rows
+        .map(function (r) {
+          return (
+            '<div class="exhist__row"><span>' +
+            esc(formatDate(r.date)) +
+            "</span><span>" +
+            esc(r.line) +
+            "</span></div>" +
+            (r.memo ? '<div class="exhist__memo">' + esc(r.memo) + "</div>" : "")
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
   function exerciseHtml(e, idx) {
     var goal = workoutGoal();
     var slug = KM_PLANS.slug(e);
@@ -3581,6 +3653,9 @@
     var d = KM_PLANS.dose(e);
     var sets = sessionSets(e);
     var hold = Boolean(d.secs);
+    var doneN = sets.filter(function (s) {
+      return s.done;
+    }).length;
     var log =
       '<div class="sets"><div class="sets__head">' +
       "<span>#</span><span>прошлый</span><span>" +
@@ -3636,7 +3711,14 @@
         .join("") +
       '<button type="button" class="sets__add" data-set-add="' +
       esc(e.name) +
-      '">+ подход</button></div>';
+      '">+ подход</button>' +
+      '<input class="exnote" type="text" maxlength="80" placeholder="Хват, боль, что поменять" value="' +
+      esc(sessionNote(e.name)) +
+      '" data-ex-note="' +
+      esc(e.name) +
+      '" aria-label="Заметка" />' +
+      historyHtml(e) +
+      "</div>";
     var media = local
       ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="img/ex/' +
         esc(slug) +
@@ -3664,7 +3746,11 @@
       esc(schemeBadge(e, goal)) +
       "</span>" +
       (muscleOf(e) ? '<span class="ex-muscle">' + esc(muscleOf(e)) + "</span>" : "") +
-      "</span></span><span class=\"acc__sign\">+</span></button>" +
+      '<span class="ex-done">' +
+      doneN +
+      "/" +
+      sets.length +
+      "</span></span></span><span class=\"acc__sign\">+</span></button>" +
       log +
       '<div class="acc__body">' +
       media +
@@ -4175,6 +4261,7 @@
                 : w.volume
                   ? " · " + w.volume + " кг"
                   : "") +
+              (w.memo ? " · " + w.memo : "") +
               "</span></li>"
             );
           })
@@ -4465,6 +4552,7 @@
       if (tsets && tsets[ti]) {
         tsets[ti].done = !tsets[ti].done;
         if (tsets[ti].done) armRest();
+        persist();
         haptic("medium");
         return render();
       }
@@ -4476,6 +4564,7 @@
       if (asets && asets.length < 12) {
         var last = asets[asets.length - 1] || { kg: 0, reps: 8 };
         asets.push({ kg: last.kg, reps: last.reps, done: false });
+        persist();
         haptic("light");
         return render();
       }
@@ -4790,7 +4879,15 @@
       if (rows && rows[si]) {
         if (t.hasAttribute("data-set-kg")) rows[si].kg = Number(t.value) || 0;
         else rows[si].reps = Number(t.value) || 1;
+        persist();
       }
+      return;
+    }
+    if (t.hasAttribute && t.hasAttribute("data-ex-note")) {
+      var sessNote = ensureSession();
+      if (!sessNote.notes) sessNote.notes = {};
+      sessNote.notes[t.getAttribute("data-ex-note")] = String(t.value || "").slice(0, 80);
+      persist();
       return;
     }
 
@@ -4798,6 +4895,26 @@
     var file = t.files && t.files[0];
     t.value = ""; // чтобы повторный выбор того же файла снова дал событие
     if (file) addMealPhoto(file);
+  });
+
+  document.addEventListener("input", function (ev) {
+    var t = ev.target;
+    if (!t || !t.hasAttribute) return;
+    if (t.hasAttribute("data-ex-note")) {
+      var nSess = ensureSession();
+      if (!nSess.notes) nSess.notes = {};
+      nSess.notes[t.getAttribute("data-ex-note")] = String(t.value || "").slice(0, 80);
+      return;
+    }
+    if (t.hasAttribute("data-set-kg") || t.hasAttribute("data-set-reps")) {
+      var inName = t.getAttribute("data-set-kg") || t.getAttribute("data-set-reps");
+      var inI = Number(t.getAttribute("data-i"));
+      var inRows = ensureSession().lifts[inName];
+      if (inRows && inRows[inI]) {
+        if (t.hasAttribute("data-set-kg")) inRows[inI].kg = Number(t.value) || 0;
+        else inRows[inI].reps = Number(t.value) || 1;
+      }
+    }
   });
 
   function onSeg(btn) {

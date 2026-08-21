@@ -3,12 +3,13 @@ import http from "http";
 import path from "path";
 import { verifyInitData, type WebAppUser } from "./webapp-auth";
 import { accessEnabled, accessChatId, checkAccess } from "./access";
+import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take } from "./guard";
 import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
-  addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, getMealsForDays,
+  addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, cleanWorkoutMemo, getMealsForDays,
   saveProgram, getActiveProgram, advanceProgramDay,
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium, isOwner,
   type NutritionProfile, type Lift, type Program,
@@ -90,6 +91,7 @@ const BUILD_ID = (() => {
 // сжать на устройстве (HEIC с iPhone), уходит оригинал до 6 МБ, а base64 раздувает
 // его примерно на 37% — 8 МБ уже не хватало.
 const MAX_BODY = 12 * 1024 * 1024;
+const MAX_IMAGE = 8 * 1024 * 1024;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -135,6 +137,11 @@ function photoFailMessage(e: MealPhotoUnreadableError): string {
   return "Не разобрал, что на фото. Сними ближе и при свете или добавь текстом.";
 }
 
+function drain(req: http.IncomingMessage): void {
+  if (req.method === "GET" || req.method === "HEAD") return;
+  req.resume();
+}
+
 function json(res: http.ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -143,6 +150,12 @@ function json(res: http.ServerResponse, status: number, payload: unknown): void 
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  const cl = Number(req.headers["content-length"]);
+  if (Number.isFinite(cl) && cl > MAX_BODY) throw new Error("payload_too_large");
+  return safeJson(await readBody(req));
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -186,6 +199,10 @@ function auth(req: http.IncomingMessage, botToken: string): WebAppUser | null {
   // невозможно понять, дошёл ли запрос и почему не был принят
   if (!initData) {
     console.warn(`api auth: нет подписи, ${req.method} ${req.url}`);
+    return null;
+  }
+  if (initData.length > 8192) {
+    console.warn(`api auth: подпись слишком длинная (${initData.length}), ${req.method} ${req.url}`);
     return null;
   }
   const user = verifyInitData(initData, botToken);
@@ -326,6 +343,7 @@ function dayState(userId: number, date: string) {
         reps: w.reps,
         sets: w.sets,
         volume: w.log ? w.log.reduce((s, x) => s + x.kg * x.reps, 0) : w.weightKg * w.reps * w.sets,
+        memo: cleanWorkoutMemo(w.notes),
       })),
     restDate: u?.restDate && u.restDate === today() ? u.restDate : null,
     pending: (() => {
@@ -416,11 +434,8 @@ function validProfile(x: unknown): NutritionProfile | null {
 }
 
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPath: string): void {
-  const rel = urlPath === "/" ? "index.html" : decodeURIComponent(urlPath).replace(/^\/+/, "");
-  const full = path.join(WEBAPP_DIR, rel);
-
-  // Защита от выхода за пределы каталога приложения (../../etc/passwd)
-  if (!full.startsWith(WEBAPP_DIR)) {
+  const full = resolveUnder(WEBAPP_DIR, urlPath, path);
+  if (!full) {
     res.writeHead(403).end("forbidden");
     return;
   }
@@ -430,6 +445,10 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   }
 
   const ext = path.extname(full).toLowerCase();
+  if (!MIME[ext]) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("not found");
+    return;
+  }
   const isAsset = ext === ".png" || ext === ".jpg" || ext === ".webp" || ext === ".svg" || ext === ".ico";
   // Картинки блюд не меняются: имя файла считается из названия продукта. Неделя
   // кэша важнее суток — в справочнике их сотня, и на мобильной сети каждый
@@ -462,8 +481,12 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
     const range = req.headers.range;
     const match = range ? /bytes=(\d+)-(\d*)/.exec(range) : null;
     if (match) {
-      const start = Number(match[1]);
-      const end = match[2] ? Number(match[2]) : stat.size - 1;
+      const start = Math.min(Math.max(0, Number(match[1]) || 0), stat.size);
+      const end = match[2] ? Math.min(Number(match[2]) || 0, stat.size - 1) : stat.size - 1;
+      if (!(start <= end) || start >= stat.size) {
+        res.writeHead(416, { "Content-Range": `bytes */${stat.size}` }).end();
+        return;
+      }
       res.writeHead(206, {
         ...headers,
         "Content-Length": end - start + 1,
@@ -489,7 +512,17 @@ async function handleApi(
 ): Promise<void> {
   const user = auth(req, botToken);
   if (!user) {
+    drain(req);
+    if (!take(`fail:${clientIp(req)}`, 30, 60_000)) {
+      json(res, 429, { error: "slow_down", message: "Слишком часто. Подожди минуту." });
+      return;
+    }
     json(res, 401, { error: "unauthorized", message: "Открой приложение из Telegram." });
+    return;
+  }
+  if (!isOwner(user.id) && !take(`api:${user.id}`, 90, 60_000)) {
+    drain(req);
+    json(res, 429, { error: "slow_down", message: "Слишком часто. Подожди минуту." });
     return;
   }
   const gate = await checkAccess({
@@ -499,6 +532,7 @@ async function handleApi(
     refresh: query.get("access") === "1",
   });
   if (!gate.ok) {
+    drain(req);
     console.log(`api ${req.method} ${urlPath} user=${user.id} join-gate`);
     json(res, 403, gate.body);
     return;
@@ -517,7 +551,7 @@ async function handleApi(
 
   // ── Вес тела: один дневник с чатом ────────────────────────────────────────
   if (req.method === "POST" && urlPath === "/api/bodyweight") {
-    const body = JSON.parse(await readBody(req)) as { weightKg?: number; date?: string };
+    const body = await readJson(req) as { weightKg?: number; date?: string };
     const w = Number(body.weightKg);
     if (!(w >= 30 && w <= 250)) {
       json(res, 400, { error: "bad_weight", message: "Вес: от 30 до 250 кг." });
@@ -555,7 +589,7 @@ async function handleApi(
   // Приходит объём порции, а не итог за день: клиент не должен уметь переписать
   // сумму, иначе двойное нажатие или старый экран затрут уже выпитое.
   if (req.method === "POST" && urlPath === "/api/water") {
-    const body = JSON.parse(await readBody(req)) as { ml?: number; date?: string };
+    const body = await readJson(req) as { ml?: number; date?: string };
     const ml = Number(body.ml);
     if (!Number.isFinite(ml) || ml === 0 || Math.abs(ml) > 3000) {
       json(res, 400, { error: "bad_ml", message: "Порция: от 1 до 3000 мл." });
@@ -570,7 +604,7 @@ async function handleApi(
 
   // ── Программа: считается на сервере кодом бота, чтобы цифры не разошлись ──
   if (req.method === "POST" && urlPath === "/api/program") {
-    const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+    const body = await readJson(req) as Record<string, unknown>;
     const built = buildProgramFromRequest(body);
     if ("error" in built) {
       json(res, 400, built);
@@ -632,11 +666,11 @@ async function handleApi(
 
   // Журнал подходов: одна запись на движение, в ней фактические подходы.
   if (req.method === "POST" && urlPath === "/api/workout/log") {
-    const body = JSON.parse(await readBody(req)) as {
+    const body = await readJson(req) as {
       place?: string;
       level?: string;
       split?: string;
-      lifts?: { name?: string; sets?: { kg?: number; reps?: number }[] }[];
+      lifts?: { name?: string; memo?: string; sets?: { kg?: number; reps?: number }[] }[];
     };
     const raw = Array.isArray(body.lifts) ? body.lifts : [];
     if (!raw.length || raw.length > 12) {
@@ -664,7 +698,7 @@ async function handleApi(
         sets: sets.length,
         reps: best.reps,
         weightKg: best.kg,
-        notes: "log",
+        notes: cleanWorkoutMemo(lift.memo) ?? "log",
         log: sets,
       });
       if (check.isWeightPr || check.isE1rmPr) prs++;
@@ -699,7 +733,7 @@ async function handleApi(
 
   // ── Готовая тренировка (дом/зал): та же отметка, что кнопка в чате ─────────
   if (req.method === "POST" && urlPath === "/api/workout/simple") {
-    const body = JSON.parse(await readBody(req)) as { place?: string; level?: string; split?: string };
+    const body = await readJson(req) as { place?: string; level?: string; split?: string };
     const u = getUser(user.id);
     const { place, level, split, plan, idx } = resolveSimple(u, body);
     const w = plan[idx % plan.length];
@@ -726,7 +760,7 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/settings") {
-    const body = JSON.parse(await readBody(req)) as {
+    const body = await readJson(req) as {
       place?: string;
       level?: string;
       split?: string;
@@ -773,7 +807,7 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/nutrition") {
-    const profile = validProfile(JSON.parse(await readBody(req)));
+    const profile = validProfile(await readJson(req));
     if (!profile) {
       json(res, 400, { error: "bad_profile" });
       return;
@@ -808,7 +842,7 @@ async function handleApi(
       return;
     }
 
-    const body = JSON.parse(await readBody(req)) as { imageBase64?: string; mime?: string };
+    const body = await readJson(req) as { imageBase64?: string; mime?: string };
     const b64 = String(body.imageBase64 ?? "").replace(/^data:[^,]+,/, "");
     if (!b64) {
       json(res, 400, { error: "no_image" });
@@ -817,6 +851,10 @@ async function handleApi(
     const buf = Buffer.from(b64, "base64");
     if (buf.length < 1024) {
       json(res, 400, { error: "no_image" });
+      return;
+    }
+    if (buf.length > MAX_IMAGE) {
+      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними ещё раз или добавь текстом." });
       return;
     }
 
@@ -829,13 +867,28 @@ async function handleApi(
     // с телефона» от «дошёл и молча отработал», а это разные поломки
     console.log(`api meal photo: ${Math.round(buf.length / 1024)} КБ, ${mime}, user=${user.id}`);
 
+    if (!isOwner(user.id) && !take(`photo:${user.id}`, 15, 3_600_000)) {
+      json(res, 429, {
+        error: "slow_down",
+        message: "Слишком много фото за час. Добавь текстом или позже.",
+      });
+      return;
+    }
+    const slot = beginPhoto(user.id);
+    if (slot !== "ok") {
+      json(res, 429, {
+        error: "busy",
+        message: "Сейчас разбираю другой снимок. Подожди и пришли ещё раз.",
+      });
+      return;
+    }
     try {
+      // Квота до вызова модели: иначе 502 можно крутить бесконечно и выжечь Gemini.
+      bumpPhotoCount(user.id, wk, date);
       const meal = await analyzeMealPhoto(buf, mime);
       // В дневник не пишем: сначала человек смотрит, что распознано, и отвечает
       // «это оно». Раньше запись появлялась молча, и неверную догадку
       // приходилось удалять вместо того, чтобы просто не соглашаться.
-      // Снимок в квоту идёт здесь: запрос к модели уже оплачен независимо от ответа.
-      bumpPhotoCount(user.id, wk, date);
       const token = putPending(user.id, meal, date, "photo");
       json(res, 200, dayState(user.id, date));
     } catch (e) {
@@ -856,18 +909,41 @@ async function handleApi(
         error: "vision_failed",
         message: "Распознавание сейчас не отвечает. Напиши текстом, что на фото: например «виноград 200 г».",
       });
+    } finally {
+      endPhoto(user.id);
     }
     return;
   }
 
   if (req.method === "POST" && urlPath === "/api/meal/text") {
-    const body = JSON.parse(await readBody(req)) as { text?: string };
+    const body = await readJson(req) as { text?: string };
     const text = String(body.text ?? "").trim().slice(0, 300);
     if (text.length < 2) {
       json(res, 400, { error: "no_text" });
       return;
     }
+    const wk = weekKey(date);
+    const aiGate = photoGate(user.id, wk, date);
+    if (!aiGate.ok) {
+      json(res, 429, {
+        error: "photo_limit",
+        message:
+          aiGate.reason === "day"
+            ? `${aiGate.limit} разборов за день — это уже не учёт еды. Продолжишь завтра.`
+            : `Лимит ${aiGate.limit} разборов в неделю исчерпан. Добавь еду вручную.`,
+        photo: photoQuota(user.id),
+      });
+      return;
+    }
+    if (!isOwner(user.id) && !take(`textai:${user.id}`, 20, 3_600_000)) {
+      json(res, 429, {
+        error: "slow_down",
+        message: "Слишком много текстовых разборов за час. Добавь вручную или позже.",
+      });
+      return;
+    }
     try {
+      bumpPhotoCount(user.id, wk, date);
       const meal = await analyzeMealText(text);
       // Текст тоже догадка: «8 ложек овсянки» превращаются в граммы правилами,
       // а «салат» — в порцию по умолчанию. Показываем разбор до записи.
@@ -891,7 +967,7 @@ async function handleApi(
    * перестал бы быть расчётом.
    */
   if (req.method === "POST" && urlPath === "/api/meal/confirm") {
-    const body = JSON.parse(await readBody(req)) as { token?: string };
+    const body = await readJson(req) as { token?: string };
     const found = takePending(user.id, String(body.token ?? ""));
     if (!found) {
       json(res, 410, {
@@ -920,7 +996,7 @@ async function handleApi(
    * и вес, но не калории.
    */
   if (req.method === "POST" && urlPath === "/api/meal/pending") {
-    const body = JSON.parse(await readBody(req)) as {
+    const body = await readJson(req) as {
       token?: string;
       drop?: number;
       index?: number;
@@ -952,14 +1028,14 @@ async function handleApi(
 
   /** «Не то» — разбор выбрасывается, в дневнике не остаётся следа. */
   if (req.method === "POST" && urlPath === "/api/meal/reject") {
-    const body = JSON.parse(await readBody(req)) as { token?: string };
+    const body = await readJson(req) as { token?: string };
     dropPending(user.id, String(body.token ?? ""));
     json(res, 200, { ok: true, ...dayState(user.id, date) });
     return;
   }
 
   if (req.method === "POST" && urlPath === "/api/meal/food") {
-    const body = JSON.parse(await readBody(req)) as { name?: string; grams?: number };
+    const body = await readJson(req) as { name?: string; grams?: number };
     const name = String(body.name ?? "").trim().slice(0, 60);
     const grams = Math.round(Number(body.grams));
     if (!name || !(grams >= 1 && grams <= 3000)) {
@@ -986,7 +1062,7 @@ async function handleApi(
    * ничего не уточнит, а фото и текст стоят запроса к модели.
    */
   if (req.method === "POST" && urlPath === "/api/meal/repeat") {
-    const body = JSON.parse(await readBody(req)) as { name?: string; names?: string[] };
+    const body = await readJson(req) as { name?: string; names?: string[] };
     const names = (Array.isArray(body.names) ? body.names : body.name ? [body.name] : [])
       .map((n) => String(n ?? "").trim())
       .filter(Boolean)
@@ -1024,7 +1100,7 @@ async function handleApi(
 
   // Ручной ввод: на упаковке уже написаны КБЖУ — не надо гонять их через распознавание
   if (req.method === "POST" && urlPath === "/api/meal/manual") {
-    const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+    const body = await readJson(req) as Record<string, unknown>;
     const name = String(body.name ?? "").trim().slice(0, 60) || "Приём пищи";
     const kcal = Math.round(Number(body.kcal));
     const proteinG = Math.round(Number(body.proteinG) || 0);
@@ -1050,7 +1126,7 @@ async function handleApi(
    * блюда остаётся тем, что определён, меняется только количество.
    */
   if (req.method === "PATCH" && urlPath === "/api/meal") {
-    const body = JSON.parse(await readBody(req)) as { id?: string; factor?: number };
+    const body = await readJson(req) as { id?: string; factor?: number };
     const id = String(body.id ?? "");
     const factor = Number(body.factor);
     if (!id || !Number.isFinite(factor) || factor <= 0) {
@@ -1112,17 +1188,30 @@ export function startWebappServer(botToken: string): http.Server | null {
           });
           return;
         }
+        if (msg === "bad_json") {
+          json(res, 400, { error: "bad_json", message: "Запрос повреждён. Открой приложение заново." });
+          return;
+        }
         json(res, 500, { error: "server_error" });
       });
       return;
     }
 
     if (req.method === "GET" || req.method === "HEAD") {
-      serveStatic(req, res, urlPath);
+      try {
+        serveStatic(req, res, urlPath);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("static:", msg.slice(0, 120));
+        if (!res.headersSent) res.writeHead(404).end("not found");
+      }
       return;
     }
     res.writeHead(405).end("method not allowed");
   });
+  server.requestTimeout = 120_000;
+  server.headersTimeout = 30_000;
+  server.maxHeadersCount = 40;
 
   server.listen(port, () => {
     const hasApp = fs.existsSync(path.join(WEBAPP_DIR, "index.html"));

@@ -734,7 +734,8 @@ button {
 }
 
 .acc__sub .ex-scheme,
-.acc__sub .ex-muscle {
+.acc__sub .ex-muscle,
+.acc__sub .ex-done {
   display: inline-block;
   vertical-align: middle;
 }
@@ -754,6 +755,13 @@ button {
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.ex-done {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .progbar {
@@ -2077,6 +2085,45 @@ label.btn {
   font: inherit;
   font-size: 13px;
   border-radius: 8px;
+}
+
+.exnote {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--fill-2);
+  color: var(--paper);
+  font: inherit;
+  font-size: 14px;
+  padding: 0 10px;
+}
+
+.exhist {
+  margin-top: 10px;
+}
+
+.exhist__h {
+  font-size: 11px;
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.exhist__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 3px 0;
+}
+
+.exhist__memo {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 0 0 4px;
 }
 
 .scan {
