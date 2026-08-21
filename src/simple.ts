@@ -875,9 +875,10 @@ export function schemeFor(e: SimpleExercise, goal: Goal, opts?: { sets?: number;
   }
 
   const reps = dose.reps ?? 10;
-  const repsText = goal === "bulk" ? `${reps}–${reps + 2}` : `${reps}`;
-  const unit = dose.unit ?? plural(reps, "раз", "раза", "раз");
-  return `${setsText} × ${repsText} ${unit}${dose.tail ? ` ${dose.tail}` : ""}`;
+  const lo = goal === "bulk" ? reps : Math.max(5, reps - 2);
+  const hi = goal === "bulk" ? reps + 2 : reps;
+  const unit = dose.unit ?? plural(hi, "раз", "раза", "раз");
+  return `${setsText} × ${lo}–${hi} ${unit}${dose.tail ? ` ${dose.tail}` : ""}`;
 }
 
 /** Отдых между подходами: на массе длиннее, на дефиците короче. */

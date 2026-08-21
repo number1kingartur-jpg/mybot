@@ -256,6 +256,11 @@ if (typeof APP.gymClips === "function") {
     String(setsFor(sample, "maint", 3))
   );
   check("RPE цикла 3", cycleLoad(3).rpe === 9 && APP.rpeOf(3) === 9);
+  check(
+    "на поддержании схема это диапазон",
+    /× \d+–\d+/.test(schemeFor(sample, "maint")),
+    schemeFor(sample, "maint")
+  );
 }
 
 if (failed) {

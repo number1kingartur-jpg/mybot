@@ -849,9 +849,10 @@ var KM_PLANS = (function () {
     }
 
     var reps = d.reps || 10;
-    var repsText = goal === "bulk" ? reps + "–" + (reps + 2) : String(reps);
-    var unit = d.unit || plural(reps, "раз", "раза", "раз");
-    return setsText + " × " + repsText + " " + unit + (d.tail ? " " + d.tail : "");
+    var lo = goal === "bulk" ? reps : Math.max(5, reps - 2);
+    var hi = goal === "bulk" ? reps + 2 : reps;
+    var unit = d.unit || plural(hi, "раз", "раза", "раз");
+    return setsText + " × " + lo + "–" + hi + " " + unit + (d.tail ? " " + d.tail : "");
   }
 
   function rest(goal) {

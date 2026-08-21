@@ -1414,28 +1414,42 @@
     );
   }
 
-  function sameAsOffered() {
+  function sameAsList() {
     var s = state.day && state.day.sameAs;
-    return s && s.meals && s.meals.length ? s : null;
+    if (!s) return [];
+    if (s.slots && s.slots.length) return s.slots;
+    if (s.meals && s.meals.length) return [s];
+    return [];
+  }
+
+  function skippedSlots() {
+    var skip = state.sameAsSkip;
+    var map = {};
+    if (!skip || skip.date !== serverToday()) return map;
+    var slots = skip.slots || (skip.slot ? [skip.slot] : []);
+    slots.forEach(function (x) {
+      map[x] = true;
+    });
+    return map;
+  }
+
+  function sameAsOffered() {
+    return sameAsList().filter(function (s) {
+      return !skippedSlots()[s.slot];
+    });
   }
 
   function sameAsSkipped() {
-    var s = sameAsOffered();
-    var skip = state.sameAsSkip;
-    return !!(s && skip && skip.date === serverToday() && skip.slot === s.slot);
+    return sameAsList().length > 0 && sameAsOffered().length === 0;
   }
 
-  /**
-   * Вчера в этот час: спросить, то же ли блюдо, и не писать в дневник сразу.
-   * Слот берётся с сервера по часу Бангкока: утром завтрак, днём обед.
-   */
-  function sameUnits() {
-    var s = sameAsOffered();
+  function sameUnits(block) {
+    var s = block;
     if (!s) return [];
     if (s.units && s.units.length) return s.units;
     return (s.meals || []).map(function (m, i) {
       return {
-        id: "m" + i,
+        id: (s.slot || "m") + "-m" + i,
         title: m.name,
         kcal: m.kcal,
         items: (m.parts || []).map(function (p) {
@@ -1446,26 +1460,33 @@
     });
   }
 
-  function sameSelectedUnits() {
-    return sameUnits().filter(function (u) {
+  function sameAllUnits() {
+    var list = [];
+    sameAsOffered().forEach(function (s) {
+      sameUnits(s).forEach(function (u) {
+        list.push(u);
+      });
+    });
+    return list;
+  }
+
+  function sameSelectedUnits(block) {
+    return sameUnits(block).filter(function (u) {
       return !state.samePick || state.samePick[u.id] !== false;
     });
   }
 
-  function sameAsCard() {
-    var s = sameAsOffered();
-    if (!s || sameAsSkipped()) return "";
-    var units = sameUnits();
-    var picked = sameSelectedUnits();
+  function sameAsCard(s) {
+    if (!s) return "";
+    var units = sameUnits(s);
+    var picked = sameSelectedUnits(s);
     var kcal = picked.reduce(function (a, u) {
       return a + u.kcal;
     }, 0);
     var when =
-      s.title === "как обычно"
-        ? "Как обычно. Отметь что было."
-        : s.title === "вчера"
-          ? "Вчера. Отметь что было."
-          : "Вчера на " + esc(s.title) + ". Отметь что было.";
+      s.title === "вчера"
+        ? "Вчера. Отметь что было."
+        : "Вчера на " + esc(s.title) + ". Отметь что было.";
     var rows = units
       .map(function (u) {
         var on = !state.samePick || state.samePick[u.id] !== false;
@@ -1495,7 +1516,7 @@
       '<p class="lead">' +
         when +
         "</p>" +
-        '<p class="muted">Коктейль, виноград и стакан по отдельности. Сними галочку с того, чего не было. Состав напитка поправь до записи.</p>' +
+        '<p class="muted">Отметь что было. Лишнее сними. Состав поправь до записи.</p>' +
         '<ul class="sames">' +
         rows +
         "</ul>" +
@@ -1505,12 +1526,20 @@
           : "Ничего не отмечено") +
         "</p>" +
         '<div class="btn-stack">' +
-        '<button class="btn btn--primary" data-action="same-as-yes"' +
+        '<button class="btn btn--primary" data-action="same-as-yes" data-slot="' +
+        esc(s.slot || "") +
+        '"' +
         (picked.length ? "" : " disabled") +
         ">Записать выбранное</button>" +
-        '<button class="btn btn--outline btn--slim" data-action="same-as-no">Нет, другое</button>' +
+        '<button class="btn btn--outline btn--slim" data-action="same-as-no" data-slot="' +
+        esc(s.slot || "") +
+        '">Нет, другое</button>' +
         "</div>"
     );
+  }
+
+  function sameAsCards() {
+    return sameAsOffered().map(sameAsCard).join("");
   }
 
   function isShakeName(name) {
@@ -1576,11 +1605,11 @@
     var list = state.day && state.day.frequent ? state.day.frequent : [];
     var offered = sameAsOffered();
     var skip = {};
-    if (offered && !sameAsSkipped()) {
-      offered.meals.forEach(function (m) {
+    offered.forEach(function (s) {
+      (s.meals || []).forEach(function (m) {
         skip[String(m.name).trim().toLowerCase()] = true;
       });
-    }
+    });
     list = list.filter(function (f) {
       return !skip[String(f.name).trim().toLowerCase()];
     });
@@ -1700,7 +1729,7 @@
       pendingTeaserCard() +
       heroCard +
       routeCard() +
-      (!state.busy && !state.pending && !state.repeatAsk ? sameAsCard() : "") +
+      (!state.busy && !state.pending && !state.repeatAsk ? sameAsCards() : "") +
       '<div class="tiles">' +
       // Без подписи Telegram фото и распознавание текста недоступны: ключ модели
       // живёт на сервере бота. Предлагать кнопку, которая ответит ошибкой, нельзя.
@@ -1762,7 +1791,7 @@
           plan.items
             .slice(0, 3)
             .map(function (i) {
-              return esc(i.name);
+              return esc(i.name) + " · " + esc(schemeBadge(i, workoutGoal()));
             })
             .join(" · ") +
           (plan.items.length > 3 ? " · …" : "") +
@@ -2407,7 +2436,7 @@
     // кнопка «Не то», она же открывает ввод текстом.
     if (state.repeatAsk) return repeatAskCard();
     if (state.pending) return pendingCard();
-    return sameAsCard() + portionCard() + addBlock(quota);
+    return sameAsCards() + portionCard() + addBlock(quota);
   }
 
   /**
@@ -3454,8 +3483,9 @@
       body = sets + "×" + lo + "–" + hi + " с";
     } else {
       var reps = d.reps || 10;
-      var r = goal === "bulk" ? reps + "–" + (reps + 2) : String(reps);
-      body = sets + "×" + r;
+      var lo = goal === "bulk" ? reps : Math.max(5, reps - 2);
+      var hi = goal === "bulk" ? reps + 2 : reps;
+      body = sets + "×" + lo + "–" + hi;
     }
     return rpe ? body + " · RPE " + rpe : body;
   }
@@ -3857,8 +3887,14 @@
     var doneN = sets.filter(function (s) {
       return s.done;
     }).length;
+    var rpe = KM_PLANS.rpeOf ? KM_PLANS.rpeOf(workoutCycle()) : 0;
+    var planText = KM_PLANS.scheme(e, goal, workoutCycle());
     var log =
-      '<div class="sets"><div class="sets__head">' +
+      '<div class="sets"><p class="sets__plan">План: <strong>' +
+      esc(planText) +
+      "</strong>" +
+      (rpe ? " · RPE " + rpe : "") +
+      ". Делай в этом диапазоне.</p><div class=\"sets__head\">" +
       "<span>#</span><span>прошлый</span><span>" +
       (hold ? "сек" : "кг") +
       "</span><span>" +
@@ -4916,7 +4952,11 @@
       case "meal-reject":
         return rejectPending();
       case "same-as-yes": {
-        var picked = sameSelectedUnits();
+        var yesSlot = action.getAttribute("data-slot");
+        var yesBlock = sameAsOffered().filter(function (s) {
+          return !yesSlot || s.slot === yesSlot;
+        })[0];
+        var picked = sameSelectedUnits(yesBlock);
         if (!picked.length) return;
         var withItems = picked.filter(function (u) {
           return u.items && u.items.length;
@@ -4967,7 +5007,7 @@
       }
       case "same-as-edit": {
         var editId = action.getAttribute("data-id");
-        var unit = sameUnits().filter(function (u) {
+        var unit = sameAllUnits().filter(function (u) {
           return u.id === editId;
         })[0];
         if (!unit || !online) return;
@@ -5008,9 +5048,13 @@
         });
       }
       case "same-as-no": {
-        var off = sameAsOffered();
-        state.sameAsSkip = off ? { date: serverToday(), slot: off.slot } : null;
-        state.samePick = null;
+        var noSlot = action.getAttribute("data-slot");
+        var skip = state.sameAsSkip && state.sameAsSkip.date === serverToday()
+          ? state.sameAsSkip
+          : { date: serverToday(), slots: [] };
+        if (!skip.slots) skip.slots = skip.slot ? [skip.slot] : [];
+        if (noSlot && skip.slots.indexOf(noSlot) === -1) skip.slots.push(noSlot);
+        state.sameAsSkip = skip;
         persist();
         haptic("light");
         return render();
