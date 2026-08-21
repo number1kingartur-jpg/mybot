@@ -807,9 +807,35 @@ var KM_PLANS = (function () {
    * объём не наращивают — восстановление хуже, а задача силовой другая: удержать
    * мышцы и силу, поэтому вес на снаряде держим, а не снижаем.
    */
-  function scheme(e, goal) {
+  function clampCycle(n) {
+    var c = Number(n);
+    if (!isFinite(c) || c < 0) return 0;
+    return Math.min(4, Math.floor(c));
+  }
+
+  function cycleLoad(cycle) {
+    var table = [
+      { extraSets: 0, rpe: 7 },
+      { extraSets: 0, rpe: 8 },
+      { extraSets: 1, rpe: 8 },
+      { extraSets: 1, rpe: 9 },
+      { extraSets: -1, rpe: 6 }
+    ];
+    return table[clampCycle(cycle)];
+  }
+
+  function setsOf(e, goal, cycle) {
     var d = dose(e);
-    var sets = d.sets + (goal === "bulk" ? 1 : 0);
+    return Math.max(2, d.sets + (goal === "bulk" ? 1 : 0) + cycleLoad(cycle).extraSets);
+  }
+
+  function rpeOf(cycle) {
+    return cycleLoad(cycle).rpe;
+  }
+
+  function scheme(e, goal, cycle) {
+    var d = dose(e);
+    var sets = setsOf(e, goal, cycle);
     var setsText = sets + " " + plural(sets, "подход", "подхода", "подходов");
 
     if (d.secs) {
@@ -1004,6 +1030,10 @@ var KM_PLANS = (function () {
     },
     localVideo: localVideo,
     dose: dose,
+    clampCycle: clampCycle,
+    cycleLoad: cycleLoad,
+    setsOf: setsOf,
+    rpeOf: rpeOf,
     scheme: scheme,
     harder: function (e) {
       return HARDER[e.name] || "";

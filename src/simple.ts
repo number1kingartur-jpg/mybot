@@ -837,9 +837,34 @@ function plural(n: number, one: string, few: string, many: string): string {
  * дефиците объём не наращивают: восстановление хуже, а задача силовой другая —
  * удержать мышцы и силу, поэтому вес на снаряде держим, а не снижаем.
  */
-export function schemeFor(e: SimpleExercise, goal: Goal, opts?: { sets?: number }): string {
+export type CycleLoad = { extraSets: number; rpe: number };
+
+/** Цикл 1..5 как у Drop It: одни движения, меняется объём и RPE. */
+export function clampCycle(n: unknown): number {
+  const c = Number(n);
+  if (!Number.isFinite(c) || c < 0) return 0;
+  return Math.min(4, Math.floor(c));
+}
+
+export function cycleLoad(cycle?: number): CycleLoad {
+  const table: CycleLoad[] = [
+    { extraSets: 0, rpe: 7 },
+    { extraSets: 0, rpe: 8 },
+    { extraSets: 1, rpe: 8 },
+    { extraSets: 1, rpe: 9 },
+    { extraSets: -1, rpe: 6 },
+  ];
+  return table[clampCycle(cycle)];
+}
+
+export function setsFor(e: SimpleExercise, goal: Goal, cycle?: number): number {
   const dose = exerciseDose(e);
-  const sets = opts?.sets ?? dose.sets + (goal === "bulk" ? 1 : 0);
+  return Math.max(2, dose.sets + (goal === "bulk" ? 1 : 0) + cycleLoad(cycle).extraSets);
+}
+
+export function schemeFor(e: SimpleExercise, goal: Goal, opts?: { sets?: number; cycle?: number }): string {
+  const dose = exerciseDose(e);
+  const sets = opts?.sets ?? setsFor(e, goal, opts?.cycle);
   const setsText = `${sets} ${plural(sets, "подход", "подхода", "подходов")}`;
 
   if (dose.secs) {

@@ -16,6 +16,8 @@ import {
   plansForProgram,
   parseSplit,
   schemeFor,
+  setsFor,
+  cycleLoad,
   restFor,
   doseLabel,
   progressionRule,
@@ -236,6 +238,24 @@ if (typeof APP.gymClips === "function") {
       console.log(`пропуск доп. клипа ${e.name}: медиа ещё не лежит в сборке`);
     }
   }
+}
+
+{
+  const sample = SIMPLE_PLANS.gym[0].items[0];
+  const appSample = APP.plans.gym[0].items[0];
+  for (const c of [0, 2, 3, 4]) {
+    check(
+      `цикл ${c + 1}: схема`,
+      schemeFor(sample, "maint", { cycle: c }) === APP.scheme(appSample, "maint", c),
+      APP.scheme(appSample, "maint", c)
+    );
+  }
+  check(
+    "цикл 3 добавляет подход",
+    setsFor(sample, "maint", 3) === setsFor(sample, "maint", 0) + 1,
+    String(setsFor(sample, "maint", 3))
+  );
+  check("RPE цикла 3", cycleLoad(3).rpe === 9 && APP.rpeOf(3) === 9);
 }
 
 if (failed) {

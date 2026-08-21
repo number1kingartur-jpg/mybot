@@ -50,7 +50,7 @@
     profile: { sex: "m", age: 30, heightCm: 180, weightKg: 80, activity: "mid", goal: "maint" },
     orm: { weightKg: 100, reps: 5 },
     program: { model: "531", goal: "strength", weeks: 8, days: 3, lifts: [] },
-    workout: { place: "home", plan: 0, level: "", split: "" },
+    workout: { place: "home", plan: 0, level: "", split: "", meso: 0, cycle: 0 },
     session: { key: "", startedAt: 0, restUntil: 0, lifts: {}, notes: {} },
     diary: { date: today(), weightKg: "" },
     entries: [],
@@ -632,9 +632,25 @@
   function confirmPending() {
     var p = state.pending;
     if (!p || !online) return;
+    var dirty = [];
+    document.querySelectorAll("[data-part-g]").forEach(function (el) {
+      var i = Number(el.getAttribute("data-part-g"));
+      var grams = Number(el.value);
+      var was = p.meal && p.meal.parts && p.meal.parts[i] ? p.meal.parts[i].grams : 0;
+      if (grams >= 1 && grams <= 3000 && grams !== was) dirty.push({ i: i, grams: grams });
+    });
     state.busy = "food";
     render();
-    KM_API.confirmMeal(p.token)
+    var chain = Promise.resolve();
+    dirty.forEach(function (row) {
+      chain = chain.then(function () {
+        return KM_API.partGrams(p.token, row.i, row.grams);
+      });
+    });
+    chain
+      .then(function () {
+        return KM_API.confirmMeal(p.token);
+      })
       .then(function (data) {
         state.pending = null;
         clearPhotoPreview();
@@ -668,7 +684,10 @@
         render();
       })
       .catch(function (err) {
-        if (pendingGone(err)) state.pending = null;
+        if (pendingGone(err)) {
+          state.busy = null;
+          return render();
+        }
         mealError(err);
       });
   }
@@ -728,7 +747,13 @@
       (x.source === "label" ? '<span class="edit__from">цифры с упаковки</span>' : "") +
       (x.source === "barcode" ? '<span class="edit__from">найден по штрихкоду</span>' : "") +
       (x.source === "similar" ? '<span class="edit__from">по похожему продукту</span>' : "") +
-      "</span>" +
+      '<span class="edit__bju">Б ' +
+      x.proteinG +
+      " · Ж " +
+      x.fatG +
+      " · У " +
+      x.carbsG +
+      "</span></span>" +
       '<span class="edit__g"><input class="edit__input" type="number" inputmode="numeric" ' +
       'min="1" max="3000" step="5" value="' +
       x.grams +
@@ -818,7 +843,19 @@
           ? '<div class="scan__tags">' +
             parts
               .map(function (x) {
-                return '<span class="scan__tag">' + esc(x.name) + " · " + x.kcal + " ккал</span>";
+                return (
+                  '<span class="scan__tag">' +
+                  esc(x.name) +
+                  " · " +
+                  x.kcal +
+                  " ккал · Б " +
+                  x.proteinG +
+                  " · Ж " +
+                  x.fatG +
+                  " · У " +
+                  x.carbsG +
+                  "</span>"
+                );
               })
               .join("") +
             "</div>"
@@ -2512,6 +2549,8 @@
       var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG;
       var kcal = Math.round((f.kcal100 * g) / 100);
       var proteinG = Math.round((f.p100 * g) / 100);
+      var fatG = Math.round((f.f100 * g) / 100);
+      var carbsG = Math.round((f.c100 * g) / 100);
       return (
         '<li class="food">' +
         thumb(f.slug || (typeof KM_MENUS !== "undefined" && KM_MENUS.slugOf ? KM_MENUS.slugOf(f.name, g) : ""), f.name) +
@@ -2525,6 +2564,10 @@
         g +
         " г · Б " +
         proteinG +
+        " · Ж " +
+        fatG +
+        " · У " +
+        carbsG +
         "</span></span>" +
         '<button class="btn btn--outline food__add" style="width:auto" data-action="add-food" data-food="' +
         esc(f.name) +
@@ -3389,17 +3432,32 @@
     return out.join(" · ");
   }
 
+  function workoutMeso() {
+    var n = Number(state.workout.meso);
+    if (!isFinite(n) || n < 0) return 0;
+    return Math.min(2, Math.floor(n));
+  }
+
+  function workoutCycle() {
+    return KM_PLANS.clampCycle ? KM_PLANS.clampCycle(state.workout.cycle) : 0;
+  }
+
   function schemeBadge(e, goal) {
     var d = KM_PLANS.dose(e);
-    var sets = d.sets + (goal === "bulk" ? 1 : 0);
+    var cycle = workoutCycle();
+    var sets = KM_PLANS.setsOf ? KM_PLANS.setsOf(e, goal, cycle) : d.sets + (goal === "bulk" ? 1 : 0);
+    var rpe = KM_PLANS.rpeOf ? KM_PLANS.rpeOf(cycle) : 0;
+    var body;
     if (d.secs) {
       var lo = goal === "bulk" ? Math.round((d.secs[0] * 1.5) / 5) * 5 : d.secs[0];
       var hi = goal === "bulk" ? Math.round((d.secs[1] * 1.5) / 5) * 5 : d.secs[1];
-      return sets + "×" + lo + "–" + hi + " с";
+      body = sets + "×" + lo + "–" + hi + " с";
+    } else {
+      var reps = d.reps || 10;
+      var r = goal === "bulk" ? reps + "–" + (reps + 2) : String(reps);
+      body = sets + "×" + r;
     }
-    var reps = d.reps || 10;
-    var r = goal === "bulk" ? reps + "–" + (reps + 2) : String(reps);
-    return sets + "×" + r;
+    return rpe ? body + " · RPE " + rpe : body;
   }
 
   function dayChipLabel(p) {
@@ -3410,7 +3468,17 @@
   var restTick = null;
 
   function sessionKey() {
-    return state.workout.place + "|" + workoutSplit() + "|" + state.workout.plan;
+    return (
+      state.workout.place +
+      "|" +
+      workoutSplit() +
+      "|" +
+      state.workout.plan +
+      "|" +
+      workoutMeso() +
+      "|" +
+      workoutCycle()
+    );
   }
 
   function restSec() {
@@ -3493,7 +3561,7 @@
   function defaultSets(e) {
     var d = KM_PLANS.dose(e);
     var goal = workoutGoal();
-    var n = d.sets + (goal === "bulk" ? 1 : 0);
+    var n = KM_PLANS.setsOf ? KM_PLANS.setsOf(e, goal, workoutCycle()) : d.sets + (goal === "bulk" ? 1 : 0);
     var prev = lastLog(e.name);
     var reps = d.secs
       ? goal === "bulk"
@@ -3600,12 +3668,31 @@
       esc(plan.label) +
       '</span><span class="progbar__meta">' +
       (wk.place === "home" ? "дома" : "зал") +
+      " · мезоцикл " +
+      (workoutMeso() + 1) +
+      " · цикл " +
+      (workoutCycle() + 1) +
       " · " +
       prog.daysPerWeek +
       " " +
       plural(prog.daysPerWeek, "день", "дня", "дней") +
       " в неделю</span></div>" +
       '<button type="button" class="btn btn--outline btn--slim" data-action="workout-pick">Другая программа</button></div>' +
+      '<p class="shelf__label">Мезоцикл</p>' +
+      chips("w_meso", workoutMeso(), [
+        [0, "Мезоцикл 1"],
+        [1, "Мезоцикл 2"],
+        [2, "Мезоцикл 3"]
+      ]) +
+      '<p class="shelf__label">Цикл</p>' +
+      chips(
+        "w_cycle",
+        workoutCycle(),
+        [0, 1, 2, 3, 4].map(function (i) {
+          return [i, "Цикл " + (i + 1)];
+        }),
+        true
+      ) +
       '<p class="shelf__label">День</p>' +
       chips(
         "w_plan",
@@ -3616,11 +3703,13 @@
       ) +
       card(
         cardHead(
-          programTitle(split) + " · " + plan.label,
-          plan.items.length +
+          dayChipLabel(plan) + ". Цикл " + (workoutCycle() + 1),
+          programTitle(split) +
+            (dayMuscles(plan) ? " · " + dayMuscles(plan) : "") +
+            " · " +
+            plan.items.length +
             " " +
-            plural(plan.items.length, "упражнение", "упражнения", "упражнений") +
-            (dayMuscles(plan) ? " · " + dayMuscles(plan) : ""),
+            plural(plan.items.length, "упражнение", "упражнения", "упражнений"),
           prog.shelf === "start" ? "новичок" : "уже тренируюсь"
         ) +
           '<p class="note note--plain" style="margin-top:12px">Цель ' +
@@ -4622,6 +4711,13 @@
 
   /* ── События ────────────────────────────────────────────────────────────── */
 
+  document.addEventListener("mousedown", function (ev) {
+    var t = ev.target;
+    if (!t || !t.closest) return;
+    var confirmBtn = t.closest("[data-action=\"meal-confirm\"]");
+    if (confirmBtn) ev.preventDefault();
+  });
+
   document.addEventListener("click", function (ev) {
     var t = ev.target;
     if (!t || !t.closest) return;
@@ -5237,6 +5333,18 @@
         return render();
       case "w_plan":
         state.workout.plan = Number(value);
+        resetSession();
+        workoutTouched = true;
+        persist();
+        return render();
+      case "w_meso":
+        state.workout.meso = Math.min(2, Math.max(0, Number(value) || 0));
+        resetSession();
+        workoutTouched = true;
+        persist();
+        return render();
+      case "w_cycle":
+        state.workout.cycle = KM_PLANS.clampCycle ? KM_PLANS.clampCycle(value) : 0;
         resetSession();
         workoutTouched = true;
         persist();
