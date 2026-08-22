@@ -12,6 +12,7 @@ import {
   addMeal, getMeals, getMealsForDays, mealStreak, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, trialMode, freePhotoWeek, photoGate, bumpPhotoCount, grantPremium,
   type NutritionProfile, type Challenge,
 } from "./db";
+import { retentionSnapshot } from "./metrics";
 import { recoveryMap, strengthScore, groupTrends } from "./recovery";
 import { startWebappServer } from "./server";
 import { accessEnabled, accessChatId, accessChatTitle } from "./access";
@@ -1383,6 +1384,26 @@ bot.command("app", async (ctx) => {
     return;
   }
   await sendAppWelcome(ctx, ctx.from?.first_name ?? "друг");
+});
+
+// ── Метрики удержания (только владелец) ──────────────────────────────────────
+bot.command("kmstats", async (ctx) => {
+  if (!isOwner(ctx.from!.id)) {
+    await ctx.reply("Команда только для владельца бота.", HTML);
+    return;
+  }
+  const snap = retentionSnapshot(today());
+  const funnelLine = snap.funnelOverlap
+    ? `Из активных за 7 дней уже клиенты воронки: <b>${snap.funnelOverlap.active7dInFunnel}</b> из ${snap.funnelOverlap.active7dTotal}`
+    : `Из активных за 7 дней уже клиенты воронки: нет данных (файл воронки не найден)`;
+  await ctx.reply(
+    `<b>Удержание KINGMODE</b>\n` +
+      `Всего пользователей: <b>${snap.usersTotal}</b>\n` +
+      `Активны за 7 дней: <b>${snap.active7d}</b> (из них с серией 7+ дней: ${snap.streakDistribution.d7plus})\n` +
+      `Активны за 30 дней: <b>${snap.active30d}</b>\n` +
+      `${funnelLine}`,
+    HTML
+  );
 });
 
 // ── Канал: автовыкладка (только владелец) ───────────────────────────────────

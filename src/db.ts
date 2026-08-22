@@ -218,7 +218,7 @@ function readAt(file: string): DB | null {
  * и резерва нет — исключение вместо тишины. Мёртвый бот заметен сразу,
  * молча обнулённая база — через неделю и уже безвозвратно.
  */
-function load(): DB {
+export function load(): DB {
   const main = readAt(DB_PATH);
   if (main) {
     migrate(main);
