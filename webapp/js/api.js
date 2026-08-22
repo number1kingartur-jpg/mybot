@@ -237,8 +237,38 @@ window.KM_API = (function () {
     });
   }
 
+  /**
+   * Сборка, которую реально отдаёт сервер сейчас — отдельно от build(), который
+   * читает адрес уже загруженного скрипта. WebView Telegram иногда держит
+   * старую вкладку живой даже после переоткрытия; сравнение этих двух чисел
+   * ловит именно такой случай, а не обычное «нет сети».
+   */
+  function checkFresh() {
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", base + "/health", true);
+      xhr.timeout = 8000;
+      xhr.onload = function () {
+        try {
+          var data = JSON.parse(xhr.responseText || "{}");
+          resolve(data && data.build ? String(data.build) : "");
+        } catch (e) {
+          resolve("");
+        }
+      };
+      xhr.onerror = function () {
+        resolve("");
+      };
+      xhr.ontimeout = function () {
+        resolve("");
+      };
+      xhr.send(null);
+    });
+  }
+
   return {
     available: available,
+    checkFresh: checkFresh,
     diag: diag,
     build: build,
     state: function (date, refresh) {

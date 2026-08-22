@@ -3985,59 +3985,6 @@
     );
   }
 
-  function extraClipHtml(e) {
-    var slug = KM_PLANS.slug(e);
-    var local = e.video || KM_PLANS.localVideo(e);
-    var media = local
-      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="' +
-        esc(exSrc(slug)) +
-        '" src="' +
-        esc(local) +
-        '"></video></div>'
-      : "";
-    return (
-      '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
-      thumb(slug, e.name, "ex") +
-      '<span class="acc__text"><span class="acc__title">' +
-      esc(e.name) +
-      '</span><span class="acc__sub">' +
-      esc(e.short) +
-      '</span></span><span class="acc__sign">+</span></button>' +
-      '<div class="acc__body">' +
-      media +
-      '<span class="eyebrow section__label">Как делать</span><ol class="steps-list">' +
-      e.steps
-        .map(function (s) {
-          return "<li>" + esc(s) + "</li>";
-        })
-        .join("") +
-      "</ol>" +
-      '<span class="eyebrow section__label">Частые ошибки</span><ul class="bullets">' +
-      e.mistakes
-        .map(function (s) {
-          return "<li>" + esc(s) + "</li>";
-        })
-        .join("") +
-      "</ul>" +
-      '<p class="note"><strong>Тяжело?</strong> ' +
-      esc(e.easier) +
-      "</p></div></div>"
-    );
-  }
-
-  function extraGymHtml() {
-    var extras = KM_PLANS.gymClips();
-    if (!extras || !extras.length) return "";
-    return (
-      card(
-        cardHead(
-          "Ещё из зала",
-          "Не часть выбранной программы и не пишется в журнал. Техника с тех клипов, что уже сняты."
-        )
-      ) + extras.map(extraClipHtml).join("")
-    );
-  }
-
   function sessionBarHtml() {
     var done = sessionDoneCount();
     var vol = sessionVolume();
@@ -4103,7 +4050,6 @@
   function exerciseHtml(e, idx) {
     var goal = workoutGoal();
     var slug = KM_PLANS.slug(e);
-    var local = KM_PLANS.localVideo(e);
     var d = KM_PLANS.dose(e);
     var sets = sessionSets(e);
     var hold = Boolean(d.secs);
@@ -4195,22 +4141,11 @@
       '" aria-label="Заметка" />' +
       historyHtml(e) +
       "</div>";
-    var media = local
-      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="' +
+    var media = slug
+      ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="' +
         esc(exSrc(slug)) +
-        '" src="' +
-        esc(local) +
-        '"></video></div>'
-      : slug
-        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="' +
-          esc(exSrc(slug)) +
-          '" onerror="this.parentNode.remove()" /></div>'
-        : "";
-    var btn = local
-      ? ""
-      : '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--outline btn--slim" data-link="' +
-        esc(e.video) +
-        '">Техника на видео</button></div>';
+        '" onerror="this.parentNode.remove()" /></div>'
+      : "";
     return (
       '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
       thumb(slug, e.name, "ex") +
@@ -4250,7 +4185,6 @@
       (KM_PLANS.harder(e)
         ? '<p class="note"><strong>Легко?</strong> ' + esc(KM_PLANS.harder(e)) + "</p>"
         : "") +
-      btn +
       "</div></div>"
     );
   }
@@ -6218,6 +6152,31 @@
     }
   } catch (e) {
     /* метка не критична */
+  }
+
+  // WebView Telegram иногда держит старую вкладку живой даже после полного
+  // переоткрытия — на iOS это уже ловили (см. server.ts). Баннер зовёт
+  // обновиться явно, вместо того чтобы по новой объяснять «закрой и открой».
+  try {
+    var openedBuild = KM_API.build ? KM_API.build() : "";
+    if (openedBuild && KM_API.checkFresh) {
+      KM_API.checkFresh().then(function (liveBuild) {
+        if (liveBuild && liveBuild !== openedBuild && !document.getElementById("updateBar")) {
+          var bar = document.createElement("div");
+          bar.id = "updateBar";
+          bar.className = "update-bar";
+          bar.innerHTML =
+            "<span>Открыта старая версия приложения</span>" +
+            '<button type="button">Обновить</button>';
+          bar.querySelector("button").onclick = function () {
+            location.href = location.pathname + "?r=" + Date.now();
+          };
+          document.body.appendChild(bar);
+        }
+      });
+    }
+  } catch (e) {
+    /* проверка версии не критична */
   }
 
   render();

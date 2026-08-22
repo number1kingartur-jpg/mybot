@@ -206,6 +206,34 @@ check(
   progressionRule("gym", "cut")
 );
 
+// 22.08.2026: видео из тренировок убрано целиком (по решению Артура), вернулись
+// аватарки в прежнем стиле. У части упражнений (добавлены после того, как
+// аватарки перестали рисовать) старой картинки никогда не было — их слаги
+// в этом списке, чтобы отсутствие файла не валило сборку. Правило то же, что
+// у справочника продуктов: нет файла — нет миниатюры, не подставлять чужой
+// кадр или букву. Как только появится аватарка — слаг убрать из списка.
+const NO_AVATAR_YET = new Set([
+  "mahi-girey",
+  "mahi-giri-do-urovnya-glaz",
+  "podem-na-noski-stoya",
+  "podnos-noskov-k-perekladine",
+  "podtyagivaniya",
+  "razvedenie-ganteley-na-naklonnoy",
+  "razvedenie-ganteley-v-naklone",
+  "razvedenie-ganteley-v-storony",
+  "stanovaya-tyaga",
+  "svedenie-ruk-v-krossovere",
+  "tyaga-pryamymi-rukami-na-bloke",
+  "tyaga-shtangi-v-naklone",
+  "tyaga-verhnego-bloka-odnoy-rukoy",
+  "vis-na-turnike",
+  "zhim-ganteley-na-naklonnoy",
+  "zhim-giri-stoya",
+  "zhim-golovoy-dlya-shei",
+  "zhim-na-naklonnoy",
+  "zhim-shtangi-stoya"
+]);
+
 const EX_DIR = path.join("webapp", "img", "ex");
 const seenSlug = new Set();
 for (const level of LEVELS) {
@@ -216,25 +244,12 @@ for (const level of LEVELS) {
         check(`${e.name}: слаг`, slug === APP.slug(e), `бот ${slug}, приложение ${APP.slug(e)}`);
         if (seenSlug.has(slug)) continue;
         seenSlug.add(slug);
-        check(`${e.name}: картинка`, fs.existsSync(path.join(EX_DIR, `${slug}.webp`)), slug);
-        if (APP.localVideo(e)) {
-          const vid = path.join("webapp", "video", "ex", `${slug}.mp4`);
-          if (!fs.existsSync(vid)) {
-            console.log(`пропуск видео ${e.name}: ${slug}.mp4 ещё не в сборке`);
-          }
+        if (NO_AVATAR_YET.has(slug)) {
+          console.log(`пропуск картинки ${e.name}: аватарки ещё нет (${slug})`);
+          continue;
         }
+        check(`${e.name}: картинка`, fs.existsSync(path.join(EX_DIR, `${slug}.webp`)), slug);
       }
-    }
-  }
-}
-
-if (typeof APP.gymClips === "function") {
-  for (const e of APP.gymClips()) {
-    const slug = APP.slug(e);
-    const img = fs.existsSync(path.join(EX_DIR, `${slug}.webp`));
-    const vid = !APP.localVideo(e) || fs.existsSync(path.join("webapp", "video", "ex", `${slug}.mp4`));
-    if (!img || !vid) {
-      console.log(`пропуск доп. клипа ${e.name}: медиа ещё не лежит в сборке`);
     }
   }
 }
