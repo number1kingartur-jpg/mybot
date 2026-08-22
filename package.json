@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "ts-node --transpile-only src/index.ts",
-    "build": "tsc && node scripts/check-foods.mjs && node scripts/check-meal-edit.mjs && node scripts/check-meal-flow.mjs && node scripts/check-meal-remind.mjs && node scripts/check-same.mjs && node scripts/check-menus.mjs && node scripts/check-plans.mjs && node scripts/check-route.mjs && node scripts/check-adapt.mjs && node scripts/check-channel-posts.mjs && node scripts/check-photo-map-unique.mjs && node scripts/check-channel-media.mjs && node scripts/check-text.mjs && node scripts/text-check.mjs && node scripts/check-db.mjs && node scripts/check-metrics.mjs && node scripts/check-access.mjs && node scripts/check-guard.mjs && node scripts/check-progress-photos.mjs",
+    "build": "tsc && node scripts/check-foods.mjs && node scripts/check-meal-edit.mjs && node scripts/check-meal-flow.mjs && node scripts/check-meal-remind.mjs && node scripts/check-same.mjs && node scripts/check-menus.mjs && node scripts/check-plans.mjs && node scripts/check-route.mjs && node scripts/check-adapt.mjs && node scripts/check-channel-posts.mjs && node scripts/check-photo-map-unique.mjs && node scripts/check-channel-media-guarded.mjs && node scripts/check-text.mjs && node scripts/text-check.mjs && node scripts/check-db.mjs && node scripts/check-metrics.mjs && node scripts/check-access.mjs && node scripts/check-guard.mjs && node scripts/check-progress-photos.mjs",
     "start": "node dist/index.js",
     "setup:channel": "node scripts/setup-channel.mjs",
     "channel:sync-photos": "npm run build && node scripts/sync-channel-photos.mjs",
