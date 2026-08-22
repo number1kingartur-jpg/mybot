@@ -37,7 +37,6 @@ import { buildWeeklyReport } from "./analysis";
 import {
   channelPostingEnabled,
   channelId,
-  CHANNEL_CRON,
   channelSlotsLabel,
   channelPostsPerDay,
   channelPostSlots,
