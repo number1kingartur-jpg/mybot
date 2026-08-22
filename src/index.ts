@@ -1,12 +1,11 @@
 ﻿import "dotenv/config";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
-import https from "https";
 import cron from "node-cron";
 import {
   addWorkout, getWorkouts, getAllWorkouts, getExercises, getWorkoutDates, removeWorkouts,
   saveProgram, getActiveProgram, advanceProgramDay, deactivatePrograms,
   checkPr, addBodyweight, getBodyweight,
-  registerUser, getUsers, getUser, setReminder, setNutrition, updateUser,
+  registerUser, getUsers, getUser, setNutrition, updateUser,
   createChallenge, getChallengeById, getActiveChallenge, joinChallenge,
   setChallengePing, getExpiredChallenges, finishChallenge,
   addMeal, getMeals, getMealsForDays, mealStreak, removeMeal, mealTotals, isPremium, isOwner, mealPhotoUnlimited, trialMode, freePhotoWeek, photoGate, bumpPhotoCount, grantPremium,
@@ -37,34 +36,20 @@ import { progressChartUrl, bodyweightChartUrl } from "./chart";
 import { buildWeeklyReport } from "./analysis";
 import {
   channelPostingEnabled,
-  channelStatusText,
   channelId,
-  CHANNEL_CRON,
   channelSlotsLabel,
   channelPostsPerDay,
   channelPostSlots,
   channelPostDays,
   channelPostTotal,
   reserveDaysNew,
-  channelToday,
-  previewNextPost,
   publishNextChannelPost,
-  publishChannelPostById,
 } from "./channel/publisher";
-import {
-  applyBrandingFromEnv,
-  brandingHelpText,
-  setChannelAbout,
-  setChannelPhoto,
-  setChannelTitle,
-} from "./channel/branding";
+import { applyBrandingFromEnv } from "./channel/branding";
 import { brandKeyboard, brandLinksHtml } from "./channel/brand";
-import { deleteChannelMessages, resolveChannelChatId } from "./channel/channel-delete";
-import { getChannelLastPublish } from "./db";
 import {
   sendGuidesMenu,
   sendGuideWelcome,
-  sendGuideFile,
   parseGuidePayload,
 } from "./guides";
 import {
@@ -74,6 +59,10 @@ import {
   usersForRestartReminder,
   buildRestartReminderText,
 } from "./restart-bot";
+import { HR, DOT, HTML, esc, today, bangkokNow, fetchImageBuffer } from "./handlers/shared";
+import { registerChannelAdminHandlers } from "./handlers/channel-admin";
+import { registerGuidesHandlers } from "./handlers/guides";
+import { registerRemindersHandlers } from "./handlers/reminders";
 
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("BOT_TOKEN not set in .env");
@@ -121,13 +110,7 @@ function resetSession(userId: number) {
 }
 
 // ── Style helpers ───────────────────────────────────────────────────────────
-const HR = "━━━━━━━━━━━━━━━━━━━━";
-const DOT = "·";
-const HTML = { parse_mode: "HTML" as const };
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+// HR, DOT, HTML, esc — см. ./handlers/shared
 
 function bar(done: number, total: number, len = 10): string {
   if (total <= 0) return "";
@@ -340,16 +323,7 @@ function daysKeyboard() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-function today(): string {
-  // en-CA → YYYY-MM-DD; дата по Бангкоку, а не UTC
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
-}
-
-function bangkokNow(): { dow: number; hour: number } {
-  const s = new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" });
-  const d = new Date(s);
-  return { dow: d.getDay(), hour: d.getHours() };
-}
+// today, bangkokNow — см. ./handlers/shared
 
 // ── Стрик: сколько недель подряд есть хотя бы одна тренировка ───────────────
 function weekKey(dateStr: string): string {
@@ -586,18 +560,7 @@ function monthCalendar(userId: number): string {
   );
 }
 
-async function fetchImageBuffer(url: string): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, { timeout: 10_000 }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (c: Buffer) => chunks.push(c));
-      res.on("end", () => resolve(Buffer.concat(chunks)));
-      res.on("error", reject);
-    });
-    req.on("timeout", () => req.destroy(new Error("chart timeout")));
-    req.on("error", reject);
-  });
-}
+// fetchImageBuffer — см. ./handlers/shared
 
 // ── Челлендж с другом ────────────────────────────────────────────────────────
 // Приватные соревнования с друзьями удерживают лучше глобальных рейтингов
@@ -1270,10 +1233,7 @@ bot.hears("📈 Мой прогресс", async (ctx) => {
   );
 });
 
-bot.hears("📥 Гайды", async (ctx) => {
-  resetSession(ctx.from!.id);
-  await sendGuidesMenu(ctx);
-});
+registerGuidesHandlers(bot, resetSession);
 
 bot.hears("❓ Помощь", async (ctx) => {
   resetSession(ctx.from!.id);
@@ -1289,62 +1249,6 @@ bot.hears("❓ Помощь", async (ctx) => {
     `💪 Ходишь в зал со своей программой? Просто напиши что сделал: <code>присед 50 3х10</code> — я запишу.\n\n` +
     `<i>Опытный атлет? Переключись в про-режим: /mode — там программы с периодизацией, 1RM и аналитика.</i>`,
     { reply_markup: SIMPLE_KEYBOARD, ...HTML }
-  );
-});
-
-// ── Гайды ───────────────────────────────────────────────────────────────────
-bot.command("guides", async (ctx) => {
-  resetSession(ctx.from!.id);
-  await sendGuidesMenu(ctx);
-});
-
-bot.command("guide", async (ctx) => {
-  resetSession(ctx.from!.id);
-  const arg = typeof ctx.match === "string" ? ctx.match.trim() : "";
-  if (!arg) {
-    await sendGuidesMenu(ctx);
-    return;
-  }
-  const ok = await sendGuideFile(ctx, arg);
-  if (!ok) {
-    await ctx.reply(
-      `Гайд не найден. Доступные: <code>7day</code>, <code>7mistakes</code>, <code>kbju</code>\n\nИли /guides`,
-      HTML
-    );
-  }
-});
-
-bot.callbackQuery(/^guide_dl_(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery({ text: "Отправляю файл…" });
-  const slug = ctx.match![1];
-  const ok = await sendGuideFile(ctx, slug);
-  if (!ok) await ctx.reply("Гайд не найден. /guides", HTML);
-});
-
-// ── Гид для новичка ─────────────────────────────────────────────────────────
-bot.callbackQuery("guide_start", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    `🎓 <b>С ЧЕГО НАЧАТЬ — 3 ШАГА</b>\n${HR}\n\n` +
-    `<b>Шаг 1 ${DOT} Запиши первую тренировку</b>\n` +
-    `Просто напиши в чат что сделал. Например сделал 3 подхода по 8 повторений с весом 40 кг:\n` +
-    `<code>присед 40 3х8</code>\n` +
-    `Или скажи голосовым 🎙: <i>«Присед 40 килограмм 3 подхода по 8»</i>. Всё.\n\n` +
-    `<b>Шаг 2 ${DOT} Получи программу</b>\n` +
-    `Нажми «📋 Программа». Не знаешь термины — не страшно:\n` +
-    `${DOT} выбирай <b>GZCLP</b> — она для новичков\n` +
-    `${DOT} 3 дня в неделю — оптимальный старт\n` +
-    `${DOT} свой максимум (1RM) знать <b>не обязательно</b> — введи рабочий подход, например <code>40×8</code>, бот посчитает сам\n\n` +
-    `<b>Шаг 3 ${DOT} Ходи в зал и жми «✅ Выполнено»</b>\n` +
-    `Бот покажет что делать на каждой тренировке: упражнение, вес, подходы, отдых. ` +
-    `Выполнил — отметил — получил следующую. Прогресс копится сам.\n\n` +
-    `${HR}\n` +
-    `💡 <b>Словарь на старте:</b>\n` +
-    `${DOT} <b>1RM</b> — максимальный вес, который ты можешь поднять 1 раз\n` +
-    `${DOT} <b>Подход (сет)</b> — серия повторений без отдыха\n` +
-    `${DOT} <b>4×8</b> — 4 подхода по 8 повторений\n\n` +
-    `<i>Остальное объясню по ходу — в программе есть кнопка «❓ Как читать».</i>`,
-    HTML
   );
 });
 
@@ -1385,251 +1289,8 @@ bot.command("app", async (ctx) => {
   await sendAppWelcome(ctx, ctx.from?.first_name ?? "друг");
 });
 
-// ── Канал: автовыкладка (только владелец) ───────────────────────────────────
-bot.command("channel", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  await ctx.reply(channelStatusText(), HTML);
-});
-
-bot.command("channel_brand", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  await ctx.reply(brandingHelpText(), HTML);
-});
-
-bot.command("channel_name", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  if (!channelId()) {
-    await ctx.reply("Задай <code>TELEGRAM_CHANNEL_ID</code> в Railway.", HTML);
-    return;
-  }
-  const name = (typeof ctx.match === "string" ? ctx.match : "").trim();
-  if (!name) {
-    await ctx.reply("Напиши: <code>/channel_name KINGMODE</code>", HTML);
-    return;
-  }
-  try {
-    await setChannelTitle(bot.api, name);
-    await ctx.reply(`✅ Название канала: <b>${esc(name)}</b>`, HTML);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await ctx.reply(`⚠️ ${esc(msg)}\n\n<i>Нужны права админа «Изменение профиля».</i>`, HTML);
-  }
-});
-
-bot.command("channel_about", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  if (!channelId()) {
-    await ctx.reply("Задай <code>TELEGRAM_CHANNEL_ID</code> в Railway.", HTML);
-    return;
-  }
-  const about = (typeof ctx.match === "string" ? ctx.match : "").trim();
-  if (!about) {
-    await ctx.reply(
-      "Напиши описание одной строкой:\n<code>/channel_about Метод: план → цифры → результат. @Raschettbot</code>",
-      HTML
-    );
-    return;
-  }
-  try {
-    await setChannelAbout(bot.api, about);
-    await ctx.reply(`✅ Описание канала обновлено.`, HTML);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await ctx.reply(`⚠️ ${esc(msg)}`, HTML);
-  }
-});
-
-async function applyChannelPhotoFromMessage(ctx: {
-  from?: { id: number };
-  message?: { photo?: { file_id: string }[]; reply_to_message?: { photo?: { file_id: string }[] } };
-  reply: (t: string, o?: object) => Promise<unknown>;
-  api: typeof bot.api;
-}) {
-  if (!ctx.from || !isOwner(ctx.from.id)) return;
-  if (!channelId()) {
-    await ctx.reply("Задай <code>TELEGRAM_CHANNEL_ID</code> в Railway.", HTML);
-    return;
-  }
-  const photos = ctx.message?.reply_to_message?.photo ?? ctx.message?.photo;
-  if (!photos?.length) {
-    await ctx.reply(
-      "Отправь <b>фото</b> с подписью <code>/channel_photo</code>\nили ответь <code>/channel_photo</code> на картинку.",
-      HTML
-    );
-    return;
-  }
-  const fileId = photos[photos.length - 1].file_id;
-  try {
-    const file = await ctx.api.getFile(fileId);
-    if (!file.file_path) throw new Error("no file_path");
-    const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
-    const buf = await fetchImageBuffer(url);
-    await setChannelPhoto(bot.api, buf);
-    await ctx.reply("✅ Шапка (аватар канала) обновлена.", HTML);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await ctx.reply(`⚠️ ${esc(msg)}\n\n<i>Права: админ + изменение профиля.</i>`, HTML);
-  }
-}
-
-bot.command("channel_photo", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  await applyChannelPhotoFromMessage(ctx);
-});
-
-bot.on("message:photo", async (ctx, next) => {
-  const cap = ctx.message.caption?.trim() ?? "";
-  if (cap.startsWith("/channel_photo") && isOwner(ctx.from!.id)) {
-    await applyChannelPhotoFromMessage(ctx);
-    return;
-  }
-  await next();
-});
-
-bot.command("channel_post", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  if (!channelPostingEnabled()) {
-    await ctx.reply(
-      `📢 Автовыкладка выключена.\n\n` +
-      `Railway → Variables:\n` +
-      `<code>TELEGRAM_CHANNEL_ID</code> = @канал или -100...\n` +
-      `<code>CHANNEL_POST_ENABLED</code> = 1\n` +
-      `<code>BOT_USERNAME</code> = имя_бота без @\n` +
-      `Бот должен быть <b>админом</b> канала с правом публикации.`,
-      HTML
-    );
-    return;
-  }
-  const preview = previewNextPost();
-  if (!preview.post) {
-    await ctx.reply(preview.html, HTML);
-    return;
-  }
-  const { post, html } = preview;
-  await ctx.reply(`👀 <b>Превью</b> (следующий пост: <code>${esc(post.id)}</code>)\n\n${html}`, HTML);
-  const result = await publishNextChannelPost(bot.api, { force: true });
-  if (result.ok) {
-    await ctx.reply(`✅ Опубликовано в канал: <b>${esc(post.title)}</b> (<code>${result.postId}</code>)`, HTML);
-  } else {
-    await ctx.reply(`⚠️ Не вышло: <i>${esc(result.error ?? "unknown")}</i>`, HTML);
-  }
-});
-
-/** Удалить последнюю публикацию бота (все части серии). */
-bot.command("channel_delete_last", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  const last = getChannelLastPublish();
-  if (!last?.messageIds?.length) {
-    await ctx.reply("Нет записи последней публикации. Укажи ID: <code>/channel_delete 42</code>", HTML);
-    return;
-  }
-  const result = await deleteChannelMessages(bot.api, last.messageIds);
-  if (result.deleted > 0) {
-    await ctx.reply(
-      `🗑 Удалено <b>${result.deleted}</b> сообщ. (пост <code>${esc(last.postId)}</code>)\n` +
-      `ID: ${last.messageIds.map((id) => `<code>${id}</code>`).join(", ")}`,
-      HTML
-    );
-  } else {
-    await ctx.reply(
-      `⚠️ Не удалось.\n${result.errors.map(esc).join("\n")}\n\n` +
-      `Права бота: админ + <b>удаление сообщений</b>.`,
-      HTML
-    );
-  }
-});
-
-/** Удалить сообщение в канале: /channel_delete 123 или ответ на пересланный пост. */
-bot.command("channel_delete", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-
-  let messageIds: number[] = [];
-  const arg = typeof ctx.match === "string" ? ctx.match.trim() : "";
-  const linkMatch = arg.match(/t\.me\/\w+\/(\d+)/);
-  const nums = arg.match(/\d+/g);
-
-  if (linkMatch) messageIds = [parseInt(linkMatch[1], 10)];
-  else if (nums?.length) messageIds = nums.map((n) => parseInt(n, 10));
-
-  const reply = ctx.message?.reply_to_message;
-  if (!messageIds.length && reply) {
-    const origin = reply.forward_origin;
-    if (origin?.type === "channel") {
-      messageIds = [origin.message_id];
-    }
-    // старый формат пересылки
-    const legacy = reply as { forward_from_chat?: { id: number }; forward_from_message_id?: number };
-    if (!messageIds.length && legacy.forward_from_message_id) {
-      messageIds = [legacy.forward_from_message_id];
-    }
-  }
-
-  if (!messageIds.length) {
-    await ctx.reply(
-      `<b>Удаление поста в канале</b>\n\n` +
-      `1. <code>/channel_delete_last</code> — последний пост бота (все части)\n` +
-      `2. <code>/channel_delete 42</code> — по номеру из ссылки t.me/kingmode_fit/42\n` +
-      `3. Перешли пост боту → ответь <code>/channel_delete</code>\n\n` +
-      `<i>Бот = админ канала с правом удаления.</i>`,
-      HTML
-    );
-    return;
-  }
-
-  const result = await deleteChannelMessages(bot.api, messageIds);
-  if (result.deleted > 0) {
-    await ctx.reply(`🗑 Удалено: ${result.deleted} сообщ.`, HTML);
-  } else {
-    const chat = await resolveChannelChatId(bot.api);
-    await ctx.reply(
-      `⚠️ Не удалось удалить.\n` +
-      result.errors.map(esc).join("\n") +
-      `\n\nКанал: <code>${esc(chat ?? "?")}</code>\n` +
-      `Проверь: бот админ → право <b>Delete messages</b>.`,
-      HTML
-    );
-  }
-});
-
-/** Опубликовать конкретный пост: /channel_post_id sleep */
-bot.command("channel_post_id", async (ctx) => {
-  if (!isOwner(ctx.from!.id)) {
-    await ctx.reply("Команда только для владельца бота.", HTML);
-    return;
-  }
-  const postId = typeof ctx.match === "string" ? ctx.match.trim() : "";
-  if (!postId) {
-    await ctx.reply("Напиши: <code>/channel_post_id sleep</code>", HTML);
-    return;
-  }
-  const result = await publishChannelPostById(bot.api, postId, { markDate: channelToday() });
-  if (result.ok) await ctx.reply(`✅ Опубликован <code>${esc(postId)}</code>`, HTML);
-  else await ctx.reply(`⚠️ ${esc(result.error ?? "error")}`, HTML);
-});
+// ── Метрики удержания и канал (только владелец) ──────────────────────────────
+registerChannelAdminHandlers(bot, TOKEN);
 
 // ── Запись тренировки ─────────────────────────────────────────────────────
 bot.hears("📝 Записать тренировку", async (ctx) => {
@@ -2340,68 +2001,8 @@ bot.callbackQuery(/^warm_(\d+(?:\.\d+)?)$/, async (ctx) => {
   await ctx.reply(warmupText(parseFloat(ctx.match[1])), HTML);
 });
 
-// ── Напоминания ──────────────────────────────────────────────────────────
-const REMIND_PRESETS: Record<string, { label: string; days: number[] }> = {
-  mwf: { label: "Пн · Ср · Пт", days: [1, 3, 5] },
-  tts: { label: "Вт · Чт · Сб", days: [2, 4, 6] },
-  wkd: { label: "Пн – Пт", days: [1, 2, 3, 4, 5] },
-  all: { label: "Каждый день", days: [0, 1, 2, 3, 4, 5, 6] },
-};
-
-bot.command("remind", async (ctx) => {
-  resetSession(ctx.from!.id);
-  const kb = new InlineKeyboard();
-  for (const [key, p] of Object.entries(REMIND_PRESETS)) kb.text(p.label, `rem_${key}`).row();
-  kb.text("🔕 Выключить напоминания", "rem_off");
-  await ctx.reply(
-    `⏰ <b>НАПОМИНАНИЯ О ТРЕНИРОВКАХ</b>\n${HR}\n\n` +
-    `Выбери дни — пришлю напоминание, если в этот день ещё не было записи:`,
-    { reply_markup: kb, ...HTML }
-  );
-});
-
-bot.callbackQuery(/^rem_(.+)$/, async (ctx) => {
-  const key = ctx.match[1];
-  if (key === "off") {
-    setReminder(ctx.from.id, null, null);
-    await ctx.answerCallbackQuery("Выключено");
-    await ctx.editMessageText(`🔕 <b>Напоминания выключены</b>`, HTML);
-    return;
-  }
-  const preset = REMIND_PRESETS[key];
-  if (!preset) return;
-  const s = getSession(ctx.from.id);
-  s.data.remDays = key;
-  await ctx.answerCallbackQuery();
-  const kb = new InlineKeyboard();
-  [7, 9, 12, 15, 17, 19].forEach((h, i) => {
-    kb.text(`${h}:00`, `rh_${h}`);
-    if ((i + 1) % 3 === 0) kb.row();
-  });
-  await ctx.editMessageText(
-    `⏰ <b>${preset.label}</b>\n\nВ котором часу напоминать? <i>(время Бангкока)</i>`,
-    { reply_markup: kb, ...HTML }
-  );
-});
-
-bot.callbackQuery(/^rh_(\d+)$/, async (ctx) => {
-  const hour = parseInt(ctx.match[1]);
-  const s = getSession(ctx.from.id);
-  const preset = REMIND_PRESETS[String(s.data.remDays)];
-  if (!preset) {
-    await ctx.answerCallbackQuery("Начни заново: /remind");
-    return;
-  }
-  setReminder(ctx.from.id, preset.days, hour);
-  resetSession(ctx.from.id);
-  await ctx.answerCallbackQuery("Готово");
-  await ctx.editMessageText(
-    `✅ <b>Напоминания включены</b>\n${HR}\n\n` +
-    `📅 ${preset.label}\n🕐 ${hour}:00 (Бангкок)\n\n` +
-    `<i>Если тренировка уже записана — напоминание не приходит. Выключить: /remind</i>`,
-    HTML
-  );
-});
+// ── Напоминания: см. ./handlers/reminders (registerRemindersHandlers) ───────
+registerRemindersHandlers(bot, getSession, resetSession);
 
 // ── Питание (КБЖУ) ───────────────────────────────────────────────────────
 const GOAL_NUT_LABELS: Record<string, string> = {

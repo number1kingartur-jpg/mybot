@@ -164,6 +164,17 @@ export interface WaterEntry {
   ml: number;
 }
 
+/** Фотопротокол прогресса тела: карточка на один снимок в один ракурс. */
+export interface ProgressPhotoEntry {
+  id: string;
+  userId: number;
+  date: string;         // YYYY-MM-DD, дата съёмки, не дата загрузки
+  angle: "front" | "side" | "back";
+  path: string;         // абсолютный путь на диске
+  sizeBytes: number;
+  createdAt: string;    // ISO, момент загрузки
+}
+
 interface DB {
   workouts: WorkoutEntry[];
   programs: Program[];
@@ -172,13 +183,25 @@ interface DB {
   challenges: Challenge[];
   meals: MealEntry[];
   water?: WaterEntry[];
+  progressPhotos?: ProgressPhotoEntry[];
   channelPosted?: { postId: string; date: string }[];
   /** Последняя публикация бота в канал — для удаления всей серии (1–3 сообщения). */
   channelLastPublish?: { postId: string; messageIds: number[]; date: string };
 }
 
 function emptyDb(): DB {
-  return { workouts: [], programs: [], bodyweight: [], users: [], challenges: [], meals: [], water: [], channelPosted: [], channelLastPublish: undefined };
+  return {
+    workouts: [],
+    programs: [],
+    bodyweight: [],
+    users: [],
+    challenges: [],
+    meals: [],
+    water: [],
+    progressPhotos: [],
+    channelPosted: [],
+    channelLastPublish: undefined,
+  };
 }
 
 /** Прочитать и привести к полной форме. `null` — файла нет или он не разбирается. */
@@ -194,6 +217,7 @@ function readAt(file: string): DB | null {
       challenges: parsed.challenges ?? [],
       meals: parsed.meals ?? [],
       water: parsed.water ?? [],
+      progressPhotos: parsed.progressPhotos ?? [],
       channelPosted: parsed.channelPosted ?? [],
       // Поле терялось при каждом чтении базы, из-за чего /channel_delete_last
       // не находил последнюю публикацию: записать её было можно, прочитать — нет.
@@ -218,7 +242,7 @@ function readAt(file: string): DB | null {
  * и резерва нет — исключение вместо тишины. Мёртвый бот заметен сразу,
  * молча обнулённая база — через неделю и уже безвозвратно.
  */
-function load(): DB {
+export function load(): DB {
   const main = readAt(DB_PATH);
   if (main) {
     migrate(main);
@@ -544,6 +568,69 @@ export function getWaterHistory(userId: number, limit = 14): WaterEntry[] {
 export function waterTargetMl(weightKg: number): number {
   const w = weightKg > 0 ? weightKg : 80;
   return Math.round((w * 35) / 100) * 100;
+}
+
+// ── Фотопротокол прогресса тела ────────────────────────────────────────────
+// Файлы лежат рядом с базой на том же томе: `<DATA_DIR>/photos/<userId>/<файл>.jpg`.
+// Своей переменной окружения нет намеренно — путь выводится из DATA_PATH, как и
+// у самой базы, чтобы не плодить второй способ настройки хранилища.
+
+/** Папка для фото прогресса одного пользователя. Не создаётся тут — только путь. */
+export function progressPhotoDir(userId: number): string {
+  return path.join(path.dirname(DB_PATH), "photos", String(userId));
+}
+
+/**
+ * Записать метаданные снимка. Сами байты к этому моменту уже должны лежать на
+ * диске по переданному `path` — вызывающий код (сервер) пишет файл первым и
+ * только при успехе зовёт эту функцию. Если запись файла не удалась, сюда
+ * доходить не должны: база не должна знать о фото, которого нет на диске.
+ */
+export function addProgressPhoto(entry: Omit<ProgressPhotoEntry, "id" | "createdAt">): ProgressPhotoEntry {
+  const db = load();
+  db.progressPhotos = db.progressPhotos ?? [];
+  const row: ProgressPhotoEntry = { id: uid(), createdAt: new Date().toISOString(), ...entry };
+  db.progressPhotos.push(row);
+  save(db);
+  return row;
+}
+
+/** Все фото пользователя, по дате съёмки, затем по моменту загрузки. */
+export function listProgressPhotos(userId: number): ProgressPhotoEntry[] {
+  return (load().progressPhotos ?? [])
+    .filter((p) => p.userId === userId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Только своя запись: чужой userId не находит ничего, без исключений. */
+export function getProgressPhoto(userId: number, id: string): ProgressPhotoEntry | undefined {
+  return (load().progressPhotos ?? []).find((p) => p.id === id && p.userId === userId);
+}
+
+/**
+ * Удаляет и файл с диска, и запись из базы. Файла уже нет — не авария: запись
+ * из базы всё равно убирается, иначе пользователь видит карточку, которую
+ * сервер больше не может отдать.
+ */
+export function deleteProgressPhoto(userId: number, id: string): boolean {
+  const db = load();
+  db.progressPhotos = db.progressPhotos ?? [];
+  const idx = db.progressPhotos.findIndex((p) => p.id === id && p.userId === userId);
+  if (idx === -1) return false;
+  const [row] = db.progressPhotos.splice(idx, 1);
+  try {
+    if (fs.existsSync(row.path)) fs.unlinkSync(row.path);
+  } catch {
+    // Файл не удалился (права, гонка) — запись из базы всё равно убираем ниже.
+  }
+  save(db);
+  return true;
+}
+
+/** Сколько уже занято: считается лимит по числу снимков и по объёму. */
+export function progressPhotoUsage(userId: number): { count: number; bytes: number } {
+  const rows = (load().progressPhotos ?? []).filter((p) => p.userId === userId);
+  return { count: rows.length, bytes: rows.reduce((s, p) => s + p.sizeBytes, 0) };
 }
 
 // ── Users (для рассылки сводок) ───────────────────────────────────────────────
