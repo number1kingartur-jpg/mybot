@@ -4546,11 +4546,11 @@
           "Дата съёмки",
           '<input class="input" type="date" data-path="ppDate" value="' + esc(state.ppDate) + '" />'
         ) +
-        '<div class="pp-upload-row">' +
+        '<div class="chips chips--wrap pp-upload-row">' +
         ["front", "side", "back"]
           .map(function (a) {
             return (
-              '<button type="button" class="btn btn--outline btn--slim" data-action="pp-upload-' +
+              '<button type="button" class="chip" data-action="pp-upload-' +
               a +
               '"' +
               (uploading || full ? " disabled" : "") +
@@ -4561,7 +4561,7 @@
           })
           .join("") +
         "</div>" +
-        (uploading ? '<p class="muted" style="margin-top:10px">Загружаю снимок</p>' : "") +
+        (uploading ? '<p class="muted" style="margin-top:10px">Загружаю снимок…</p>' : "") +
         (full
           ? '<p class="muted" style="margin-top:10px">Лимит фото исчерпан. Удали старые, чтобы добавить новое.</p>'
           : "") +
@@ -4582,7 +4582,7 @@
 
     var gridCard;
     if (!state.progressPhotos) {
-      gridCard = card('<p class="muted">Загружаю фото</p>');
+      gridCard = card('<p class="muted">Загружаю фото…</p>');
     } else if (!list.length) {
       gridCard = card(cardHead("Пока пусто", "Добавь первое фото, и через несколько недель будет с чем сравнить"));
     } else {

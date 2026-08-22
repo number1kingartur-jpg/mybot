@@ -656,6 +656,11 @@ button {
   font-weight: 500;
 }
 
+.chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .chip--gold {
   background: rgba(176, 141, 69, 0.14);
   border-color: var(--gold);
@@ -901,6 +906,12 @@ select.input {
 
 .btn:active {
   transform: scale(0.985);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
 }
 
 .btn--primary {
@@ -2268,10 +2279,10 @@ label.btn {
 
 /* ── Фотопротокол прогресса тела ──────────────────────────────────────────── */
 
+/* Ракурсы съёмки — те же три чипа, что и в фильтре ниже: одна форма
+   элемента для одного и того же набора значений, а не кнопка в одном месте
+   и пилюля в другом. */
 .pp-upload-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
   margin-top: 12px;
 }
 
