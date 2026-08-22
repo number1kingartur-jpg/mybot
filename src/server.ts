@@ -1,9 +1,10 @@
+import crypto from "crypto";
 import fs from "fs";
 import http from "http";
 import path from "path";
-import { verifyInitData, type WebAppUser } from "./webapp-auth";
+import { verifyInitData, signProgressPhotoToken, verifyProgressPhotoToken, type WebAppUser } from "./webapp-auth";
 import { accessEnabled, accessChatId, checkAccess } from "./access";
-import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take } from "./guard";
+import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_PHOTO_MAX_COUNT, PROGRESS_PHOTO_MAX_BYTES } from "./guard";
 import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
@@ -12,7 +13,8 @@ import {
   addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, cleanWorkoutMemo, getMealsForDays,
   saveProgram, getActiveProgram, advanceProgramDay,
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium, isOwner,
-  type NutritionProfile, type Lift, type Program,
+  addProgressPhoto, listProgressPhotos, getProgressPhoto, deleteProgressPhoto, progressPhotoUsage, progressPhotoDir,
+  type NutritionProfile, type Lift, type Program, type ProgressPhotoEntry,
 } from "./db";
 import {
   analyzeMealPhoto, analyzeMealText, editMeal, isCompleteShake, mealFromHistory, mealPartLines,
@@ -225,6 +227,18 @@ function photoQuota(userId: number) {
     trial: trialMode(),
     left: unlimited ? null : Math.max(0, freePhotoWeek() - used),
     limit: freePhotoWeek(),
+  };
+}
+
+/** Карточка фото прогресса для клиента: без пути на диске, с подписанным адресом байт. */
+function publicProgressPhoto(row: ProgressPhotoEntry, botToken: string) {
+  return {
+    id: row.id,
+    date: row.date,
+    angle: row.angle,
+    sizeBytes: row.sizeBytes,
+    createdAt: row.createdAt,
+    url: `/api/progress/photo/${row.id}?token=${signProgressPhotoToken(row.id, row.userId, botToken)}`,
   };
 }
 
@@ -538,6 +552,48 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   }
   res.writeHead(200, headers);
   fs.createReadStream(full).pipe(res);
+}
+
+/**
+ * Байты фото прогресса. Авторизация не через initData (её тут негде передать),
+ * а через короткоживущий подписанный токен из адреса. Просроченная или неверная
+ * подпись — 403, явный отказ, не редирект и не тихая заглушка.
+ */
+function serveProgressPhoto(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  rawId: string,
+  query: URLSearchParams,
+  botToken: string
+): void {
+  const id = decodeURIComponent(rawId);
+  const token = query.get("token") ?? "";
+  const verified = verifyProgressPhotoToken(token, id, botToken);
+  if (!verified) {
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" }).end("forbidden");
+    return;
+  }
+  // Токен доказывает подлинность userId внутри себя (подписан секретом сервера),
+  // но запись всё равно ищем через getProgressPhoto с этим userId: чужая
+  // запись недоступна, даже если бы токен был подделан для чужого id.
+  const row = getProgressPhoto(verified.userId, id);
+  if (!row || !fs.existsSync(row.path)) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("not found");
+    return;
+  }
+  try {
+    const buf = fs.readFileSync(row.path);
+    res.writeHead(200, {
+      "Content-Type": "image/jpeg",
+      "Content-Length": buf.length,
+      // Личное фото тела: не кэшируется публично, и ссылка живёт 15 минут.
+      "Cache-Control": "private, no-store",
+    });
+    res.end(buf);
+  } catch (e) {
+    console.error("progress photo read:", e instanceof Error ? e.message : String(e));
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }).end("server error");
+  }
 }
 
 async function handleApi(
@@ -1315,6 +1371,97 @@ async function handleApi(
     return;
   }
 
+  // ── Фотопротокол прогресса тела ───────────────────────────────────────────
+  // Снимок принимается тем же способом, что фото еды: base64 в JSON, не
+  // multipart. Путь на диске строит только сервер — из userId и
+  // crypto.randomUUID(), из клиентских данных в путь ничего не подставляется.
+  if (req.method === "POST" && urlPath === "/api/progress/photo") {
+    const body = await readJson(req) as { imageBase64?: string; mime?: string; angle?: string; date?: string };
+    const angle = body.angle === "front" || body.angle === "side" || body.angle === "back" ? body.angle : null;
+    if (!angle) {
+      json(res, 400, { error: "bad_angle", message: "Ракурс должен быть спереди, сбоку или сзади." });
+      return;
+    }
+    const rawDate = body.date == null ? "" : String(body.date);
+    const day = rawDate ? safeDate(rawDate) : date;
+    if (!day) {
+      json(res, 400, { error: "bad_date", message: "Дата должна быть не в будущем." });
+      return;
+    }
+
+    const b64 = String(body.imageBase64 ?? "").replace(/^data:[^,]+,/, "");
+    if (!b64) {
+      json(res, 400, { error: "no_image" });
+      return;
+    }
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length < 1024) {
+      json(res, 400, { error: "no_image" });
+      return;
+    }
+    if (buf.length > MAX_IMAGE) {
+      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними ещё раз." });
+      return;
+    }
+
+    // Лимиты проверяются до записи на диск: тихого отказа быть не должно, и
+    // байты чужого снимка не должны попасть на том, если места уже нет.
+    const usage = progressPhotoUsage(user.id);
+    if (usage.count >= PROGRESS_PHOTO_MAX_COUNT) {
+      json(res, 413, {
+        error: "limit_count",
+        message: `Уже сохранено ${usage.count} фото из ${PROGRESS_PHOTO_MAX_COUNT}. Удали старые, чтобы добавить новое.`,
+        usage,
+      });
+      return;
+    }
+    if (usage.bytes + buf.length > PROGRESS_PHOTO_MAX_BYTES) {
+      json(res, 413, {
+        error: "limit_bytes",
+        message:
+          `Место закончилось: занято ${Math.round(usage.bytes / 1024 / 1024)} МБ из ` +
+          `${Math.round(PROGRESS_PHOTO_MAX_BYTES / 1024 / 1024)} МБ. Удали старые фото, чтобы добавить новое.`,
+        usage,
+      });
+      return;
+    }
+
+    const dir = progressPhotoDir(user.id);
+    const filePath = path.join(dir, `${crypto.randomUUID()}.jpg`);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filePath, buf);
+    } catch (e) {
+      console.error("api progress photo write:", e instanceof Error ? e.message : String(e));
+      json(res, 500, { error: "save_failed", message: "Не удалось сохранить фото. Попробуй ещё раз." });
+      return;
+    }
+
+    const row = addProgressPhoto({ userId: user.id, date: day, angle, path: filePath, sizeBytes: buf.length });
+    console.log(`api progress photo: ${Math.round(buf.length / 1024)} КБ, angle=${angle}, user=${user.id}`);
+    json(res, 200, { ok: true, photo: publicProgressPhoto(row, botToken), usage: progressPhotoUsage(user.id) });
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/progress/photos") {
+    const rows = listProgressPhotos(user.id).map((row) => publicProgressPhoto(row, botToken));
+    json(res, 200, {
+      photos: rows,
+      usage: progressPhotoUsage(user.id),
+      limit: { count: PROGRESS_PHOTO_MAX_COUNT, bytes: PROGRESS_PHOTO_MAX_BYTES },
+    });
+    return;
+  }
+
+  const progressDelete = req.method === "DELETE" ? /^\/api\/progress\/photo\/([^/]+)$/.exec(urlPath) : null;
+  if (progressDelete) {
+    const id = decodeURIComponent(progressDelete[1]);
+    // Доступ к записи только по совпадению userId с проверенной initData — без исключений.
+    const ok = deleteProgressPhoto(user.id, id);
+    json(res, ok ? 200 : 404, { ok, usage: progressPhotoUsage(user.id) });
+    return;
+  }
+
   json(res, 404, { error: "unknown_endpoint" });
 }
 
@@ -1336,6 +1483,16 @@ export function startWebappServer(botToken: string): http.Server | null {
     }
     if (urlPath === "/health") {
       json(res, 200, { ok: true, vision: mealVisionEnabled(), build: BUILD_ID });
+      return;
+    }
+
+    // Байты фото прогресса: адрес идёт в <img src>, заголовок initData туда не
+    // положить, поэтому подлинность проверяется коротким токеном в адресе, а не
+    // общей проверкой auth() ниже. GET с любым другим путём /api/… идёт как обычно.
+    const progressPhotoGet = req.method === "GET" ? /^\/api\/progress\/photo\/([^/]+)$/.exec(urlPath) : null;
+    if (progressPhotoGet) {
+      cors(res);
+      serveProgressPhoto(req, res, progressPhotoGet[1], url.searchParams, botToken);
       return;
     }
 
