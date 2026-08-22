@@ -62,7 +62,18 @@
     samePick: null,
     partAdd: "",
     partAddG: "",
-    repeatAsk: null
+    repeatAsk: null,
+    // Фотопротокол прогресса: снимки хранятся на сервере, не на устройстве, поэтому
+    // здесь только то, что показывает экран, а не источник правды.
+    progressPhotos: null, // null = ещё не грузили; [] = грузим или пусто
+    ppUsage: null, // { count, bytes } — с сервера, вместе со списком
+    ppLimit: null, // { count, bytes } — потолок с сервера
+    ppDate: today(),
+    ppFilter: "all", // all | front | side | back
+    ppCompare: [], // id до двух карточек для режима сравнения
+    ppConfirm: null, // id карточки, которая ждёт подтверждения удаления
+    ppUploadAngle: null, // какой ракурс сейчас грузится через progressPhotoInput
+    ppBusy: false
   };
 
   // 403 join: не в persist. Человек вступил, нажал «Я уже внутри», стена должна уйти.
@@ -4333,6 +4344,260 @@
     );
   }
 
+  /* ── Фотопротокол прогресса тела ───────────────────────────────────────────
+     Снимки хранятся только на сервере бота: без него раздел не работает, как
+     справочник продуктов и распознавание фото еды. */
+
+  var PP_ANGLE_WORD = { front: "Спереди", side: "Сбоку", back: "Сзади" };
+
+  function loadProgressPhotos() {
+    if (state.progressPhotos || !online) return;
+    state.progressPhotos = [];
+    KM_API.progressPhotos()
+      .then(function (data) {
+        state.progressPhotos = data.photos || [];
+        state.ppUsage = data.usage || null;
+        state.ppLimit = data.limit || null;
+        render();
+      })
+      .catch(function () {
+        state.progressPhotos = null;
+      });
+  }
+
+  function ppFindPhoto(id) {
+    var list = state.progressPhotos || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  function ppFilteredPhotos() {
+    var list = (state.progressPhotos || []).slice().reverse(); // новые сверху
+    if (state.ppFilter === "all") return list;
+    return list.filter(function (p) {
+      return p.angle === state.ppFilter;
+    });
+  }
+
+  function ppUsageLine() {
+    var u = state.ppUsage;
+    var l = state.ppLimit;
+    if (!u || !l) return "";
+    var mb = Math.round((u.bytes / 1024 / 1024) * 10) / 10;
+    var mbLimit = Math.round(l.bytes / 1024 / 1024);
+    return u.count + " из " + l.count + " фото, " + mb + " из " + mbLimit + " МБ";
+  }
+
+  function ppOpenUpload(angle) {
+    if (!online || state.ppBusy) return;
+    state.ppUploadAngle = angle;
+    var pick = document.getElementById("progressPhotoInput");
+    if (pick) {
+      pick.value = "";
+      haptic("light");
+      pick.click();
+    }
+  }
+
+  function ppUpload(file) {
+    var angle = state.ppUploadAngle;
+    if (!angle) return;
+    state.ppBusy = true;
+    state.notice = null;
+    render();
+    KM_API.addProgressPhoto(file, angle, state.ppDate)
+      .then(function (data) {
+        state.ppBusy = false;
+        state.ppUploadAngle = null;
+        if (data && data.photo) state.progressPhotos = (state.progressPhotos || []).concat([data.photo]);
+        if (data && data.usage) state.ppUsage = data.usage;
+        state.notice = { kind: "ok", text: "Фото добавлено." };
+        haptic("light");
+        render();
+      })
+      .catch(ppError);
+  }
+
+  function ppError(err) {
+    state.ppBusy = false;
+    state.ppUploadAngle = null;
+    state.notice = { kind: "err", text: (err && err.message) || "Не получилось. Попробуй ещё раз." };
+    haptic("heavy");
+    render();
+  }
+
+  function ppTogglePick(id) {
+    if (!id) return;
+    var idx = state.ppCompare.indexOf(id);
+    if (idx !== -1) {
+      state.ppCompare.splice(idx, 1);
+    } else {
+      if (state.ppCompare.length >= 2) state.ppCompare.shift();
+      state.ppCompare.push(id);
+    }
+    haptic("light");
+    render();
+  }
+
+  /** Удаление — только после явного подтверждения на карточке, не по одному тапу. */
+  function ppDeleteNow(id) {
+    if (!id) return;
+    state.ppConfirm = null;
+    KM_API.removeProgressPhoto(id)
+      .then(function (data) {
+        state.progressPhotos = (state.progressPhotos || []).filter(function (p) {
+          return p.id !== id;
+        });
+        state.ppCompare = state.ppCompare.filter(function (x) {
+          return x !== id;
+        });
+        if (data && data.usage) state.ppUsage = data.usage;
+        haptic("light");
+        render();
+      })
+      .catch(function (err) {
+        state.notice = { kind: "err", text: (err && err.message) || "Не удалось удалить. Попробуй ещё раз." };
+        haptic("heavy");
+        render();
+      });
+  }
+
+  function ppCompareHtml() {
+    if (state.ppCompare.length !== 2) return "";
+    var a = ppFindPhoto(state.ppCompare[0]);
+    var b = ppFindPhoto(state.ppCompare[1]);
+    if (!a || !b) return "";
+    return card(
+      cardHead("Сравнение", "Было и стало рядом") +
+        '<div class="pp-compare">' +
+        [a, b]
+          .map(function (p) {
+            return (
+              '<div class="pp-compare__item"><img src="' +
+              esc(p.url) +
+              '" alt="" loading="lazy" decoding="async" />' +
+              '<p class="pp-compare__cap">' +
+              esc(PP_ANGLE_WORD[p.angle] || "") +
+              ", " +
+              esc(formatDate(p.date)) +
+              "</p></div>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        '<div class="btn-stack" style="margin-top:12px">' +
+        '<button type="button" class="btn btn--outline btn--slim" data-action="pp-compare-close">Закрыть сравнение</button>' +
+        "</div>"
+    );
+  }
+
+  function ppCardHtml(p) {
+    var picked = state.ppCompare.indexOf(p.id) !== -1;
+    var confirming = state.ppConfirm === p.id;
+    return (
+      '<div class="pp-card' +
+      (picked ? " pp-card--picked" : "") +
+      '">' +
+      '<button type="button" class="pp-card__photo" data-action="pp-pick" data-id="' +
+      esc(p.id) +
+      '" aria-label="Выбрать для сравнения">' +
+      '<img src="' +
+      esc(p.url) +
+      '" alt="" loading="lazy" decoding="async" />' +
+      "</button>" +
+      '<span class="pp-card__tag">' +
+      esc(PP_ANGLE_WORD[p.angle] || "") +
+      "</span>" +
+      '<span class="pp-card__date">' +
+      esc(formatDate(p.date)) +
+      "</span>" +
+      (picked ? '<span class="pp-card__mark">✓</span>' : "") +
+      '<button type="button" class="pp-card__del" data-action="pp-del-ask" data-id="' +
+      esc(p.id) +
+      '" aria-label="Удалить">×</button>' +
+      (confirming
+        ? '<div class="pp-confirm"><p>Удалить фото навсегда</p><div class="pp-confirm__row">' +
+          '<button type="button" class="btn btn--outline btn--slim" data-action="pp-del-no">Отмена</button>' +
+          '<button type="button" class="btn btn--primary btn--slim" data-action="pp-del-yes" data-id="' +
+          esc(p.id) +
+          '">Удалить</button>' +
+          "</div></div>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  function progressPhotosSection() {
+    if (!online) {
+      return card(
+        cardHead("Фотопротокол недоступен", "Открой приложение из Telegram: снимки хранятся на сервере бота вместе с остальным дневником")
+      );
+    }
+
+    var uploading = state.ppBusy;
+    var list = ppFilteredPhotos();
+    var full = state.ppUsage && state.ppLimit ? state.ppUsage.count >= state.ppLimit.count : false;
+
+    var uploadCard = card(
+      cardHead("Добавить фото", "Спереди, сбоку и сзади: так заметнее перемена за недели") +
+        field(
+          "Дата съёмки",
+          '<input class="input" type="date" data-path="ppDate" value="' + esc(state.ppDate) + '" />'
+        ) +
+        '<div class="pp-upload-row">' +
+        ["front", "side", "back"]
+          .map(function (a) {
+            return (
+              '<button type="button" class="btn btn--outline btn--slim" data-action="pp-upload-' +
+              a +
+              '"' +
+              (uploading || full ? " disabled" : "") +
+              ">" +
+              esc(PP_ANGLE_WORD[a]) +
+              "</button>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        (uploading ? '<p class="muted" style="margin-top:10px">Загружаю снимок</p>' : "") +
+        (full
+          ? '<p class="muted" style="margin-top:10px">Лимит фото исчерпан. Удали старые, чтобы добавить новое.</p>'
+          : "") +
+        (state.ppUsage && state.ppLimit
+          ? '<p class="note note--plain" style="margin-top:10px">' + esc(ppUsageLine()) + "</p>"
+          : "")
+    );
+
+    var filterCard = card(
+      cardHead("Фильтр", "Показать по ракурсу") +
+        chips(
+          "pp_filter",
+          state.ppFilter,
+          [["all", "Все"], ["front", "Спереди"], ["side", "Сбоку"], ["back", "Сзади"]],
+          true
+        )
+    );
+
+    var gridCard;
+    if (!state.progressPhotos) {
+      gridCard = card('<p class="muted">Загружаю фото</p>');
+    } else if (!list.length) {
+      gridCard = card(cardHead("Пока пусто", "Добавь первое фото, и через несколько недель будет с чем сравнить"));
+    } else {
+      gridCard = card(
+        cardHead("Снимки", list.length + " фото") +
+          '<p class="note note--plain">Нажми на снимок, чтобы выбрать его для сравнения. Выбери два.</p>' +
+          '<div class="pp-grid">' +
+          list.map(ppCardHtml).join("") +
+          "</div>"
+      );
+    }
+
+    return uploadCard + ppCompareHtml() + filterCard + gridCard;
+  }
+
   /* ── Экран: профиль ─────────────────────────────────────────────────────── */
 
   var SEX_WORD = { m: "Мужчина", f: "Женщина" };
@@ -4526,7 +4791,7 @@
     // подраздела: что сегодня, что в динамике, как выглядит.
     var tabs =
       '<div class="chips" data-seg="prof_tab">' +
-      [["day", "Сегодня"], ["progress", "Прогресс"], ["look", "Вид"]]
+      [["day", "Сегодня"], ["progress", "Прогресс"], ["photos", "Фото"], ["look", "Вид"]]
         .map(function (o) {
           return (
             '<button type="button" class="chip" data-value="' +
@@ -4554,6 +4819,10 @@
         recentWorkoutsCard() +
         renderDiary()
       );
+    }
+    if (state.profTab === "photos") {
+      loadProgressPhotos();
+      return noticeHtml() + tabs + progressPhotosSection();
     }
     if (state.profTab === "look") {
       return noticeHtml() + tabs + themeCard() + aboutCard();
@@ -5446,6 +5715,24 @@
         haptic("medium");
         render();
         return window.scrollTo(0, 0);
+      case "pp-upload-front":
+      case "pp-upload-side":
+      case "pp-upload-back":
+        return ppOpenUpload(action.getAttribute("data-action").replace("pp-upload-", ""));
+      case "pp-pick":
+        return ppTogglePick(action.getAttribute("data-id"));
+      case "pp-del-ask":
+        state.ppConfirm = action.getAttribute("data-id");
+        haptic("light");
+        return render();
+      case "pp-del-no":
+        state.ppConfirm = null;
+        return render();
+      case "pp-del-yes":
+        return ppDeleteNow(action.getAttribute("data-id"));
+      case "pp-compare-close":
+        state.ppCompare = [];
+        return render();
     }
   });
 
@@ -5516,6 +5803,13 @@
       return;
     }
 
+    if (t.id === "progressPhotoInput") {
+      var ppFile = t.files && t.files[0];
+      t.value = "";
+      if (ppFile) ppUpload(ppFile);
+      return;
+    }
+
     if (t.id !== "photoInput") return;
     var file = t.files && t.files[0];
     t.value = ""; // чтобы повторный выбор того же файла снова дал событие
@@ -5570,6 +5864,9 @@
         state.profTab = value;
         state.notice = null;
         state.addMode = null;
+        return render();
+      case "pp_filter":
+        state.ppFilter = value;
         return render();
       case "theme":
         state.theme = value;

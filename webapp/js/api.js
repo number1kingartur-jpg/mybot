@@ -340,6 +340,31 @@ window.KM_API = (function () {
     },
     saveSettings: function (body) {
       return request("POST", "/api/settings", body);
+    },
+    /* Фотопротокол прогресса: тот же приём файла, что и у фото еды, чуть крупнее
+       сжатие — здесь важно видеть силуэт целиком, а не мелкий текст на упаковке. */
+    progressPhotos: function () {
+      return request("GET", "/api/progress/photos");
+    },
+    addProgressPhoto: function (file, angle, date) {
+      return compress(file, 1600, 0.85)
+        .then(function (b64) {
+          return { b64: b64, mime: "image/jpeg" };
+        })
+        .catch(function () {
+          return raw(file);
+        })
+        .then(function (img) {
+          return request("POST", "/api/progress/photo", {
+            imageBase64: img.b64,
+            mime: img.mime,
+            angle: angle,
+            date: date
+          });
+        });
+    },
+    removeProgressPhoto: function (id) {
+      return request("DELETE", "/api/progress/photo/" + encodeURIComponent(id));
     }
   };
 })();
