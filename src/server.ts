@@ -4,7 +4,7 @@ import http from "http";
 import path from "path";
 import { verifyInitData, signProgressPhotoToken, verifyProgressPhotoToken, type WebAppUser } from "./webapp-auth";
 import { accessEnabled, accessChatId, checkAccess } from "./access";
-import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_PHOTO_MAX_COUNT, PROGRESS_PHOTO_MAX_BYTES } from "./guard";
+import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_PHOTO_MAX_COUNT, PROGRESS_PHOTO_MAX_BYTES, beginProgressPhotoUpload, endProgressPhotoUpload } from "./guard";
 import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
@@ -955,7 +955,7 @@ async function handleApi(
       return;
     }
     if (buf.length > MAX_IMAGE) {
-      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними ещё раз или добавь текстом." });
+      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними еще раз или добавь текстом." });
       return;
     }
 
@@ -979,7 +979,7 @@ async function handleApi(
     if (slot !== "ok") {
       json(res, 429, {
         error: "busy",
-        message: "Сейчас разбираю другой снимок. Подожди и пришли ещё раз.",
+        message: "Сейчас разбираю другой снимок. Подожди и пришли еще раз.",
       });
       return;
     }
@@ -1400,47 +1400,58 @@ async function handleApi(
       return;
     }
     if (buf.length > MAX_IMAGE) {
-      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними ещё раз." });
+      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними еще раз." });
       return;
     }
 
-    // Лимиты проверяются до записи на диск: тихого отказа быть не должно, и
-    // байты чужого снимка не должны попасть на том, если места уже нет.
-    const usage = progressPhotoUsage(user.id);
-    if (usage.count >= PROGRESS_PHOTO_MAX_COUNT) {
-      json(res, 413, {
-        error: "limit_count",
-        message: `Уже сохранено ${usage.count} фото из ${PROGRESS_PHOTO_MAX_COUNT}. Удали старые, чтобы добавить новое.`,
-        usage,
-      });
+    // Сериализация на пользователя: без неё два параллельных запроса проходят
+    // проверку лимита в одно окно между чтением тела и записью файла, и лимит
+    // по количеству/объёму можно ненадолго превысить.
+    if (!beginProgressPhotoUpload(user.id)) {
+      json(res, 429, { error: "busy", message: "Уже сохраняю твое фото. Подожди и попробуй еще раз." });
       return;
     }
-    if (usage.bytes + buf.length > PROGRESS_PHOTO_MAX_BYTES) {
-      json(res, 413, {
-        error: "limit_bytes",
-        message:
-          `Место закончилось: занято ${Math.round(usage.bytes / 1024 / 1024)} МБ из ` +
-          `${Math.round(PROGRESS_PHOTO_MAX_BYTES / 1024 / 1024)} МБ. Удали старые фото, чтобы добавить новое.`,
-        usage,
-      });
-      return;
-    }
-
-    const dir = progressPhotoDir(user.id);
-    const filePath = path.join(dir, `${crypto.randomUUID()}.jpg`);
     try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(filePath, buf);
-    } catch (e) {
-      console.error("api progress photo write:", e instanceof Error ? e.message : String(e));
-      json(res, 500, { error: "save_failed", message: "Не удалось сохранить фото. Попробуй ещё раз." });
-      return;
-    }
+      // Лимиты проверяются до записи на диск: тихого отказа быть не должно, и
+      // байты чужого снимка не должны попасть на том, если места уже нет.
+      const usage = progressPhotoUsage(user.id);
+      if (usage.count >= PROGRESS_PHOTO_MAX_COUNT) {
+        json(res, 413, {
+          error: "limit_count",
+          message: `Уже сохранено ${usage.count} фото из ${PROGRESS_PHOTO_MAX_COUNT}. Удали старые, чтобы добавить новое.`,
+          usage,
+        });
+        return;
+      }
+      if (usage.bytes + buf.length > PROGRESS_PHOTO_MAX_BYTES) {
+        json(res, 413, {
+          error: "limit_bytes",
+          message:
+            `Место закончилось: занято ${Math.round(usage.bytes / 1024 / 1024)} МБ из ` +
+            `${Math.round(PROGRESS_PHOTO_MAX_BYTES / 1024 / 1024)} МБ. Удали старые фото, чтобы добавить новое.`,
+          usage,
+        });
+        return;
+      }
 
-    const row = addProgressPhoto({ userId: user.id, date: day, angle, path: filePath, sizeBytes: buf.length });
-    console.log(`api progress photo: ${Math.round(buf.length / 1024)} КБ, angle=${angle}, user=${user.id}`);
-    json(res, 200, { ok: true, photo: publicProgressPhoto(row, botToken), usage: progressPhotoUsage(user.id) });
-    return;
+      const dir = progressPhotoDir(user.id);
+      const filePath = path.join(dir, `${crypto.randomUUID()}.jpg`);
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(filePath, buf);
+      } catch (e) {
+        console.error("api progress photo write:", e instanceof Error ? e.message : String(e));
+        json(res, 500, { error: "save_failed", message: "Не удалось сохранить фото. Попробуй еще раз." });
+        return;
+      }
+
+      const row = addProgressPhoto({ userId: user.id, date: day, angle, path: filePath, sizeBytes: buf.length });
+      console.log(`api progress photo: ${Math.round(buf.length / 1024)} КБ, angle=${angle}, user=${user.id}`);
+      json(res, 200, { ok: true, photo: publicProgressPhoto(row, botToken), usage: progressPhotoUsage(user.id) });
+      return;
+    } finally {
+      endProgressPhotoUpload(user.id);
+    }
   }
 
   if (req.method === "GET" && urlPath === "/api/progress/photos") {
@@ -1505,7 +1516,7 @@ export function startWebappServer(botToken: string): http.Server | null {
           res.setHeader("Connection", "close");
           json(res, 413, {
             error: "payload_too_large",
-            message: "Снимок слишком большой. Сними ещё раз или добавь еду текстом.",
+            message: "Снимок слишком большой. Сними еще раз или добавь еду текстом.",
           });
           return;
         }
