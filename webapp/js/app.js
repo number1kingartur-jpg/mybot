@@ -1733,7 +1733,7 @@
     list = list.filter(function (f) {
       return !skip[String(f.name).trim().toLowerCase()];
     });
-    if (!list.length && !state.day.usualShake) return "";
+    if (!list.length && !(state.day && state.day.usualShake)) return "";
     return (
       '<div class="chips chips--wrap" style="margin-bottom:12px">' +
       usualShakeChip() +
@@ -4925,33 +4925,45 @@
   }
 
   function render() {
-    if (telegramUnsigned()) {
-      view.innerHTML = '<div class="screen">' + unsignedGate() + "</div>";
-      titleEl.textContent = "KINGMODE";
-      tabbar.hidden = true;
-      if (tg && tg.BackButton) tg.BackButton.hide();
-      return;
-    }
-    if (needJoin) {
-      view.innerHTML = '<div class="screen">' + joinGate(needJoin) + "</div>";
-      titleEl.textContent = "Вход";
-      tabbar.hidden = true;
-      if (tg && tg.BackButton) tg.BackButton.hide();
-      return;
-    }
-    view.innerHTML = '<div class="screen">' + SCREENS[state.screen]() + "</div>";
-    var tab = TABS.filter(function (t) {
-      return t[0] === state.screen;
-    })[0];
-    titleEl.textContent = tab ? tab[2] : state.screen === "setup" ? "Знакомство" : "KINGMODE";
-    tabbar.hidden = state.screen === "setup";
-    renderTabs();
+    try {
+      if (telegramUnsigned()) {
+        view.innerHTML = '<div class="screen">' + unsignedGate() + "</div>";
+        titleEl.textContent = "KINGMODE";
+        tabbar.hidden = true;
+        if (tg && tg.BackButton) tg.BackButton.hide();
+        return;
+      }
+      if (needJoin) {
+        view.innerHTML = '<div class="screen">' + joinGate(needJoin) + "</div>";
+        titleEl.textContent = "Вход";
+        tabbar.hidden = true;
+        if (tg && tg.BackButton) tg.BackButton.hide();
+        return;
+      }
+      view.innerHTML = '<div class="screen">' + SCREENS[state.screen]() + "</div>";
+      var tab = TABS.filter(function (t) {
+        return t[0] === state.screen;
+      })[0];
+      titleEl.textContent = tab ? tab[2] : state.screen === "setup" ? "Знакомство" : "KINGMODE";
+      tabbar.hidden = state.screen === "setup";
+      renderTabs();
 
-    if (tg && tg.BackButton) {
-      if (state.screen === "home" || state.screen === "setup") tg.BackButton.hide();
-      else tg.BackButton.show();
+      if (tg && tg.BackButton) {
+        if (state.screen === "home" || state.screen === "setup") tg.BackButton.hide();
+        else tg.BackButton.show();
+      }
+      playWaterFill();
+    } catch (err) {
+      view.innerHTML =
+        '<div class="screen">' +
+        card(
+          cardHead("Экран не собрался", "Данные на месте. Нажми обновить.") +
+            '<div class="btn-stack"><button class="btn btn--primary" data-action="reload-day">Обновить</button></div>'
+        ) +
+        "</div>";
+      tabbar.hidden = false;
+      renderTabs();
     }
-    playWaterFill();
   }
 
   function go(screen) {
