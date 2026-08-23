@@ -1670,11 +1670,18 @@ select.input {
 }
 
 .edit__add {
+  margin-top: 12px;
+}
+
+.edit__add .muted {
+  margin: 0 0 8px;
+}
+
+.edit__add-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px auto;
   gap: 8px;
   align-items: center;
-  margin-top: 12px;
 }
 
 .edit__add-g {

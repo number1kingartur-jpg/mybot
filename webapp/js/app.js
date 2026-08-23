@@ -940,6 +940,7 @@
             (pendingNeedsShakeFill(parts)
               ? '<p class="muted">Не хватает овсянки, протеина или креатина: допиши здесь, потом «Добавить».</p>'
               : '<p class="muted">Не хватает позиции: допиши здесь, потом «Добавить».</p>') +
+            '<div class="edit__add-row">' +
             '<input class="input" type="text" data-path="partAdd" placeholder="' +
             (pendingNeedsShakeFill(parts) ? "овсянка, протеин, креатин" : "продукт") +
             '" value="' +
@@ -949,7 +950,7 @@
             esc(state.partAddG || "") +
             '" />' +
             '<button type="button" class="btn btn--outline food__add" data-action="part-add">Добавить</button>' +
-            "</div>"
+            "</div></div>"
           : "") +
         (m.said ? '<p class="note note--plain">Вижу так: ' + esc(m.said) + "</p>" : "") +
         (m.note ? '<p class="note note--plain">' + esc(m.note) + "</p>" : "") +
@@ -964,9 +965,16 @@
             "Сними ещё раз так, чтобы попал штрихкод: по нему продукт находится точно.</p>"
           : "") +
         '<div class="btn-stack" style="margin-top:14px">' +
-        '<button class="btn btn--primary" data-action="meal-confirm">Да, записать · ' +
-        m.kcal +
-        " ккал</button>" +
+        (function () {
+          var usual = state.day && state.day.usualShake;
+          var wrong = usual && !isShakeParts(parts);
+          return (
+            '<button class="btn btn--primary" data-action="meal-confirm">' +
+            (wrong ? "Записать это, " + m.kcal + " ккал" : "Да, записать") +
+            "</button>"
+          );
+        })() +
+        '<button class="btn btn--outline btn--slim" data-action="meal-reject">Поправить результат</button>' +
         '<button class="btn btn--outline btn--slim" data-action="meal-dismiss">Убрать</button>' +
         "</div>"
     );
@@ -1853,9 +1861,7 @@
       // а приводит к тексту, и человек нажимает её впустую.
       (online
         ? tile("pick-photo", "photo", "Фото еды", true) +
-          (!state.pending && !state.repeatAsk
-            ? tile("usual-shake", "repeat", "Коктейль", Boolean(state.day && state.day.usualShake))
-            : "") +
+          tile("usual-shake", "repeat", "Коктейль", Boolean(state.day && state.day.usualShake)) +
           tile("add-text-form", "text", "Текстом")
         : tile("add-manual-form", "text", "Ввести вручную", true) + tile("reload-day", "repeat", "Связь с ботом")) +
       tile("water-250", "water", "+250 мл") +
@@ -5173,7 +5179,7 @@
     // он превращается в непонятную карточку без повода
     state.lastMeal = null;
     // Неподтверждённый разбор остаётся: вернёшься в «Съедено» или с «Сегодня» —
-    // карточка на месте. Снять её — «Убрать».
+    // карточка на месте. Явный отказ — кнопка «Поправить результат».
     clearPhotoPreview();
     haptic("light");
     // Уходя из «Съедено», возвращаемся к сегодняшнему дню: иначе «Сегодня»
