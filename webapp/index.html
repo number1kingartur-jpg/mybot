@@ -60,18 +60,10 @@
       системный выбор фото ещё открыт. Атрибута capture нет намеренно: с ним
       Android уходит сразу в камеру и теряет галерею.
     -->
-    <input
-      id="photoInput"
-      type="file"
-      accept="image/*"
-      style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none"
-    />
-    <input
-      id="progressPhotoInput"
-      type="file"
-      accept="image/*"
-      style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none"
-    />
+    <input id="photoInput" class="file-ghost" type="file" accept="image/*" />
+    <input id="pp-file-front" class="file-ghost" type="file" accept="image/*" data-pp-angle="front" />
+    <input id="pp-file-side" class="file-ghost" type="file" accept="image/*" data-pp-angle="side" />
+    <input id="pp-file-back" class="file-ghost" type="file" accept="image/*" data-pp-angle="back" />
 
     <script src="js/api.js"></script>
     <script src="js/engine.js"></script>

@@ -661,6 +661,21 @@ button {
   cursor: default;
 }
 
+label.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Не pointer-events:none: iOS Telegram не открывает файл по программному .click() */
+.file-ghost {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
 .chip--gold {
   background: rgba(176, 141, 69, 0.14);
   border-color: var(--gold);

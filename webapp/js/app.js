@@ -1229,18 +1229,18 @@
   };
 
   function tile(action, icon, label, gold) {
-    return (
-      '<button class="tile' +
-      (gold ? " tile--gold" : "") +
-      '" data-action="' +
-      action +
-      '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    var cls = "tile" + (gold ? " tile--gold" : "");
+    var inner =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
       'stroke-linecap="round" stroke-linejoin="round"><path d="' +
       TILE_ICONS[icon] +
       '"/></svg><span class="tile__label">' +
       label +
-      "</span></button>"
-    );
+      "</span>";
+    if (action === "pick-photo") {
+      return '<label class="' + cls + '" for="photoInput">' + inner + "</label>";
+    }
+    return '<button class="' + cls + '" data-action="' + action + '">' + inner + "</button>";
   }
 
   /**
@@ -2902,7 +2902,7 @@
         // Кнопка, а не <label for>, и открытие через .click() из кода: в WebView
         // Telegram связка «label → input с display:none» часто не срабатывает,
         // причём молча. Само поле выбора файла лежит в index.html — см. комментарий там.
-        '<button class="btn btn--primary" data-action="pick-photo">Сфотографировать еду</button>' +
+        '<label class="btn btn--primary" for="photoInput">Сфотографировать еду</label>' +
         '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
         '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
         '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
@@ -4325,14 +4325,22 @@
   }
 
   function ppOpenUpload(angle) {
-    if (!online || state.ppBusy) return;
-    state.ppUploadAngle = angle;
-    var pick = document.getElementById("progressPhotoInput");
-    if (pick) {
-      pick.value = "";
-      haptic("light");
-      pick.click();
+    if (!online) {
+      state.notice = { kind: "err", text: "Открой приложение из Telegram, иначе фото не сохранится." };
+      return render();
     }
+    if (state.ppBusy) {
+      state.notice = { kind: "err", text: "Подожди, предыдущее фото ещё грузится." };
+      return render();
+    }
+    state.ppUploadAngle = angle;
+    var pick = document.getElementById("pp-file-" + angle);
+    if (!pick) {
+      state.notice = { kind: "err", text: "Поле выбора фото не нашлось. Обнови страницу." };
+      return render();
+    }
+    pick.value = "";
+    pick.click();
   }
 
   function ppUpload(file) {
@@ -4483,14 +4491,15 @@
         '<div class="chips chips--wrap pp-upload-row">' +
         ["front", "side", "back"]
           .map(function (a) {
+            if (uploading || full) {
+              return '<span class="chip" aria-disabled="true">' + esc(PP_ANGLE_WORD[a]) + "</span>";
+            }
             return (
-              '<button type="button" class="chip" data-action="pp-upload-' +
+              '<label class="chip" for="pp-file-' +
               a +
-              '"' +
-              (uploading || full ? " disabled" : "") +
-              ">" +
+              '">' +
               esc(PP_ANGLE_WORD[a]) +
-              "</button>"
+              "</label>"
             );
           })
           .join("") +
@@ -5749,9 +5758,11 @@
       return;
     }
 
-    if (t.id === "progressPhotoInput") {
+    var ppAngle = t.getAttribute && t.getAttribute("data-pp-angle");
+    if (ppAngle) {
       var ppFile = t.files && t.files[0];
       t.value = "";
+      state.ppUploadAngle = ppAngle;
       if (ppFile) ppUpload(ppFile);
       return;
     }
