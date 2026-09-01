@@ -5240,7 +5240,19 @@
       // не должно требовать перехода в другой раздел
       (stale ? "" : addOrBusy(state.day ? state.day.photo : null) + mealsListCard(mealsToday(), true)) +
       mealRemindCard() +
-      waterCard()
+      waterCard() +
+      homeScreenCard()
+    );
+  }
+
+  /** Значок на главном экране телефона — только если клиент Telegram умеет это (Bot API 8.0+). */
+  function homeScreenCard() {
+    if (!tg || typeof tg.addToHomeScreen !== "function") return "";
+    return card(
+      cardHead("Быстрый доступ", "Значок KINGMODE на главном экране телефона, как у обычного приложения") +
+        '<div class="btn-stack" style="margin-top:12px">' +
+        '<button class="btn btn--outline btn--slim" data-action="add-home-screen">Добавить на главный экран</button>' +
+        "</div>"
     );
   }
 
@@ -5818,6 +5830,11 @@
         // разошлись бы, и человек не понял бы, какая цифра считается
         state.nutTab = "norm";
         return go("nutrition");
+      case "add-home-screen":
+        // Метод сам показывает системный диалог Telegram — здесь только вызов,
+        // без него кнопка не рисуется (см. renderProfile).
+        if (tg && typeof tg.addToHomeScreen === "function") tg.addToHomeScreen();
+        return;
       case "add-text-form":
       case "add-manual-form":
       case "add-food-form":
