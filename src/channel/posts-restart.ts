@@ -10,7 +10,7 @@ function r(title: string, body: string, id: string, guideStart?: string): Channe
 const RESTART_PHOTOS: Record<string, string> = {
   restart_skip: "generated/akf-2026-08/sleep-bg-5-clock-night.png",
   restart_brain: "generated/akf-2026-08/prog-bg-8-notebook.png",
-  restart_begin: "generated/akf-2026-08/sleep-bg-1-cover.png",
+  restart_begin: "generated/akf-2026-08/dont-do-list.png",
 };
 
 const RESTART_RAW: ChannelPost[] = [

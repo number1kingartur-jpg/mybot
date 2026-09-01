@@ -12,7 +12,7 @@ const WAVE7_PHOTOS: Record<string, string> = {
   w7_hydration: "generated/nutrition/hydration-water-dark.png",
   w7_form_video: "generated/akf-2026-08/prog-bg-5-photo.png",
   w7_jumprope: "generated/broll/broll-jumprope-track.png",
-  w7_sleep_deep: "generated/akf-2026-08/sleep-bg-3-night.png",
+  w7_sleep_deep: "generated/akf-2026-08/sleep-bg-2-clock.png",
   w7_workout_log: "generated/broll/broll-workout-log.png",
   w7_heart_rate: "generated/broll/broll-heart-rate.png",
 };

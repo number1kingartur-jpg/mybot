@@ -19,7 +19,7 @@ const WAVE8_PHOTOS: Record<string, string> = {
   w8_outdoor_gym: "generated/akf-2026-08/akf-bar-grip.png",
   w8_coast_road: "2026-07-11-icloud/photos/IMG_9433.JPEG",
   w8_market_morning: "generated/akf-2026-08/prog-bg-1-cover.png",
-  w8_bay_evening: "generated/akf-2026-08/sleep-bg-4-duo.png",
+  w8_bay_evening: "2026-07-11-icloud/video-frames/full-9403-t88s.jpg",
 };
 
 const WAVE8_RAW: ChannelPost[] = [
