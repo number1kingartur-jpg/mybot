@@ -2738,8 +2738,12 @@
     else if (slug) {
       src = (folder || "food") === "ex" ? exSrc(slug) : "img/" + (folder || "food") + "/" + slug + ".webp";
     }
+    // Буква — постоянный фон под картинкой: нет файла или картинка не
+    // загрузилась (onerror снимает <img>) — видна монограмма, не пустой квадрат.
+    var letter = title ? esc(String(title).trim().charAt(0).toUpperCase()) : "";
     return (
       '<span class="thumb" aria-hidden="true">' +
+      letter +
       (src
         ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
           esc(src) +
@@ -2904,20 +2908,48 @@
     var name = foldFood(f.name);
     var slug = f.slug || foodSlugGuess(f.name);
     var qSlug = q.replace(/\s+/g, "-");
-    var score = f.eaten ? 80 : 0;
-    if (name === q) score += 1000;
-    if (name.indexOf(q) === 0) score += 400;
-    if (name.indexOf(q) !== -1) score += 80;
+    var score = 0;
+    var matched = false;
+    if (name === q) {
+      score += 1000;
+      matched = true;
+    }
+    if (name.indexOf(q) === 0) {
+      score += 400;
+      matched = true;
+    }
+    if (name.indexOf(q) !== -1) {
+      score += 80;
+      matched = true;
+    }
     var als = f.aliases || [];
     for (var i = 0; i < als.length; i++) {
       var a = foldFood(als[i]);
-      if (a === q) score += 900;
-      else if (a.indexOf(q) === 0) score += 300;
-      else if (a.indexOf(q) !== -1) score += 40;
+      if (a === q) {
+        score += 900;
+        matched = true;
+      } else if (a.indexOf(q) === 0) {
+        score += 300;
+        matched = true;
+      } else if (a.indexOf(q) !== -1) {
+        score += 40;
+        matched = true;
+      }
     }
-    if (slug === qSlug) score += 500;
-    else if (slug.indexOf(qSlug) === 0) score += 200;
-    else if (slug.indexOf(qSlug) !== -1) score += 30;
+    if (slug === qSlug) {
+      score += 500;
+      matched = true;
+    } else if (slug.indexOf(qSlug) === 0) {
+      score += 200;
+      matched = true;
+    } else if (slug.indexOf(qSlug) !== -1) {
+      score += 30;
+      matched = true;
+    }
+    // Бонус «уже ел это» — только поднимает совпавший продукт выше,
+    // сам по себе не даёт продукту попасть в список без реального совпадения.
+    if (!matched) return 0;
+    if (f.eaten) score += 80;
     if (f.role) score += 5;
     return score;
   }
