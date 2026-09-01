@@ -3095,24 +3095,25 @@
         });
         if (!items.length) return "";
         var open = state.foodMore && state.foodMore[g.id];
-        var shown = open || items.length <= 5 ? items : items.slice(0, 5);
-        var more =
-          !open && items.length > 5
-            ? '<button type="button" class="sets__add" data-action="food-more" data-group="' +
-              g.id +
-              '">Ещё ' +
-              (items.length - 5) +
-              " " +
-              plural(items.length - 5, "продукт", "продукта", "продуктов") +
-              "</button>"
-            : "";
+        // Свёрнуто по умолчанию, как «Недавно»: пять групп по пять позиций
+        // разворачивались все сразу, до поля поиска ещё дело не доходило.
+        if (!open) {
+          return (
+            '<button type="button" class="sets__add" data-action="food-more" data-group="' +
+            g.id +
+            '">' +
+            g.title +
+            " (" +
+            items.length +
+            ")</button>"
+          );
+        }
         return (
           '<p class="pick__label">' +
           g.title +
           '</p><ul class="foods">' +
-          shown.map(foodRow).join("") +
-          "</ul>" +
-          more
+          items.map(foodRow).join("") +
+          "</ul>"
         );
       })
       .join("");
