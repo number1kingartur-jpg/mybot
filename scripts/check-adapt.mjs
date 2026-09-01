@@ -31,7 +31,7 @@ const formula = KM.calcMacros(profile);
 const meals = [];
 const weights = [];
 for (let i = 20; i >= 0; i--) {
-  const d = new Date("2026-08-20T00:00:00Z");
+  const d = new Date();
   d.setUTCDate(d.getUTCDate() - i);
   const date = d.toISOString().slice(0, 10);
   if (i <= 16) meals.push({ date, kcal: 2200 });
@@ -59,7 +59,7 @@ const empty = KM.adaptiveTarget(profile, [], []);
 check("без факта остаётся формула", empty.source === "formula", empty.source);
 check("формула совпадает с calcMacros", empty.kcal === formula.kcal, String(empty.kcal));
 
-const fewMeals = KM.estimateExpenditure([{ date: "2026-08-19", kcal: 2000 }], weights, formula.tdee);
+const fewMeals = KM.estimateExpenditure([{ date: meals[meals.length - 1].date, kcal: 2000 }], weights, formula.tdee);
 check("мало дней еды: расхода нет", fewMeals === null);
 
 if (failed) {

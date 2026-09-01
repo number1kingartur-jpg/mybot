@@ -4,6 +4,8 @@ import { POST_CLOSINGS } from "./post-closings";
 import { finalizeChannelPosts } from "./validate-posts";
 import { CHANNEL_POSTS_WAVE5 } from "./posts-wave5";
 import { CHANNEL_POSTS_WAVE6 } from "./posts-wave6";
+import { CHANNEL_POSTS_WAVE7 } from "./posts-wave7";
+import { CHANNEL_POSTS_WAVE8 } from "./posts-wave8";
 
 export interface ChannelPost {
   id: string;
@@ -48,7 +50,12 @@ function interleave(...waves: ChannelPost[][]): ChannelPost[] {
   return out;
 }
 
-const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(CHANNEL_POSTS_WAVE5, CHANNEL_POSTS_WAVE6);
+const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(
+  CHANNEL_POSTS_WAVE5,
+  CHANNEL_POSTS_WAVE6,
+  CHANNEL_POSTS_WAVE7,
+  CHANNEL_POSTS_WAVE8
+);
 
 /** Уникальная концовка по id, а не общий шаблон на все посты. */
 function withClosing(post: ChannelPost): ChannelPost {

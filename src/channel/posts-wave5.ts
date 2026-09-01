@@ -21,23 +21,28 @@ function w5(title: string, body: string, id: string, guideStart?: string): Chann
 /**
  * Кадр к каждому посту. Пути от CONTENT/brand/media-archive.
  *
- * generated/akf-real/* это кадры Артура из архива с замененной локацией и светом.
- * Лицо, телосложение, одежда и поза взяты из реального снимка и не меняются;
- * генерация трогает только фон. Метод описан в Marketing/.cursor/agents/visual-machine.md.
+ * ВНИМАНИЕ (22.08.2026): generated/akf-real/* и часть generated/akf-2026-08/*
+ * это НЕ кадры Артура с замененным фоном, а полностью AI-сгенерированный
+ * фейковый человек (лицо и тело не совпадают с реальными). Метод, описанный
+ * в Marketing/.cursor/agents/visual-machine.md, не сработал так, как думали:
+ * генерация меняла не только фон. Разметка, что реально фон, а что фейк:
+ * CONTENT/brand/media-archive/generated/BACKGROUNDS-AUDIT.md. Использовать
+ * только настоящие фото (master/photos, 2026-07-11-icloud, frames) или
+ * проверенные пустые фоны/предметы из аудита.
  */
 const WAVE5_PHOTOS: Record<string, string> = {
   w5_heat: "generated/akf-real/akf-heat-noon.png",
   w5_five_am: "generated/akf-2026-08/sleep-bg-7-sunrise.png",
   w5_no_alcohol: "generated/akf-2026-08/akf-no-alcohol-trash.png",
   w5_site: "generated/akf-2026-08/akf-rack-dawn.png",
-  w5_discipline: "generated/akf-real/akf-viewpoint-fog.png",
-  w5_case_start: "generated/akf-real/akf-basement-gym.png",
+  w5_discipline: "frames/gym-squat.jpg",
+  w5_case_start: "2026-07-11-icloud/video-frames/IMG_9404-50.jpg",
   w5_test_first: "generated/akf-2026-08/prog-bg-4-tape.png",
   w5_low_back: "generated/akf-2026-08/akf-lowback-blocks.png",
   w5_shoulder: "generated/broll/broll-band-facepull.png",
-  w5_rir: "generated/akf-real/akf-bench-night.png",
-  w5_steps: "generated/akf-real/akf-beach-sunrise.png",
-  w5_scale_lies: "generated/akf-real/akf-room-morning.png",
+  w5_rir: "master/photos/IMG_9511.JPEG",
+  w5_steps: "master/photos/IMG_9477.JPEG",
+  w5_scale_lies: "generated/akf-2026-08/prog-bg-3-feet.png",
   w5_seven_hours: "generated/akf-2026-08/sleep-bg-2-clock.png",
   w5_grip: "generated/broll/broll-kettlebell-hold.png",
   w5_bands: "frames/band-stadium.jpg",

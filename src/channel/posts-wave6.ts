@@ -29,7 +29,7 @@ const WAVE6_PHOTOS: Record<string, string> = {
   w6_water_day: "generated/broll/broll-timer-water-v2.png",
   w6_sauna: "generated/recovery/sauna-steam-dark.png",
   w6_bed: "generated/recovery/sleep-recovery-bed.png",
-  w6_hr: "generated/akf-real/akf-track-sunrise.png",
+  w6_hr: "master/photos/IMG_9512.JPEG",
   w6_belt: "generated/akf-2026-08/prog-bg-7-belt.png",
 };
 
