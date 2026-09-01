@@ -10,8 +10,6 @@ export interface SimpleExercise {
   steps: string[];     // пошагово, простым языком
   mistakes: string[];  // частые ошибки
   easier: string;      // если слишком тяжело
-  videoQuery: string;  // fallback-поиск, если нет videoUrl
-  videoUrl?: string;   // прямая ссылка на короткое видео техники
 }
 
 export interface SimpleWorkout {
@@ -38,7 +36,6 @@ const HOME_A: SimpleWorkout = {
       ],
       mistakes: ["Колени заваливаются внутрь", "Отрыв пяток от пола", "Падение на стул вместо касания"],
       easier: "Полностью садись на стул и вставай. Совсем тяжело, помогай руками о бёдра.",
-      videoQuery: "приседания на стул техника для начинающих",
     },
     {
       name: "Отжимания от стены",
@@ -52,7 +49,6 @@ const HOME_A: SimpleWorkout = {
       ],
       mistakes: ["Провисает поясница", "Локти разлетаются строго в стороны, держи их под 45°"],
       easier: "Встань ближе к стене, так легче. Стало легко, отойди дальше или отжимайся от стола.",
-      videoQuery: "отжимания от стены техника",
     },
     {
       name: "Ягодичный мостик",
@@ -66,7 +62,6 @@ const HOME_A: SimpleWorkout = {
       ],
       mistakes: ["Прогиб в пояснице вместо работы ягодиц", "Слишком быстрый темп"],
       easier: "Уменьши амплитуду, поднимай таз ниже.",
-      videoQuery: "ягодичный мостик техника для начинающих",
     },
     {
       name: "Планка на коленях",
@@ -80,7 +75,6 @@ const HOME_A: SimpleWorkout = {
       ],
       mistakes: ["Провисшая поясница", "Поднятый вверх таз «домиком»", "Задержка дыхания"],
       easier: "Держи меньше времени, хоть 10 секунд: главное регулярность.",
-      videoQuery: "планка на коленях техника",
     },
     {
       name: "Сгибание рук с канистрой",
@@ -93,7 +87,6 @@ const HOME_A: SimpleWorkout = {
       ],
       mistakes: ["Раскачка корпусом", "Локти уходят вперёд", "Рывок"],
       easier: "Одна бутылка 1.5 л по очереди в каждой руке.",
-      videoQuery: "сгибание рук с гантелями техника",
     },
   ],
 };
@@ -113,7 +106,6 @@ const HOME_B: SimpleWorkout = {
       ],
       mistakes: ["Слишком короткий шаг", "Колено уходит за носок", "Заваливание корпуса вперёд"],
       easier: "Держись рукой за стену или стул для равновесия. Опускайся не так глубоко.",
-      videoQuery: "выпады на месте техника для начинающих",
     },
     {
       name: "Отжимания с колен",
@@ -127,7 +119,6 @@ const HOME_B: SimpleWorkout = {
       ],
       mistakes: ["Таз задран вверх или провисает", "Неполная амплитуда: грудь не опускается"],
       easier: "Вернись к отжиманиям от стены или стола.",
-      videoQuery: "отжимания с колен техника для начинающих",
     },
     {
       name: "«Супермен»",
@@ -140,7 +131,6 @@ const HOME_B: SimpleWorkout = {
       ],
       mistakes: ["Рывки", "Задранная голова", "Слишком высокий подъём через боль в пояснице"],
       easier: "Поднимай только руки и грудь, ноги оставь на полу.",
-      videoQuery: "упражнение супермен техника",
     },
     {
       name: "Скручивания",
@@ -154,7 +144,6 @@ const HOME_B: SimpleWorkout = {
       ],
       mistakes: ["Тянуть себя руками за голову", "Отрыв поясницы: это уже другое упражнение", "Рывки"],
       easier: "Поднимайся на меньшую высоту, главное чувствовать живот.",
-      videoQuery: "скручивания на пресс техника для начинающих",
     },
     {
       name: "Разгибание рук с канистрой",
@@ -167,7 +156,6 @@ const HOME_B: SimpleWorkout = {
       ],
       mistakes: ["Локти разъезжаются в стороны", "Прогиб поясницы", "Рывок"],
       easier: "Бутылка 1.5 л, меньше амплитуда.",
-      videoQuery: "французский жим с гантелью техника",
     },
   ],
 };
@@ -194,7 +182,6 @@ const HOME_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Колени заваливаются внутрь", "Отрыв пяток", "Не доходишь до параллели"],
       easier: "Вернись к приседаниям на стул: касание и сразу вверх.",
-      videoQuery: "приседания с собственным весом техника",
     },
     {
       name: "Отжимания от опоры",
@@ -208,7 +195,6 @@ const HOME_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Провисает поясница", "Короткое движение без опускания груди", "Локти строго в стороны"],
       easier: "Возьми опору выше: подоконник или стена.",
-      videoQuery: "отжимания от скамьи техника",
     },
     {
       name: "Ягодичный мостик на одной ноге",
@@ -222,7 +208,6 @@ const HOME_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Таз падает на сторону рабочей ноги", "Прогиб в пояснице", "Рывок"],
       easier: "Обычный мостик двумя ногами.",
-      videoQuery: "ягодичный мостик на одной ноге техника",
     },
     {
       name: "Планка",
@@ -235,7 +220,6 @@ const HOME_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Провисшая поясница", "Таз домиком вверх"],
       easier: "Встань на колени вместо носков.",
-      videoQuery: "планка техника",
     },
   ],
 };
@@ -254,7 +238,6 @@ const HOME_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Короткий шаг", "Колено за носок", "Потеря равновесия: смотри вперёд"],
       easier: "Выпады на месте, рука на стуле.",
-      videoQuery: "шагающие выпады техника",
     },
     {
       name: "Отжимания от пола",
@@ -267,7 +250,6 @@ const HOME_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Таз задран или провисает", "Неполная амплитуда", "Локти строго в стороны"],
       easier: "Отжимания с колен. Не тянешь полный подход: 3-4 от пола, добей с колен.",
-      videoQuery: "отжимания от пола техника",
     },
     {
       name: "«Супермен» с паузой",
@@ -280,7 +262,6 @@ const HOME_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Рывки", "Задранная голова", "Слишком высокий подъём через боль в пояснице"],
       easier: "Без паузы, только подъём и сразу вниз. Или только руки и грудь.",
-      videoQuery: "упражнение супермен техника",
     },
     {
       name: "Скручивания до седа",
@@ -293,7 +274,6 @@ const HOME_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Рывок шеей", "Помощь руками за голову", "Падение вниз вместо укладки"],
       easier: "Обычные скручивания: отрываешь только плечи и лопатки.",
-      videoQuery: "скручивания до седа техника",
     },
   ],
 };
@@ -314,7 +294,6 @@ const GYM_A: SimpleWorkout = {
       ],
       mistakes: ["Отрыв пяток", "Круглая спина", "Колени внутрь"],
       easier: "Приседай без гантели или на скамью (сел-встал).",
-      videoQuery: "гоблет присед с гантелью техника",
     },
     {
       name: "Жим гантелей лёжа",
@@ -327,7 +306,6 @@ const GYM_A: SimpleWorkout = {
       ],
       mistakes: ["Слишком тяжёлые гантели в первый раз", "Гантели гуляют в стороны", "Отрыв таза от скамьи"],
       easier: "Возьми самые лёгкие гантели или начни с отжиманий с колен.",
-      videoQuery: "жим гантелей лежа техника для начинающих",
     },
     {
       name: "Тяга гантели в наклоне",
@@ -341,7 +319,6 @@ const GYM_A: SimpleWorkout = {
       ],
       mistakes: ["Круглая спина", "Рывки корпусом", "Тяга к груди вместо пояса"],
       easier: "Возьми гантель легче: техника важнее веса.",
-      videoQuery: "тяга гантели в наклоне одной рукой техника",
     },
     {
       name: "Молоты двумя руками",
@@ -354,7 +331,6 @@ const GYM_A: SimpleWorkout = {
       ],
       mistakes: ["Раскачка корпусом", "Локти уходят вперёд", "Короткая амплитуда"],
       easier: "Легче гантели или по одной руке.",
-      videoQuery: "молотки с гантелями техника",
     },
   ],
 };
@@ -374,7 +350,6 @@ const GYM_B: SimpleWorkout = {
       ],
       mistakes: ["Круглая спина: главная ошибка", "Приседание вместо наклона", "Гантели далеко от ног"],
       easier: "Возьми лёгкие гантели или отработай движение вообще без веса.",
-      videoQuery: "румынская тяга с гантелями техника для начинающих",
     },
     {
       name: "Жим гантелей вверх сидя",
@@ -387,7 +362,6 @@ const GYM_B: SimpleWorkout = {
       ],
       mistakes: ["Сильный прогиб поясницы", "Гантели стукаются наверху", "Рывки"],
       easier: "Легче гантели; можно жать по одной руке.",
-      videoQuery: "жим гантелей сидя вверх техника",
     },
     {
       name: "Тяга верхнего блока к груди",
@@ -401,7 +375,6 @@ const GYM_B: SimpleWorkout = {
       ],
       mistakes: ["Тяга за голову", "Раскачивание корпусом", "Тяга руками, а не спиной"],
       easier: "Поставь меньший вес на плитке тренажёра.",
-      videoQuery: "тяга верхнего блока к груди техника для начинающих",
     },
     {
       name: "Выпады с гантелями",
@@ -414,7 +387,6 @@ const GYM_B: SimpleWorkout = {
       ],
       mistakes: ["Короткий шаг", "Колено за носок", "Потеря равновесия: смотри вперёд, не вниз"],
       easier: "Сначала без гантелей. Для равновесия можно у стены.",
-      videoQuery: "выпады с гантелями техника для начинающих",
     },
     {
       name: "Разгибание рук с канатом",
@@ -427,7 +399,6 @@ const GYM_B: SimpleWorkout = {
       ],
       mistakes: ["Локти уходят вперёд", "Наклон всем телом", "Рывок"],
       easier: "Меньше вес, пауза внизу.",
-      videoQuery: "разгибание рук на блоке с канатом техника",
     },
   ],
 };
@@ -447,7 +418,6 @@ const GYM_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Короткий шаг: колено уезжает вперёд", "Наклон корпуса к бедру", "Задняя нога толкает вместо опоры"],
       easier: "Без гантелей или обычные выпады на месте.",
-      videoQuery: "болгарские сплит приседания с гантелями техника",
     },
     {
       name: "Жим гантелей на наклонной",
@@ -460,7 +430,6 @@ const GYM_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Отрыв таза", "Гантели гуляют в стороны", "Жим к животу вместо верха груди"],
       easier: "Жим гантелей лежа на горизонтали.",
-      videoQuery: "жим гантелей на наклонной скамье техника",
     },
     {
       name: "Тяга двух гантелей в наклоне",
@@ -473,7 +442,6 @@ const GYM_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Круглая спина", "Рывок корпусом", "Тяга к груди вместо пояса"],
       easier: "Тяга одной гантели с опорой о скамью.",
-      videoQuery: "тяга двух гантелей в наклоне техника",
     },
     {
       name: "Разведение гантелей в стороны",
@@ -486,7 +454,6 @@ const GYM_TRAIN_A: SimpleWorkout = {
       ],
       mistakes: ["Заброс выше плеч", "Раскачка корпусом", "Прямые локти на замке"],
       easier: "Легче гантели, меньше амплитуда.",
-      videoQuery: "разведение гантелей в стороны техника",
     },
   ],
 };
@@ -505,7 +472,6 @@ const GYM_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Круглая поясница", "Штанга уходит вперед", "Рывок спиной"],
       easier: "Румынская тяга с гантелями.",
-      videoQuery: "становая тяга техника",
     },
     {
       name: "Жим гантелей стоя",
@@ -518,7 +484,6 @@ const GYM_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Прогиб поясницы", "Жим за голову", "Помощь ногами в каждом повторе"],
       easier: "Жим сидя со спинкой.",
-      videoQuery: "жим гантелей стоя техника",
     },
     {
       name: "Подтягивания",
@@ -530,7 +495,6 @@ const GYM_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Киппинг", "Короткая амплитуда", "Рывок ногами"],
       easier: "Тяга верхнего блока или негативы с лавки.",
-      videoQuery: "подтягивания техника",
     },
     {
       name: "Махи гирей",
@@ -543,7 +507,6 @@ const GYM_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Присед вместо хейджа", "Дожим руками", "Круглая поясница"],
       easier: "Румынская тяга с гантелями.",
-      videoQuery: "махи гирей техника",
     },
     {
       name: "Сведение рук в кроссовере",
@@ -555,7 +518,6 @@ const GYM_TRAIN_B: SimpleWorkout = {
       ],
       mistakes: ["Прямые локти на замке", "Шаг всем телом вместо сведения", "Плечи вперед"],
       easier: "Жим гантелей лежа.",
-      videoQuery: "сведение рук в кроссовере техника",
     },
   ],
 };
@@ -995,79 +957,6 @@ export function enduranceNote(goal: Goal): string {
 export const SEX_NOTE =
   "Набор упражнений от пола не зависит: на одной программе прирост силы и гипертрофии " +
   "у мужчин и женщин сопоставим. Пол учтён там, где он правда меняет цифры: в норме калорий и БЖУ.";
-
-/** Прямые ссылки на короткие видео техники (не поиск YouTube). */
-const VIDEO_URLS: Record<string, string> = {
-  "Приседания на стул": "https://www.youtube.com/watch?v=Yvu6nRT2JkU",
-  "Отжимания от стены": "https://www.youtube.com/watch?v=a6YHcGpW0e0",
-  "Ягодичный мостик": "https://www.youtube.com/watch?v=wPM8icPu6H8",
-  "Планка на коленях": "https://www.youtube.com/watch?v=ASdvN_XEl_c",
-  "Выпады на месте": "https://www.youtube.com/watch?v=3XDriUn0udo",
-  "Отжимания с колен": "https://www.youtube.com/watch?v=0pkjOk0EiAk",
-  "«Супермен»": "https://www.youtube.com/watch?v=z6PJMT2y8GQ",
-  "Скручивания": "https://www.youtube.com/watch?v=Xyd_fa5zoEU",
-  "Приседания с гантелью у груди": "https://www.youtube.com/watch?v=MeIiIdhvieg",
-  "Жим гантелей лёжа": "https://www.youtube.com/watch?v=VmB1G1L26I8",
-  "Тяга гантели в наклоне": "https://www.youtube.com/watch?v=roCP6w-fX20",
-  "Планка": "https://www.youtube.com/watch?v=ASdvN_XEl_c",
-  "Румынская тяга с гантелями": "https://www.youtube.com/watch?v=2SHsk9AzF0k",
-  "Жим гантелей вверх сидя": "https://www.youtube.com/watch?v=qEwKCR5JCog",
-  "Тяга верхнего блока к груди": "https://www.youtube.com/watch?v=CAwf7n6Luuc",
-  "Выпады с гантелями": "https://www.youtube.com/watch?v=3XDriUn0udo",
-  "Приседания до параллели": "https://www.youtube.com/watch?v=Yvu6nRT2JkU",
-  "Отжимания от опоры": "https://www.youtube.com/watch?v=a6YHcGpW0e0",
-  "Ягодичный мостик на одной ноге": "https://www.youtube.com/watch?v=wPM8icPu6H8",
-  "Шагающие выпады": "https://www.youtube.com/watch?v=3XDriUn0udo",
-  "Отжимания от пола": "https://www.youtube.com/watch?v=0pkjOk0EiAk",
-  "«Супермен» с паузой": "https://www.youtube.com/watch?v=z6PJMT2y8GQ",
-  "Скручивания до седа": "https://www.youtube.com/watch?v=Xyd_fa5zoEU",
-  "Болгарские сплит-приседания": "https://www.youtube.com/watch?v=2C-uNgKwPLE",
-  "Тяга двух гантелей в наклоне": "https://www.youtube.com/watch?v=roCP6w-fX20",
-  "Румынская тяга на одной ноге": "https://www.youtube.com/watch?v=2SHsk9AzF0k",
-  "Жим гантелей стоя": "https://www.youtube.com/watch?v=qEwKCR5JCog",
-  "Молоты двумя руками": "https://www.youtube.com/watch?v=zC3nLlEvin4",
-  "Разгибание рук с канатом": "https://www.youtube.com/watch?v=vB5OHsJ3ENA",
-  "Сгибание рук с канистрой": "https://www.youtube.com/watch?v=zC3nLlEvin4",
-  "Разгибание рук с канистрой": "https://www.youtube.com/watch?v=ir5PsbniVSc",
-  "Жим гантелей на наклонной": "https://www.youtube.com/watch?v=VmB1G1L26I8",
-  "Разведение гантелей в стороны": "https://www.youtube.com/watch?v=3VcKaXpzqRo",
-  "Становая тяга": "https://www.youtube.com/watch?v=op9kVnSso6Q",
-  "Подтягивания": "https://www.youtube.com/watch?v=eGo4IYlbE5g",
-  "Махи гирей": "https://www.youtube.com/watch?v=YSxHifyh6fw",
-  "Сведение рук в кроссовере": "https://www.youtube.com/watch?v=taI4XduLpTk",
-};
-
-const LOCAL_EX_VIDEO = new Set([
-  "Планка",
-  "Жим гантелей лёжа",
-  "Тяга гантели в наклоне",
-  "Румынская тяга с гантелями",
-  "Тяга верхнего блока к груди",
-  "Выпады с гантелями",
-  "Приседания с гантелью у груди",
-]);
-
-function publicBase(): string {
-  const raw =
-    process.env.MINIAPP_URL ??
-    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/` : "");
-  if (!raw) return "";
-  return raw.endsWith("/") ? raw : `${raw}/`;
-}
-
-export function exerciseVideoUrl(e: SimpleExercise): string {
-  if (LOCAL_EX_VIDEO.has(e.name)) {
-    const rel = `video/ex/${exerciseSlug(e)}.mp4`;
-    const base = publicBase();
-    return base ? new URL(rel, base).href : rel;
-  }
-  return e.videoUrl ?? VIDEO_URLS[e.name] ??
-    `https://www.youtube.com/results?search_query=${encodeURIComponent(e.videoQuery)}`;
-}
-
-export function isDirectVideo(url: string): boolean {
-  return url.includes("watch?v=") || url.includes("youtu.be/") || /\.mp4(\?|$)/i.test(url);
-}
 
 /** Имя файла картинки: та же транслитерация, что у блюд. */
 export function exerciseSlug(e: SimpleExercise): string {
