@@ -481,6 +481,9 @@
 
   var MEAL_SLOTS = ["breakfast", "lunch", "snack", "dinner"];
   var SLOT_TITLE = { breakfast: "Завтрак", lunch: "Обед", snack: "Перекус", dinner: "Ужин" };
+  // Ориентир деления суточной нормы по приёмам — только для полоски прогресса
+  // в дневнике, на расчёт нормы не влияет.
+  var SLOT_SHARE = { breakfast: 0.25, lunch: 0.35, snack: 0.15, dinner: 0.25 };
 
   function bangkokHourNow() {
     try {
@@ -2754,11 +2757,13 @@
     meals.forEach(function (m, i) {
       grouped[slotOfMeal(m, i, meals.length)].push(m);
     });
+    var norm = macros();
     var body = MEAL_SLOTS.map(function (slot) {
       var items = grouped[slot];
       var kcal = items.reduce(function (n, m) {
         return n + (m.kcal || 0);
       }, 0);
+      var slotTarget = norm && norm.kcal ? Math.round(norm.kcal * SLOT_SHARE[slot]) : 0;
       var yesterday = sameAsList().filter(function (s) {
         return s.slot === slot && s.meals && s.meals.length;
       })[0];
@@ -2813,8 +2818,13 @@
         '<div class="slot__head"><span class="slot__title">' +
         SLOT_TITLE[slot] +
         '</span><span class="slot__kcal">' +
-        (kcal ? kcal + " ккал" : "") +
+        (slotTarget ? kcal + " / " + slotTarget + " ккал" : kcal ? kcal + " ккал" : "") +
         "</span></div>" +
+        (slotTarget
+          ? '<div class="bar__track" style="margin-top:9px"><span class="bar__fill" style="width:' +
+            Math.max(0, Math.min(100, (kcal * 100) / slotTarget)).toFixed(1) +
+            '%;background:var(--gold)"></span></div>'
+          : "") +
         rows +
         actions +
         "</div>"
