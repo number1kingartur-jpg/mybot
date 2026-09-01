@@ -3074,7 +3074,7 @@
     var recentHtml = !recent.length
       ? ""
       : recentOpen
-      ? '<p class="pick__label">Недавно</p><ul class="foods">' +
+      ? '<button type="button" class="sets__add" data-action="food-more" data-group="recent">Недавно ↑</button><ul class="foods">' +
         recent.map(foodRow).join("") +
         "</ul>"
       : '<button type="button" class="sets__add" data-action="food-more" data-group="recent">Недавно (' +
@@ -3109,9 +3109,11 @@
           );
         }
         return (
-          '<p class="pick__label">' +
+          '<button type="button" class="sets__add" data-action="food-more" data-group="' +
+          g.id +
+          '">' +
           g.title +
-          '</p><ul class="foods">' +
+          " ↑</button><ul class=\"foods\">" +
           items.map(foodRow).join("") +
           "</ul>"
         );
@@ -5859,7 +5861,7 @@
       case "food-more":
         var grp = action.getAttribute("data-group");
         if (!state.foodMore) state.foodMore = {};
-        if (grp) state.foodMore[grp] = true;
+        if (grp) state.foodMore[grp] = !state.foodMore[grp];
         haptic("light");
         return render();
       case "reload-day":
