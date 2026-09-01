@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Конфиденциальность | KINGMODE</title>
+  <style>
+    :root{
+      --ink:#0b0b0c; --paper:#fafaf8; --gold:#b08d45; --gold-light:#cba968;
+      --muted:#8a8a8e; --line: rgba(250,250,248,.08);
+      --font-display: "Playfair Display", Georgia, "Times New Roman", serif;
+      --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    *{box-sizing:border-box}
+    body{ background:var(--ink); color:var(--paper); font-family:var(--font-body); margin:0; }
+    .legal{ max-width:680px; margin:0 auto; padding:40px 20px 80px; }
+    h1{ font-family:var(--font-display); font-size:1.6rem; margin:0 0 6px; }
+    .eyebrow{ color:var(--gold-light); font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; margin:0 0 20px; }
+    h2{ font-family:var(--font-display); font-size:1.05rem; margin:28px 0 8px; color:var(--gold-light); }
+    p, li{ color:var(--muted); margin:0 0 10px; font-size:.95rem; line-height:1.55; }
+    ul{ padding-left:20px; margin:0 0 10px; }
+    a{ color:var(--gold-light); }
+    hr{ border:0; border-top:1px solid var(--line); margin:32px 0; }
+  </style>
+</head>
+<body>
+<article class="legal">
+  <p class="eyebrow">KINGMODE</p>
+  <h1>Политика конфиденциальности</h1>
+
+  <h2>Что собираем</h2>
+  <p>Telegram ID и имя: чтобы дневник был твоим и только твоим. Вес, приемы еды, тренировки,
+    вода: то, что ты сам вносишь. Это общие данные с ботом @Raschettbot, одна запись видна
+    и в чате, и в приложении.</p>
+
+  <h2>Фото еды</h2>
+  <p>Снимок уходит на сервер для распознавания через Gemini API (Google) и <strong>сохраняется</strong>
+    на сервере, иначе в дневнике вместо фото блюда был бы пустой квадрат. Ссылка на файл
+    не привязана к твоему аккаунту напрямую и не индексируется, но это не то же самое,
+    что «не хранится»: файл лежит на диске постоянно, даже если запись позже удалить
+    из дневника.</p>
+
+  <h2>Фото прогресса (тело)</h2>
+  <p>Отдельная, более защищенная категория. Ссылка на файл подписана токеном, без него
+    не открывается, это не публичный URL, как у фото еды. Можно удалить самостоятельно
+    в приложении, в разделе «Прогресс».</p>
+
+  <h2>Что не уходит на сервер</h2>
+  <p>Тема оформления и цель по весу хранятся только на твоем устройстве и не передаются
+    никуда, это техническая настройка интерфейса, не персональные данные.</p>
+
+  <h2>Кому передается</h2>
+  <ul>
+    <li>Google (Gemini API): фото еды для распознавания, без явной привязки к личности.</li>
+    <li>Open Food Facts: только цифры штрихкода при сканировании упаковки, анонимно.</li>
+  </ul>
+  <p>Больше никому и никогда для рекламы или маркетинга.</p>
+
+  <h2>Удаление</h2>
+  <p>Фото прогресса удаляются самостоятельно в приложении. Все остальное (дневник, аккаунт
+    целиком) удаляется по запросу через @artur_king_fitness.</p>
+
+  <hr>
+  <h2>Оператор</h2>
+  <p>[ФИО], [email], Telegram: @artur_king_fitness</p>
+</article>
+</body>
+</html>
