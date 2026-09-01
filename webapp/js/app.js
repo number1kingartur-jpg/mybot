@@ -3070,11 +3070,16 @@
     }
 
     var recent = knownFoodItems().slice(0, 8);
-    var recentHtml = recent.length
+    var recentOpen = state.foodMore && state.foodMore.recent;
+    var recentHtml = !recent.length
+      ? ""
+      : recentOpen
       ? '<p class="pick__label">Недавно</p><ul class="foods">' +
         recent.map(foodRow).join("") +
         "</ul>"
-      : "";
+      : '<button type="button" class="sets__add" data-action="food-more" data-group="recent">Недавно (' +
+        recent.length +
+        ")</button>";
 
     var groups = [
       { id: "protein", title: "Белок" },
@@ -5305,9 +5310,9 @@
         '<ul class="bullets">' +
         "<li>Еда, вода, вес и тренировки лежат в базе бота и привязаны к твоему Telegram.</li>" +
         "<li>Тема оформления и цель по весу хранятся на устройстве и ни на что не влияют.</li>" +
-        "<li>Фото уходит на сервер бота для распознавания и не сохраняется.</li>" +
+        "<li>Фото еды уходит на сервер бота для распознавания и сохраняется там же, чтобы в дневнике был снимок блюда, а не пустой квадрат.</li>" +
         "</ul>" +
-        '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--outline btn--slim" data-action="open-calc">Циклы 5/3/1 и DUP</button></div>' +
+        '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--outline btn--slim" data-action="open-calc">Программа тренировок и расчёт весов</button></div>' +
         '<p class="note note--plain">Версия приложения: ' +
         (when
           ? String(when.getDate()).padStart(2, "0") +
@@ -6636,9 +6641,15 @@
     tg.expand();
     // Полноэкранный режим (Bot API 8.0+) — без шапки Telegram вокруг, как у
     // настоящего приложения, а не страницы в чате. Старые клиенты метод не
-    // знают, поэтому только если он реально есть.
+    // знают, поэтому только если он реально есть. onEvent — единственный
+    // способ узнать, что клиент молча отказал: сам вызов ничего не бросает.
     if (typeof tg.requestFullscreen === "function") {
       try {
+        if (typeof tg.onEvent === "function") {
+          tg.onEvent("fullscreenFailed", function (e) {
+            console.warn("[KM] fullscreen failed:", e && e.error, "platform:", tg.platform, "version:", tg.version);
+          });
+        }
         tg.requestFullscreen();
       } catch (e) {
         // Старый клиент может кинуть исключение вместо отсутствия метода —
