@@ -5,3 +5,5 @@ data.json
 .tmp-try
 channel-inventory.json
 inv.log
+pending.json
+.claude/settings.local.json

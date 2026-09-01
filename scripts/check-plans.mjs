@@ -174,6 +174,19 @@ for (const split of SPLITS) {
   }
 }
 
+for (const split of SPLITS) {
+  for (const place of PLACES) {
+    for (const plan of APP.forProgram(place, split)) {
+      for (const a of plan.items) {
+        if (a.video && /\.mp4(\?|$)/i.test(a.video)) {
+          const file = path.join("webapp", ...String(a.video).split("/"));
+          check(`${place}/${split}/${a.name}: файл видео`, fs.existsSync(file), a.video);
+        }
+      }
+    }
+  }
+}
+
 check("ppl зал: три дня", plansForProgram("gym", "ppl").map((d) => d.label).join("/") === "Push/Pull/Squeeze");
 check("ppl дом: честные дни", plansForProgram("home", "ppl").map((d) => d.label).join("/") === "Жим/Спина/Ноги");
 check("ul зал: четыре дня", plansForProgram("gym", "ul").length === 4);
@@ -206,6 +219,8 @@ check(
   progressionRule("gym", "cut")
 );
 
+// 23.08.2026: 19 недостающих аватарок нарисованы (Задача №45). Нет файла —
+// нет миниатюры, чужой кадр или букву не подставлять.
 const EX_DIR = path.join("webapp", "img", "ex");
 const seenSlug = new Set();
 for (const level of LEVELS) {
@@ -217,24 +232,7 @@ for (const level of LEVELS) {
         if (seenSlug.has(slug)) continue;
         seenSlug.add(slug);
         check(`${e.name}: картинка`, fs.existsSync(path.join(EX_DIR, `${slug}.webp`)), slug);
-        if (APP.localVideo(e)) {
-          const vid = path.join("webapp", "video", "ex", `${slug}.mp4`);
-          if (!fs.existsSync(vid)) {
-            console.log(`пропуск видео ${e.name}: ${slug}.mp4 ещё не в сборке`);
-          }
-        }
       }
-    }
-  }
-}
-
-if (typeof APP.gymClips === "function") {
-  for (const e of APP.gymClips()) {
-    const slug = APP.slug(e);
-    const img = fs.existsSync(path.join(EX_DIR, `${slug}.webp`));
-    const vid = !APP.localVideo(e) || fs.existsSync(path.join("webapp", "video", "ex", `${slug}.mp4`));
-    if (!img || !vid) {
-      console.log(`пропуск доп. клипа ${e.name}: медиа ещё не лежит в сборке`);
     }
   }
 }

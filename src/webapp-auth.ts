@@ -68,3 +68,49 @@ export function verifyInitData(initData: string, botToken: string): WebAppUser |
     return null;
   }
 }
+
+/**
+ * Короткоживущий токен для отдачи байт фото прогресса вне initData.
+ *
+ * `<img src>` не может нести заголовок X-Telegram-Init-Data, поэтому адрес
+ * фото несёт подпись в самом себе. Секрет — тот же, что verifyInitData уже
+ * выводит из токена бота (HMAC("WebAppData", botToken)): второй секрет заводить
+ * незачем, он не даёт дополнительной защиты, только лишний путь ошибиться.
+ */
+const PHOTO_TOKEN_TTL_SEC = 15 * 60;
+
+function webAppSecret(botToken: string): Buffer {
+  return crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
+}
+
+export function signProgressPhotoToken(id: string, userId: number, botToken: string): string {
+  const expiry = Math.floor(Date.now() / 1000) + PHOTO_TOKEN_TTL_SEC;
+  const sig = crypto
+    .createHmac("sha256", webAppSecret(botToken))
+    .update(`${id}:${userId}:${expiry}`)
+    .digest("hex");
+  return `${userId}.${expiry}.${sig}`;
+}
+
+/** null — токен неверный или просроченный. Не редирект, не заглушка: явный отказ. */
+export function verifyProgressPhotoToken(token: string, id: string, botToken: string): { userId: number } | null {
+  if (!token || !botToken) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [userIdRaw, expiryRaw, sig] = parts;
+  const userId = Number(userIdRaw);
+  const expiry = Number(expiryRaw);
+  if (!Number.isFinite(userId) || userId <= 0) return null;
+  if (!Number.isFinite(expiry) || expiry <= 0) return null;
+  if (Math.floor(Date.now() / 1000) > expiry) return null;
+  if (!/^[0-9a-f]{64}$/i.test(sig)) return null;
+
+  const expected = crypto
+    .createHmac("sha256", webAppSecret(botToken))
+    .update(`${id}:${userId}:${expiry}`)
+    .digest("hex");
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(sig, "hex");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return { userId };
+}

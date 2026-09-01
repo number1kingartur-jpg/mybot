@@ -10,7 +10,7 @@
  * Запуск: node scripts/check-meal-edit.mjs
  */
 import { macrosFromItems } from "../dist/foods.js";
-import { editMeal, isCompleteShake, mealFromHistory, mergeShakeFromUsual } from "../dist/meal.js";
+import { editMeal, isCompleteShake, mealFromHistory, mealFromKnownPart, mergeShakeFromUsual } from "../dist/meal.js";
 
 let fails = 0;
 function ok(cond, what) {
@@ -107,6 +107,31 @@ sumMatches(noPaste, "коктейль без пасты");
 const plusOats = editMeal(noPaste, { add: { name: "овсяные хлопья сухие", grams: 40 } });
 ok(plusOats && plusOats.parts.some((p) => /овсян/i.test(p.name)), "в напиток добавили хлопья");
 sumMatches(plusOats, "коктейль плюс хлопья");
+
+const appleSalad = macrosFromItems([
+  { name: "яблоко", grams: 180 },
+  { name: "салат", grams: 180 },
+]);
+const afterCross = editMeal(appleSalad, { drop: 1 });
+ok(afterCross && afterCross.parts.length === 1, "крестик снял салат");
+const saladBack = editMeal(afterCross, { add: { name: "салат", grams: 180 } });
+ok(saladBack && saladBack.parts.some((p) => /салат/i.test(p.name)), "салат после крестика снова находится");
+sumMatches(saladBack, "салат вернули по имени");
+
+const labelShot = macrosFromItems([
+  { name: "яблоко", grams: 180 },
+  { name: "напиток Fizzy Zero", grams: 330, kcal100: 20, p100: 0, f100: 0, c100: 5, packaged: true },
+]);
+const drink = labelShot.parts.find((p) => p.source === "label");
+ok(drink, "магазинная позиция есть");
+const drinkGone = editMeal(labelShot, { drop: labelShot.parts.findIndex((p) => p.source === "label") });
+ok(drinkGone && drinkGone.parts.length === 1, "крестик снял напиток с упаковки");
+ok(editMeal(drinkGone, { add: { name: "напиток Fizzy Zero", grams: 330 } }) === null, "без истории упаковка сама не находится");
+const drinkBack = editMeal(drinkGone, { add: { name: drink.name, grams: 330, known: drink } });
+ok(drinkBack && drinkBack.parts.some((p) => p.source === "label"), "съеденное с упаковки возвращается из истории");
+sumMatches(drinkBack, "упаковка вернулась из истории");
+const again = mealFromKnownPart(drink, 165);
+ok(again && again.kcal === 33, `половина уже съеденного: ${again?.kcal}`);
 
 const stored = mealFromHistory({
   name: shake.name,

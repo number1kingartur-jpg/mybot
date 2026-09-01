@@ -656,6 +656,26 @@ button {
   font-weight: 500;
 }
 
+.chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+label.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Не pointer-events:none: iOS Telegram не открывает файл по программному .click() */
+.file-ghost {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
 .chip--gold {
   background: rgba(176, 141, 69, 0.14);
   border-color: var(--gold);
@@ -901,6 +921,12 @@ select.input {
 
 .btn:active {
   transform: scale(0.985);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
 }
 
 .btn--primary {
@@ -1324,6 +1350,37 @@ select.input {
 
 /* ── Журнал записей ─────────────────────────────────────────────────────── */
 
+.slot + .slot {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.slot__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.slot__title {
+  font-weight: 650;
+  font-size: 15px;
+}
+
+.slot__kcal {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.slot__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
 .log {
   margin: 0;
   padding: 0;
@@ -1440,7 +1497,7 @@ select.input {
   flex: 1;
 }
 
-/* Картинка блюда. Нет файла — нет миниатюры, букву не рисуем. */
+/* Картинка блюда. Нет файла или не загрузилась — под ней всегда монограмма. */
 .thumb {
   position: relative;
   flex: 0 0 auto;
@@ -1470,6 +1527,18 @@ select.input {
 
 .log--thumbed {
   gap: 12px;
+}
+
+.log--thumbed[data-editmeal] {
+  cursor: pointer;
+}
+
+.log--edit {
+  background: var(--fill-2);
+  margin: 0 -10px;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-radius: var(--r-sm);
 }
 
 /* Карточка «это оно?»: снимок распознан, но в дневник ещё не записан. */
@@ -1539,6 +1608,10 @@ select.input {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.foods--suggest {
+  margin-top: 8px;
 }
 
 .food {
@@ -1644,11 +1717,18 @@ select.input {
 }
 
 .edit__add {
+  margin-top: 12px;
+}
+
+.edit__add .muted {
+  margin: 0 0 8px;
+}
+
+.edit__add-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px auto;
   gap: 8px;
   align-items: center;
-  margin-top: 12px;
 }
 
 .edit__add-g {
@@ -2264,4 +2344,176 @@ label.btn {
   border-radius: 999px;
   background: var(--fill-2);
   color: var(--paper);
+}
+
+/* ── Фотопротокол прогресса тела ──────────────────────────────────────────── */
+
+/* Ракурсы съёмки — те же три чипа, что и в фильтре ниже: одна форма
+   элемента для одного и того же набора значений, а не кнопка в одном месте
+   и пилюля в другом. */
+.pp-upload-row {
+  margin-top: 12px;
+}
+
+.pp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.pp-card {
+  position: relative;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--fill-2);
+  aspect-ratio: 3 / 4;
+}
+
+.pp-card--picked {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold) inset;
+}
+
+.pp-card__photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pp-card__photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pp-card__tag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: rgba(11, 11, 12, 0.6);
+  color: var(--paper);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.pp-card__date {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  right: 6px;
+  color: var(--paper);
+  font-size: 10.5px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.pp-card__mark {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  color: var(--gold-light);
+  font-size: 15px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.pp-card__del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(11, 11, 12, 0.6);
+  color: var(--paper);
+  font-size: 14px;
+  line-height: 22px;
+  padding: 0;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pp-confirm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+  text-align: center;
+  background: rgba(11, 11, 12, 0.82);
+  color: var(--paper);
+  font-size: 12px;
+}
+
+.pp-confirm__row {
+  display: flex;
+  gap: 6px;
+}
+
+.pp-confirm .btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.pp-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pp-compare__item img {
+  display: block;
+  width: 100%;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+
+.pp-compare__cap {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.update-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  background: var(--gold);
+  color: #14110b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.update-bar button {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--r-sm);
+  padding: 6px 12px;
+  background: #14110b;
+  color: var(--gold-light);
+  font-size: 13px;
+  font-weight: 700;
 }

@@ -52,6 +52,29 @@ const photoBusy = new Set<number>();
 let photoGlobal = 0;
 const PHOTO_GLOBAL_MAX = 2;
 
+// Фотопротокол прогресса тела: лимиты на пользователя, не на процесс. Фото не
+// удаляются автоматически, поэтому без потолка один человек мог бы залить том
+// целиком — эти цифры дают понятную ошибку задолго до того.
+export const PROGRESS_PHOTO_MAX_COUNT = 60;
+export const PROGRESS_PHOTO_MAX_BYTES = 150 * 1024 * 1024;
+
+// Сериализация загрузки фото прогресса на пользователя: без неё два параллельных
+// запроса от одного человека проходят проверку лимита в одно и то же окно между
+// чтением тела запроса и записью файла, и лимит по количеству/объёму можно
+// ненадолго превысить. Один в один по форме — не по смыслу — с beginPhoto/endPhoto:
+// там лимит общий на процесс (бюджет Gemini), здесь — свой на каждого пользователя.
+const progressPhotoBusy = new Set<number>();
+
+export function beginProgressPhotoUpload(userId: number): boolean {
+  if (progressPhotoBusy.has(userId)) return false;
+  progressPhotoBusy.add(userId);
+  return true;
+}
+
+export function endProgressPhotoUpload(userId: number): void {
+  progressPhotoBusy.delete(userId);
+}
+
 export function beginPhoto(userId: number): "ok" | "user" | "busy" {
   if (photoBusy.has(userId)) return "user";
   if (photoGlobal >= PHOTO_GLOBAL_MAX) return "busy";

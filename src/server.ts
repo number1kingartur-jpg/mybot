@@ -1,29 +1,34 @@
+import crypto from "crypto";
 import fs from "fs";
 import http from "http";
 import path from "path";
-import { verifyInitData, type WebAppUser } from "./webapp-auth";
+import { verifyInitData, signProgressPhotoToken, verifyProgressPhotoToken, type WebAppUser } from "./webapp-auth";
 import { accessEnabled, accessChatId, checkAccess } from "./access";
-import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take } from "./guard";
+import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_PHOTO_MAX_COUNT, PROGRESS_PHOTO_MAX_BYTES, beginProgressPhotoUpload, endProgressPhotoUpload } from "./guard";
 import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
+  knownFoodParts, findKnownFoodPart,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, cleanWorkoutMemo, getMealsForDays,
   saveProgram, getActiveProgram, advanceProgramDay,
   photoGate, bumpPhotoCount, mealPhotoUnlimited, trialMode, freePhotoWeek, isPremium, isOwner,
-  type NutritionProfile, type Lift, type Program,
+  addProgressPhoto, listProgressPhotos, getProgressPhoto, deleteProgressPhoto, progressPhotoUsage, progressPhotoDir,
+  type NutritionProfile, type Lift, type Program, type ProgressPhotoEntry,
 } from "./db";
 import {
-  analyzeMealPhoto, analyzeMealText, editMeal, isCompleteShake, mealFromHistory, mealPartLines,
+  analyzeMealPhoto, analyzeMealText, editMeal, isCompleteShake, mealFromHistory, mealFromKnownPart, mealFromProductFacts, mealPartLines,
   mealVisionEnabled, mergeShakeFromUsual, MealPhotoUnreadableError,
 } from "./meal";
+import { factsByBarcode, validGtin } from "./product-db";
+import { STORE_SHELF } from "./store-shelf";
 import { lastCompleteShake, resolveUsualShakeMeal, usualShakeBrief } from "./meal-shake";
 import { dropPending, latestPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, imageSlug, macrosFromItems, matchFood, resolveMealThumb } from "./foods";
 import { hasFoodImage } from "./food-images";
 import { publicMealPhoto, readMealThumb, saveMealThumb } from "./meal-thumbs";
-import { bangkokHour, sameAsAllSlots, shiftDate, slotByHour, splitOffer } from "./meal-same";
+import { bangkokHour, sameAsAllSlots, shiftDate, slotByHour, splitOffer, type MealSlot } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { parseSplit, plansForProgram, splitLevel, type Place, type SplitId } from "./simple";
@@ -113,8 +118,23 @@ function today(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
 }
 
-function mealHour(date: string): number | undefined {
-  return date === today() ? bangkokHour() : undefined;
+const SLOT_HOUR: Record<MealSlot, number> = {
+  breakfast: 8,
+  lunch: 13,
+  snack: 17,
+  dinner: 20,
+};
+
+function parseSlot(raw: unknown): MealSlot | undefined {
+  const s = String(raw ?? "");
+  if (s === "breakfast" || s === "lunch" || s === "snack" || s === "dinner") return s;
+  return undefined;
+}
+
+function mealHour(date: string, slot?: MealSlot): number | undefined {
+  if (date !== today()) return undefined;
+  if (slot) return SLOT_HOUR[slot];
+  return bangkokHour();
 }
 
 function weekKey(dateStr: string): string {
@@ -228,6 +248,18 @@ function photoQuota(userId: number) {
   };
 }
 
+/** Карточка фото прогресса для клиента: без пути на диске, с подписанным адресом байт. */
+function publicProgressPhoto(row: ProgressPhotoEntry, botToken: string) {
+  return {
+    id: row.id,
+    date: row.date,
+    angle: row.angle,
+    sizeBytes: row.sizeBytes,
+    createdAt: row.createdAt,
+    url: `/api/progress/photo/${row.id}?token=${signProgressPhotoToken(row.id, row.userId, botToken)}`,
+  };
+}
+
 /** Текущая тренировка активной программы: то же, что бот показывает в «📋 Программа». */
 function currentSession(prog: Program) {
   const week = prog.weeksData.find((w) => w.week === prog.currentWeek);
@@ -299,6 +331,7 @@ function dayState(userId: number, date: string) {
       carbsG: m.carbsG,
       slug: resolveMealThumb(m.name, m.slug),
       photoUrl: publicMealPhoto(m.photoUrl),
+      hour: m.hour,
       parts: m.parts,
     })),
     totals: mealTotals(userId, date),
@@ -307,6 +340,7 @@ function dayState(userId: number, date: string) {
     streak: mealStreak(userId, today()),
     progress: progressSnapshot(userId, today()),
     frequent: frequentMeals(userId, today()),
+    knownFoods: knownFoodParts(userId),
     usualShake: usualShakeBrief(userId),
     mealRemind: { on: !u?.mealRemindPaused, hours: [8, 13, 19] },
     sameAs:
@@ -538,6 +572,48 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
   }
   res.writeHead(200, headers);
   fs.createReadStream(full).pipe(res);
+}
+
+/**
+ * Байты фото прогресса. Авторизация не через initData (её тут негде передать),
+ * а через короткоживущий подписанный токен из адреса. Просроченная или неверная
+ * подпись — 403, явный отказ, не редирект и не тихая заглушка.
+ */
+function serveProgressPhoto(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  rawId: string,
+  query: URLSearchParams,
+  botToken: string
+): void {
+  const id = decodeURIComponent(rawId);
+  const token = query.get("token") ?? "";
+  const verified = verifyProgressPhotoToken(token, id, botToken);
+  if (!verified) {
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" }).end("forbidden");
+    return;
+  }
+  // Токен доказывает подлинность userId внутри себя (подписан секретом сервера),
+  // но запись всё равно ищем через getProgressPhoto с этим userId: чужая
+  // запись недоступна, даже если бы токен был подделан для чужого id.
+  const row = getProgressPhoto(verified.userId, id);
+  if (!row || !fs.existsSync(row.path)) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("not found");
+    return;
+  }
+  try {
+    const buf = fs.readFileSync(row.path);
+    res.writeHead(200, {
+      "Content-Type": "image/jpeg",
+      "Content-Length": buf.length,
+      // Личное фото тела: не кэшируется публично, и ссылка живёт 15 минут.
+      "Cache-Control": "private, no-store",
+    });
+    res.end(buf);
+  } catch (e) {
+    console.error("progress photo read:", e instanceof Error ? e.message : String(e));
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }).end("server error");
+  }
 }
 
 async function handleApi(
@@ -835,7 +911,7 @@ async function handleApi(
 
   if (req.method === "GET" && urlPath === "/api/foods") {
     json(res, 200, {
-      foods: FOODS.filter((f) => f.role).map((f) => ({
+      foods: FOODS.map((f) => ({
         name: f.name,
         kcal100: f.kcal100,
         p100: f.p100,
@@ -846,6 +922,16 @@ async function handleApi(
         role: f.role,
         slug: hasFoodImage(imageSlug(f)) ? imageSlug(f) : undefined,
         aliases: f.aliases,
+      })),
+      shelf: STORE_SHELF.map((p) => ({
+        code: p.code,
+        name: p.name,
+        kcal100: p.kcal100,
+        p100: p.p100,
+        f100: p.f100,
+        c100: p.c100,
+        servingG: p.servingG,
+        country: p.country,
       })),
     });
     return;
@@ -899,7 +985,7 @@ async function handleApi(
       return;
     }
     if (buf.length > MAX_IMAGE) {
-      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними ещё раз или добавь текстом." });
+      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними еще раз или добавь текстом." });
       return;
     }
 
@@ -923,7 +1009,7 @@ async function handleApi(
     if (slot !== "ok") {
       json(res, 429, {
         error: "busy",
-        message: "Сейчас разбираю другой снимок. Подожди и пришли ещё раз.",
+        message: "Сейчас разбираю другой снимок. Подожди и пришли еще раз.",
       });
       return;
     }
@@ -1014,7 +1100,7 @@ async function handleApi(
    * перестал бы быть расчётом.
    */
   if (req.method === "POST" && urlPath === "/api/meal/confirm") {
-    const body = await readJson(req) as { token?: string };
+    const body = await readJson(req) as { token?: string; slot?: string };
     const found = takePending(user.id, String(body.token ?? ""));
     if (!found) {
       json(res, 410, {
@@ -1027,7 +1113,7 @@ async function handleApi(
     const row = addMeal({
       userId: user.id, date: found.date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
-      hour: mealHour(found.date),
+      hour: mealHour(found.date, parseSlot(body.slot)),
       parts: meal.parts,
     });
     console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
@@ -1057,11 +1143,24 @@ async function handleApi(
       json(res, 410, { error: "pending_gone", message: "Разбор устарел — сфотографируй или напиши заново." });
       return;
     }
+    const addName = String(body.add?.name ?? "").trim();
+    const addGrams = Number(body.add?.grams);
+    const known = body.add && addName && !macrosFromItems([{ name: addName, grams: addGrams }])
+      ? findKnownFoodPart(user.id, addName)
+      : null;
     const edit =
       body.drop !== undefined
         ? { drop: Number(body.drop) }
         : body.add
-          ? { add: { name: String(body.add.name ?? ""), grams: Number(body.add.grams) } }
+          ? {
+              add: {
+                name: addName,
+                grams: addGrams,
+                known: known
+                  ? { ...known, source: known.source ?? "catalog" as const }
+                  : undefined,
+              },
+            }
           : { grams: { index: Number(body.index), value: Number(body.grams) } };
     const meal = editMeal(found.meal, edit);
     if (!meal) {
@@ -1124,7 +1223,7 @@ async function handleApi(
 
   /** Записать отмеченное: коктейль без винограда, без повторного распознавания. */
   if (req.method === "POST" && urlPath === "/api/meal/pick") {
-    const body = await readJson(req) as { units?: { items?: { name?: string; grams?: number }[] }[] };
+    const body = await readJson(req) as { units?: { items?: { name?: string; grams?: number }[] }[]; slot?: string };
     const units = (Array.isArray(body.units) ? body.units : []).slice(0, 8);
     const added: { name: string; kcal: number }[] = [];
     for (const unit of units) {
@@ -1145,7 +1244,7 @@ async function handleApi(
         carbsG: meal.carbsG,
         slug: meal.slug,
         photoUrl: publicMealPhoto(meal.photoUrl),
-        hour: mealHour(date),
+        hour: mealHour(date, parseSlot(body.slot)),
         parts: meal.parts,
       });
       added.push({ name: meal.name, kcal: meal.kcal });
@@ -1167,14 +1266,18 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/meal/food") {
-    const body = await readJson(req) as { name?: string; grams?: number };
+    const body = await readJson(req) as { name?: string; grams?: number; slot?: string };
     const name = String(body.name ?? "").trim().slice(0, 60);
     const grams = Math.round(Number(body.grams));
     if (!name || !(grams >= 1 && grams <= 3000)) {
       json(res, 400, { error: "bad_food" });
       return;
     }
-    const meal = macrosFromItems([{ name, grams }]);
+    const meal = macrosFromItems([{ name, grams }])
+      ?? (() => {
+        const known = findKnownFoodPart(user.id, name);
+        return known ? mealFromKnownPart({ ...known, source: known.source ?? "catalog" }, grams) : null;
+      })();
     if (!meal || meal.kcal <= 0) {
       json(res, 422, { error: "unknown_food", message: "Такого продукта нет в справочнике." });
       return;
@@ -1182,7 +1285,37 @@ async function handleApi(
     const row = addMeal({
       userId: user.id, date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
-      hour: mealHour(date),
+      hour: mealHour(date, parseSlot(body.slot)),
+      parts: meal.parts,
+    });
+    json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/meal/barcode") {
+    const body = await readJson(req) as { code?: string; grams?: number; slot?: string };
+    const code = validGtin(String(body.code ?? ""));
+    if (!code) {
+      json(res, 400, {
+        error: "bad_barcode",
+        message: "Набери все цифры под полосками, без пробелов. Обычно 8, 12 или 13 знаков.",
+      });
+      return;
+    }
+    const facts = await factsByBarcode(code);
+    const grams = Number(body.grams);
+    const meal = facts ? mealFromProductFacts(facts, Number.isFinite(grams) && grams >= 1 ? grams : undefined) : null;
+    if (!meal) {
+      json(res, 422, {
+        error: "unknown_barcode",
+        message: "Этого кода нет в открытой базе. Сними этикетку или введи КБЖУ с упаковки.",
+      });
+      return;
+    }
+    const row = addMeal({
+      userId: user.id, date,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
+      hour: mealHour(date, parseSlot(body.slot)),
       parts: meal.parts,
     });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
@@ -1195,6 +1328,7 @@ async function handleApi(
    * ничего не уточнит, а фото и текст стоят запроса к модели.
    */
   if (req.method === "POST" && urlPath === "/api/meal/usual-shake") {
+    const body = await readJson(req) as { slot?: string };
     const meal = resolveUsualShakeMeal(user.id);
     if (!meal?.parts?.length) {
       json(res, 422, { error: "no_shake", message: "Коктейль не собрался. Напиши состав текстом." });
@@ -1212,7 +1346,7 @@ async function handleApi(
       carbsG: meal.carbsG,
       slug: meal.slug,
       photoUrl: publicMealPhoto(meal.photoUrl),
-      hour: mealHour(date),
+      hour: mealHour(date, parseSlot(body.slot)),
       parts: meal.parts,
     });
     console.log(`api meal usual-shake: ${meal.kcal} kcal, user=${user.id}`);
@@ -1225,7 +1359,7 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/meal/repeat") {
-    const body = await readJson(req) as { name?: string; names?: string[] };
+    const body = await readJson(req) as { name?: string; names?: string[]; slot?: string };
     const names = (Array.isArray(body.names) ? body.names : body.name ? [body.name] : [])
       .map((n) => String(n ?? "").trim())
       .filter(Boolean)
@@ -1248,7 +1382,7 @@ async function handleApi(
         carbsG: prev.carbsG,
         slug: prev.slug,
         photoUrl: publicMealPhoto(prev.photoUrl),
-        hour: mealHour(date),
+        hour: mealHour(date, parseSlot(body.slot)),
         parts: prev.parts,
       };
       addMeal({ userId: user.id, date, ...meal });
@@ -1278,7 +1412,7 @@ async function handleApi(
     // творог и получит картинку — иначе ручная запись выглядит безымянной.
     const known = matchFood(name);
     const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? resolveMealThumb(name, imageSlug(known)) : resolveMealThumb(name) };
-    const row = addMeal({ userId: user.id, date, ...meal, hour: mealHour(date) });
+    const row = addMeal({ userId: user.id, date, ...meal, hour: mealHour(date, parseSlot(body.slot)) });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
   }
@@ -1315,6 +1449,108 @@ async function handleApi(
     return;
   }
 
+  // ── Фотопротокол прогресса тела ───────────────────────────────────────────
+  // Снимок принимается тем же способом, что фото еды: base64 в JSON, не
+  // multipart. Путь на диске строит только сервер — из userId и
+  // crypto.randomUUID(), из клиентских данных в путь ничего не подставляется.
+  if (req.method === "POST" && urlPath === "/api/progress/photo") {
+    const body = await readJson(req) as { imageBase64?: string; mime?: string; angle?: string; date?: string };
+    const angle = body.angle === "front" || body.angle === "side" || body.angle === "back" ? body.angle : null;
+    if (!angle) {
+      json(res, 400, { error: "bad_angle", message: "Ракурс должен быть спереди, сбоку или сзади." });
+      return;
+    }
+    const rawDate = body.date == null ? "" : String(body.date);
+    const day = rawDate ? safeDate(rawDate) : date;
+    if (!day) {
+      json(res, 400, { error: "bad_date", message: "Дата должна быть не в будущем." });
+      return;
+    }
+
+    const b64 = String(body.imageBase64 ?? "").replace(/^data:[^,]+,/, "");
+    if (!b64) {
+      json(res, 400, { error: "no_image" });
+      return;
+    }
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length < 1024) {
+      json(res, 400, { error: "no_image" });
+      return;
+    }
+    if (buf.length > MAX_IMAGE) {
+      json(res, 413, { error: "too_large", message: "Снимок слишком большой. Сними еще раз." });
+      return;
+    }
+
+    // Сериализация на пользователя: без неё два параллельных запроса проходят
+    // проверку лимита в одно окно между чтением тела и записью файла, и лимит
+    // по количеству/объёму можно ненадолго превысить.
+    if (!beginProgressPhotoUpload(user.id)) {
+      json(res, 429, { error: "busy", message: "Уже сохраняю твое фото. Подожди и попробуй еще раз." });
+      return;
+    }
+    try {
+      // Лимиты проверяются до записи на диск: тихого отказа быть не должно, и
+      // байты чужого снимка не должны попасть на том, если места уже нет.
+      const usage = progressPhotoUsage(user.id);
+      if (usage.count >= PROGRESS_PHOTO_MAX_COUNT) {
+        json(res, 413, {
+          error: "limit_count",
+          message: `Уже сохранено ${usage.count} фото из ${PROGRESS_PHOTO_MAX_COUNT}. Удали старые, чтобы добавить новое.`,
+          usage,
+        });
+        return;
+      }
+      if (usage.bytes + buf.length > PROGRESS_PHOTO_MAX_BYTES) {
+        json(res, 413, {
+          error: "limit_bytes",
+          message:
+            `Место закончилось: занято ${Math.round(usage.bytes / 1024 / 1024)} МБ из ` +
+            `${Math.round(PROGRESS_PHOTO_MAX_BYTES / 1024 / 1024)} МБ. Удали старые фото, чтобы добавить новое.`,
+          usage,
+        });
+        return;
+      }
+
+      const dir = progressPhotoDir(user.id);
+      const filePath = path.join(dir, `${crypto.randomUUID()}.jpg`);
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(filePath, buf);
+      } catch (e) {
+        console.error("api progress photo write:", e instanceof Error ? e.message : String(e));
+        json(res, 500, { error: "save_failed", message: "Не удалось сохранить фото. Попробуй еще раз." });
+        return;
+      }
+
+      const row = addProgressPhoto({ userId: user.id, date: day, angle, path: filePath, sizeBytes: buf.length });
+      console.log(`api progress photo: ${Math.round(buf.length / 1024)} КБ, angle=${angle}, user=${user.id}`);
+      json(res, 200, { ok: true, photo: publicProgressPhoto(row, botToken), usage: progressPhotoUsage(user.id) });
+      return;
+    } finally {
+      endProgressPhotoUpload(user.id);
+    }
+  }
+
+  if (req.method === "GET" && urlPath === "/api/progress/photos") {
+    const rows = listProgressPhotos(user.id).map((row) => publicProgressPhoto(row, botToken));
+    json(res, 200, {
+      photos: rows,
+      usage: progressPhotoUsage(user.id),
+      limit: { count: PROGRESS_PHOTO_MAX_COUNT, bytes: PROGRESS_PHOTO_MAX_BYTES },
+    });
+    return;
+  }
+
+  const progressDelete = req.method === "DELETE" ? /^\/api\/progress\/photo\/([^/]+)$/.exec(urlPath) : null;
+  if (progressDelete) {
+    const id = decodeURIComponent(progressDelete[1]);
+    // Доступ к записи только по совпадению userId с проверенной initData — без исключений.
+    const ok = deleteProgressPhoto(user.id, id);
+    json(res, ok ? 200 : 404, { ok, usage: progressPhotoUsage(user.id) });
+    return;
+  }
+
   json(res, 404, { error: "unknown_endpoint" });
 }
 
@@ -1339,6 +1575,16 @@ export function startWebappServer(botToken: string): http.Server | null {
       return;
     }
 
+    // Байты фото прогресса: адрес идёт в <img src>, заголовок initData туда не
+    // положить, поэтому подлинность проверяется коротким токеном в адресе, а не
+    // общей проверкой auth() ниже. GET с любым другим путём /api/… идёт как обычно.
+    const progressPhotoGet = req.method === "GET" ? /^\/api\/progress\/photo\/([^/]+)$/.exec(urlPath) : null;
+    if (progressPhotoGet) {
+      cors(res);
+      serveProgressPhoto(req, res, progressPhotoGet[1], url.searchParams, botToken);
+      return;
+    }
+
     if (urlPath.startsWith("/api/")) {
       cors(res);
       handleApi(req, res, urlPath, url.searchParams, botToken).catch((e) => {
@@ -1348,7 +1594,7 @@ export function startWebappServer(botToken: string): http.Server | null {
           res.setHeader("Connection", "close");
           json(res, 413, {
             error: "payload_too_large",
-            message: "Снимок слишком большой. Сними ещё раз или добавь еду текстом.",
+            message: "Снимок слишком большой. Сними еще раз или добавь еду текстом.",
           });
           return;
         }

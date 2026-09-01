@@ -237,8 +237,38 @@ window.KM_API = (function () {
     });
   }
 
+  /**
+   * Сборка, которую реально отдаёт сервер сейчас — отдельно от build(), который
+   * читает адрес уже загруженного скрипта. WebView Telegram иногда держит
+   * старую вкладку живой даже после переоткрытия; сравнение этих двух чисел
+   * ловит именно такой случай, а не обычное «нет сети».
+   */
+  function checkFresh() {
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", base + "/health", true);
+      xhr.timeout = 8000;
+      xhr.onload = function () {
+        try {
+          var data = JSON.parse(xhr.responseText || "{}");
+          resolve(data && data.build ? String(data.build) : "");
+        } catch (e) {
+          resolve("");
+        }
+      };
+      xhr.onerror = function () {
+        resolve("");
+      };
+      xhr.ontimeout = function () {
+        resolve("");
+      };
+      xhr.send(null);
+    });
+  }
+
   return {
     available: available,
+    checkFresh: checkFresh,
     diag: diag,
     build: build,
     state: function (date, refresh) {
@@ -269,8 +299,10 @@ window.KM_API = (function () {
       return request("POST", "/api/meal/text", { text: text });
     },
     /* «Да, это оно»: наружу уходит токен, цифры сервер держит у себя. */
-    confirmMeal: function (token) {
-      return request("POST", "/api/meal/confirm", { token: token });
+    confirmMeal: function (token, slot) {
+      var body = { token: token };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/confirm", body);
     },
     rejectMeal: function (token) {
       return request("POST", "/api/meal/reject", { token: token });
@@ -288,21 +320,37 @@ window.KM_API = (function () {
     revise: function (name, items) {
       return request("POST", "/api/meal/revise", items && items.length ? { items: items } : { name: name });
     },
-    pick: function (units) {
-      return request("POST", "/api/meal/pick", { units: units });
+    pick: function (units, slot) {
+      var body = { units: units };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/pick", body);
     },
-    food: function (name, grams) {
-      return request("POST", "/api/meal/food", { name: name, grams: grams });
+    food: function (name, grams, slot) {
+      var body = { name: name, grams: grams };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/food", body);
     },
-    manual: function (meal) {
-      return request("POST", "/api/meal/manual", meal);
+    barcode: function (code, grams, slot) {
+      var body = { code: code };
+      if (grams >= 1) body.grams = grams;
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/barcode", body);
     },
-    repeat: function (name) {
+    manual: function (meal, slot) {
+      var body = meal || {};
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/manual", body);
+    },
+    repeat: function (name, slot) {
       var names = Array.isArray(name) ? name : [name];
-      return request("POST", "/api/meal/repeat", { names: names });
+      var body = { names: names };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/repeat", body);
     },
-    usualShake: function () {
-      return request("POST", "/api/meal/usual-shake", {});
+    usualShake: function (slot) {
+      var body = {};
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/usual-shake", body);
     },
     scaleMeal: function (id, factor) {
       return request("PATCH", "/api/meal", { id: id, factor: factor });
@@ -340,6 +388,31 @@ window.KM_API = (function () {
     },
     saveSettings: function (body) {
       return request("POST", "/api/settings", body);
+    },
+    /* Фотопротокол прогресса: тот же приём файла, что и у фото еды, чуть крупнее
+       сжатие — здесь важно видеть силуэт целиком, а не мелкий текст на упаковке. */
+    progressPhotos: function () {
+      return request("GET", "/api/progress/photos");
+    },
+    addProgressPhoto: function (file, angle, date) {
+      return compress(file, 1600, 0.85)
+        .then(function (b64) {
+          return { b64: b64, mime: "image/jpeg" };
+        })
+        .catch(function () {
+          return raw(file);
+        })
+        .then(function (img) {
+          return request("POST", "/api/progress/photo", {
+            imageBase64: img.b64,
+            mime: img.mime,
+            angle: angle,
+            date: date
+          });
+        });
+    },
+    removeProgressPhoto: function (id) {
+      return request("DELETE", "/api/progress/photo/" + encodeURIComponent(id));
     }
   };
 })();

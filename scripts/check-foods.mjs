@@ -7,9 +7,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, imageSlug, mealImageSlug, resolveMealThumb, pieceImageSlug, SHAKE_SLUG, STAPLE_ROLE } from "../dist/foods.js";
+import { FOODS, macrosFromText, macrosFromItems, matchFood, foodSlug, imageSlug, mealImageSlug, resolveMealThumb, pieceImageSlug, SHAKE_SLUG, STAPLE_ROLE, foodsForCatalog } from "../dist/foods.js";
 import { hasFoodImage } from "../dist/food-images.js";
-import { mealFromIdentify, mealPartLines } from "../dist/meal.js";
+import { mealFromIdentify, mealFromProductFacts, mealPartLines } from "../dist/meal.js";
 import { dropPending, putPending, takePending } from "../dist/pending.js";
 import { factsFromOffJson, isOffImage, validGtin } from "../dist/product-db.js";
 import { shelfByCode, STORE_SHELF } from "../dist/store-shelf.js";
@@ -297,6 +297,13 @@ check(
     .join(",")
 );
 check("oishi в справочнике", matchFood("oishi")?.name === "Oishi", matchFood("oishi")?.name);
+
+const pack = offPhoto ? mealFromProductFacts(offPhoto) : null;
+check("штрихкод без граммов берёт порцию с этикетки", pack?.parts?.[0]?.grams === 140, String(pack?.parts?.[0]?.grams));
+check("штрихкод пишет свои ккал", pack !== null && pack.kcal === Math.round((28.6 * 140) / 100), String(pack?.kcal));
+check("штрихкод помечает источник", /штрихкод/i.test(pack?.note ?? ""), pack?.note);
+const packG = offPhoto ? mealFromProductFacts(offPhoto, 200) : null;
+check("штрихкод с граммами пересчитывает", packG?.parts?.[0]?.grams === 200, String(packG?.parts?.[0]?.grams));
 check("простоквашино в справочнике", matchFood("простоквашино")?.name === "Простоквашино", matchFood("простоквашино")?.name);
 check("yakult теперь марка", matchFood("yakult")?.name === "Yakult", matchFood("yakult")?.name);
 
@@ -426,6 +433,13 @@ for (const name of Object.keys(STAPLE_ROLE)) {
 check("печенье не в основных", !FOODS.find((f) => f.name === "Печенье")?.role);
 check("кола не в основных", !FOODS.find((f) => f.name === "Кола")?.role);
 check("наггетсы не в основных", !FOODS.find((f) => f.name === "Наггетсы")?.role);
+check("пустой справочник без сладкого", foodsForCatalog("").every((f) => f.role));
+check("салат по запросу", foodsForCatalog("салат").some((f) => f.name === "Салат"));
+check("кола по запросу", foodsForCatalog("кола").some((f) => f.name === "Кола"));
+check("кола без запроса скрыта", !foodsForCatalog("").some((f) => f.name === "Кола"));
+check("ris находит рис", foodsForCatalog("ris").some((f) => /рис/i.test(f.name)));
+check("рис первым по «рис»", foodsForCatalog("рис")[0]?.name === "Рис отварной", foodsForCatalog("рис")[0]?.name);
+check("cola находит колу", foodsForCatalog("cola").some((f) => f.name === "Кола"));
 check("отруби в клетчатке", matchFood("отруби")?.name === "Отруби" && matchFood("отруби")?.role === "fiber");
 check("лён отдельно от чиа", matchFood("льняное семя")?.name === "Льняное семя", matchFood("льняное семя")?.name);
 check("фото печенья по-прежнему находится", matchFood("печенье")?.name === "Печенье", matchFood("печенье")?.name);

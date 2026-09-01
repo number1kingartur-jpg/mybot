@@ -34,13 +34,17 @@
     menu: { id: "ru", meal: null, pick: null, swaps: {} },
     manual: { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" },
     mealText: "",
-    addMode: null, // null | "text" | "manual" — какая форма добавления раскрыта
+    barcodeCode: "",
+    barcodeGrams: "",
+    addSlot: null, // breakfast | lunch | snack | dinner — куда писать, как в FatSecret
+    addMode: null, // null | "text" | "manual" | "barcode" — какая форма добавления раскрыта
     busy: null, // "photo" | "text" | "manual" | "food"
     notice: null, // { kind: "ok" | "err", text }
     day: null, // ответ сервера: meals, totals, photo, вес, программа
     linkError: null, // почему сервер не ответил; null = связь есть или её и не ждём
     viewDate: null, // какой день открыт в «Съедено»; null = сегодня
     foods: null, // справочник продуктов, грузится один раз
+    foodsLoading: false,
     foodQuery: "",
     foodGrams: "",
     foodMore: {},
@@ -62,7 +66,19 @@
     samePick: null,
     partAdd: "",
     partAddG: "",
-    repeatAsk: null
+    droppedParts: [],
+    repeatAsk: null,
+    // Фотопротокол прогресса: снимки хранятся на сервере, не на устройстве, поэтому
+    // здесь только то, что показывает экран, а не источник правды.
+    progressPhotos: null, // null = ещё не грузили; [] = грузим или пусто
+    ppUsage: null, // { count, bytes } — с сервера, вместе со списком
+    ppLimit: null, // { count, bytes } — потолок с сервера
+    ppDate: today(),
+    ppFilter: "all", // all | front | side | back
+    ppCompare: [], // id до двух карточек для режима сравнения
+    ppConfirm: null, // id карточки, которая ждёт подтверждения удаления
+    ppUploadAngle: null, // какой ракурс сейчас грузится через progressPhotoInput
+    ppBusy: false
   };
 
   // 403 join: не в persist. Человек вступил, нажал «Я уже внутри», стена должна уйти.
@@ -222,8 +238,16 @@
     var o = opts || {};
     var cls = "card" + (o.gold ? " card--gold" : "") + (o.tap ? " card--tap" : "");
     var attrs = o.tap ? ' data-go="' + o.tap + '"' : "";
+    if (o.id) attrs += ' id="' + esc(o.id) + '"';
     var tag = o.tap ? "button" : "div";
     return "<" + tag + ' class="' + cls + '"' + attrs + ">" + inner + "</" + tag + ">";
+  }
+
+  function scrollToId(id) {
+    requestAnimationFrame(function () {
+      var el = document.getElementById(id);
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function cardHead(title, sub, badge) {
@@ -455,6 +479,61 @@
 
   var online = KM_API.available();
 
+  var MEAL_SLOTS = ["breakfast", "lunch", "snack", "dinner"];
+  var SLOT_TITLE = { breakfast: "Завтрак", lunch: "Обед", snack: "Перекус", dinner: "Ужин" };
+  // Ориентир деления суточной нормы по приёмам — только для полоски прогресса
+  // в дневнике, на расчёт нормы не влияет.
+  var SLOT_SHARE = { breakfast: 0.25, lunch: 0.35, snack: 0.15, dinner: 0.25 };
+
+  function bangkokHourNow() {
+    try {
+      var parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        hour12: false
+      }).formatToParts(new Date());
+      var h = parts.filter(function (p) {
+        return p.type === "hour";
+      })[0];
+      return h ? Number(h.value) : new Date().getHours();
+    } catch (e) {
+      return new Date().getHours();
+    }
+  }
+
+  function slotByHour(hour) {
+    var h = ((Number(hour) % 24) + 24) % 24;
+    if (h >= 5 && h < 11) return "breakfast";
+    if (h >= 11 && h < 16) return "lunch";
+    if (h >= 16 && h < 19) return "snack";
+    return "dinner";
+  }
+
+  function inferSlots(count) {
+    if (count <= 0) return [];
+    if (count === 1) return ["breakfast"];
+    if (count === 2) return ["breakfast", "dinner"];
+    if (count === 3) return ["breakfast", "lunch", "dinner"];
+    var slots = [];
+    var i;
+    for (i = 0; i < count; i++) {
+      if (i === 0) slots.push("breakfast");
+      else if (i === 1) slots.push("lunch");
+      else if (i === count - 1) slots.push("dinner");
+      else slots.push("snack");
+    }
+    return slots;
+  }
+
+  function slotOfMeal(meal, index, total) {
+    if (meal && meal.hour !== undefined && meal.hour >= 0 && meal.hour <= 23) return slotByHour(meal.hour);
+    return inferSlots(total)[index] || "dinner";
+  }
+
+  function writeSlot() {
+    return state.addSlot || (dayIsToday() ? slotByHour(bangkokHourNow()) : null);
+  }
+
   function mealsToday() {
     if (state.day) return state.day.meals;
     var d = today();
@@ -531,6 +610,7 @@
           }
           persist();
         }
+        loadFoods();
         if (!silent) render();
         else if (state.screen === "home" || state.screen === "nutrition" || state.screen === "profile") render();
       })
@@ -598,7 +678,7 @@
     state.busy = "food";
     state.notice = null;
     render();
-    KM_API.usualShake()
+    KM_API.usualShake(writeSlot())
       .then(function (data) {
         state.pending = null;
         clearPhotoPreview();
@@ -622,7 +702,7 @@
     state.day = data;
     state.busy = null;
     state.notice = { kind: "ok", text: okText };
-    state.addMode = null;
+    state.addMode = state.addMode === "food" ? "food" : null;
     state.mealText = "";
     state.samePick = null;
     state.manual = { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" };
@@ -678,7 +758,7 @@
     });
     chain
       .then(function () {
-        return KM_API.confirmMeal(p.token);
+        return KM_API.confirmMeal(p.token, writeSlot());
       })
       .then(function (data) {
         state.pending = null;
@@ -721,7 +801,26 @@
       });
   }
 
+  function rememberParts(parts) {
+    if (!parts || !parts.length) return;
+    if (!state.droppedParts) state.droppedParts = [];
+    var seen = {};
+    state.droppedParts.forEach(function (p) {
+      if (p && p.name) seen[String(p.name).toLowerCase()] = true;
+    });
+    parts.forEach(function (p) {
+      if (!p || !p.name) return;
+      var key = String(p.name).toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      state.droppedParts.push(p);
+      if (state.droppedParts.length > 40) state.droppedParts.shift();
+    });
+  }
+
   function dropPendingPart(index) {
+    var rows = state.pending && state.pending.meal && state.pending.meal.parts;
+    if (rows && rows[index]) rememberParts([rows[index]]);
     editPendingPart(function (token) {
       return KM_API.dropPart(token, index);
     });
@@ -742,6 +841,7 @@
     var p = state.pending;
     if (!p) return;
     var parts = (p.meal && p.meal.parts) || [];
+    rememberParts(parts);
     state.mealText = parts.length
       ? parts
           .map(function (x) {
@@ -761,6 +861,7 @@
   /** Окно убрать, состав не оставлять: ни в дневник, ни в поле ввода. */
   function dismissPending() {
     var p = state.pending;
+    if (p && p.meal && p.meal.parts) rememberParts(p.meal.parts);
     if (p && online) KM_API.rejectMeal(p.token).catch(function () {});
     state.pending = null;
     state.mealText = "";
@@ -827,6 +928,35 @@
     );
   }
 
+  function partSuggestHtml() {
+    var q = foldFood(state.partAdd || "");
+    if (!q) return "";
+    var hits = catalogHits(q).slice(0, 6);
+    if (!hits.length) return "";
+    return (
+      '<ul class="foods foods--suggest">' +
+      hits
+        .map(function (f) {
+          var grams = num(state.partAddG);
+          var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG || 100;
+          return (
+            '<li class="food">' +
+            thumb(f.slug || "", f.name) +
+            '<span class="food__text"><span class="food__name">' +
+            esc(f.name) +
+            "</span></span>" +
+            '<button type="button" class="btn btn--outline food__add" style="width:auto" data-action="part-pick" data-food="' +
+            esc(f.name) +
+            '" data-grams="' +
+            g +
+            '">Добавить</button></li>'
+          );
+        })
+        .join("") +
+      "</ul>"
+    );
+  }
+
   function pendingTeaserCard() {
     var p = state.pending;
     if (!p || !p.meal || state.screen === "nutrition") return "";
@@ -849,6 +979,7 @@
    * позициям, источник цифр (справочник или упаковка) и слова модели.
    */
   function pendingCard() {
+    loadFoods();
     var p = state.pending;
     if (!p || !p.meal) return "";
     var m = p.meal;
@@ -929,6 +1060,7 @@
             (pendingNeedsShakeFill(parts)
               ? '<p class="muted">Не хватает овсянки, протеина или креатина: допиши здесь, потом «Добавить».</p>'
               : '<p class="muted">Не хватает позиции: допиши здесь, потом «Добавить».</p>') +
+            '<div class="edit__add-row">' +
             '<input class="input" type="text" data-path="partAdd" placeholder="' +
             (pendingNeedsShakeFill(parts) ? "овсянка, протеин, креатин" : "продукт") +
             '" value="' +
@@ -938,7 +1070,10 @@
             esc(state.partAddG || "") +
             '" />' +
             '<button type="button" class="btn btn--outline food__add" data-action="part-add">Добавить</button>' +
-            "</div>"
+            "</div>" +
+            '<div id="partAddList">' +
+            partSuggestHtml() +
+            "</div></div>"
           : "") +
         (m.said ? '<p class="note note--plain">Вижу так: ' + esc(m.said) + "</p>" : "") +
         (m.note ? '<p class="note note--plain">' + esc(m.note) + "</p>" : "") +
@@ -953,16 +1088,6 @@
             "Сними ещё раз так, чтобы попал штрихкод: по нему продукт находится точно.</p>"
           : "") +
         '<div class="btn-stack" style="margin-top:14px">' +
-        (function () {
-          var usual = state.day && state.day.usualShake;
-          if (!usual) return "";
-          return (
-            '<button class="btn btn--primary" data-action="usual-shake">' +
-            "Коктейль · " +
-            usual.kcal +
-            " ккал</button>"
-          );
-        })() +
         (function () {
           var usual = state.day && state.day.usualShake;
           var wrong = usual && !isShakeParts(parts);
@@ -1026,8 +1151,8 @@
           " ккал" +
           (last.factor !== 1 ? " (порция ×" + (Math.round(last.factor * 100) / 100).toString().replace(".", ",") + ")" : "")
       ) +
-        '<p class="lead">Состав блюда модель видит, а вес только предполагает. Если порция ' +
-        "была другой, поправь множителем: КБЖУ пересчитаются в той же пропорции.</p>" +
+        '<p class="lead">Состав тот же, меняется размер. КБЖУ пересчитаются в той же пропорции. ' +
+        "Открывается и из дневника: нажми блюдо, не только свежую запись.</p>" +
         '<div class="chips chips--wrap">' +
         steps
           .map(function (s) {
@@ -1045,7 +1170,8 @@
         "</div>" +
         '<div class="btn-stack" style="margin-top:12px">' +
         '<button class="btn btn--outline btn--slim" data-action="portion-done">Всё верно</button>' +
-        "</div>"
+        "</div>",
+      { id: "portion-card" }
     );
   }
 
@@ -1214,22 +1340,23 @@
     photo: "M4 8.5A2.5 2.5 0 0 1 6.5 6h1L9 4h6l1.5 2h1A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5zM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
     repeat: "M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6M17 4v3h-3M7 20v-3h3",
     water: "M12 3.5s6 6.6 6 10.4A6 6 0 0 1 6 13.9C6 10.1 12 3.5 12 3.5z",
-    text: "M5 6.5h14M5 12h14M5 17.5h9"
+    text: "M5 6.5h14M5 12h14M5 17.5h9",
+    barcode: "M4 4h2v16H4zm4 0h1v16H8zm3 0h2v16h-2zm4 0h1v16h-1zm3 0h3v16h-3z"
   };
 
   function tile(action, icon, label, gold) {
-    return (
-      '<button class="tile' +
-      (gold ? " tile--gold" : "") +
-      '" data-action="' +
-      action +
-      '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    var cls = "tile" + (gold ? " tile--gold" : "");
+    var inner =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
       'stroke-linecap="round" stroke-linejoin="round"><path d="' +
       TILE_ICONS[icon] +
       '"/></svg><span class="tile__label">' +
       label +
-      "</span></button>"
-    );
+      "</span>";
+    if (action === "pick-photo") {
+      return '<label class="' + cls + '" for="photoInput">' + inner + "</label>";
+    }
+    return '<button class="' + cls + '" data-action="' + action + '">' + inner + "</button>";
   }
 
   /**
@@ -1733,7 +1860,7 @@
     list = list.filter(function (f) {
       return !skip[String(f.name).trim().toLowerCase()];
     });
-    if (!list.length && !state.day.usualShake) return "";
+    if (!list.length && !(state.day && state.day.usualShake)) return "";
     return (
       '<div class="chips chips--wrap" style="margin-bottom:12px">' +
       usualShakeChip() +
@@ -1814,16 +1941,30 @@
     var last = lastWeighIn();
     var place = state.workout.place;
     var plan = planList()[state.workout.plan] || planList()[0];
-    var eaten = eatenTotals();
+    var stale = Boolean(state.day && !dayIsToday());
+    var eaten = stale
+      ? { kcal: 0, proteinG: 0, fatG: 0, carbsG: 0, count: 0 }
+      : eatenTotals();
     var w = water();
 
     var left = m ? m.kcal - eaten.kcal : 0;
     var over = m ? left < 0 : false;
-    var heroCard = m
+    var heroCard = stale
+      ? card(cardHead("Осталось на сегодня", "Обновляю данные…"))
+      : m
       ? card(
           cardHead(
             over ? "Перебор" : "Осталось на сегодня",
-            "Норма " + m.kcal + " ккал · " + GOAL_WORD[state.profile.goal],
+            "В сутки " +
+              m.kcal +
+              " ккал · белок " +
+              m.proteinG +
+              " г · жир " +
+              m.fatG +
+              " г · углеводы " +
+              m.carbsG +
+              " г · " +
+              GOAL_WORD[state.profile.goal],
             eaten.count ? eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов") : null
           ) +
             ring(
@@ -1858,7 +1999,9 @@
       // ситуацию. Плитки с вопросом здесь быть не должно — она обещает кнопку,
       // а приводит к тексту, и человек нажимает её впустую.
       (online
-        ? tile("pick-photo", "photo", "Фото еды", true) +
+        ? (photoAllowed() ? tile("pick-photo", "photo", "Фото еды", true) : "") +
+          tile("add-barcode-form", "barcode", "Штрихкод") +
+          tile("add-food-form", "text", "Справочник", !photoAllowed()) +
           tile("usual-shake", "repeat", "Коктейль", Boolean(state.day && state.day.usualShake)) +
           tile("add-text-form", "text", "Текстом")
         : tile("add-manual-form", "text", "Ввести вручную", true) + tile("reload-day", "repeat", "Связь с ботом")) +
@@ -1867,6 +2010,7 @@
       '<p class="muted">Коктейль: одна кнопка. Фото тарелки или текст: «250 мл белка, 3 банана, 2 скупа протеина».</p>' +
       (state.addMode === "text" ? card(textForm()) : "") +
       (state.addMode === "manual" ? card(manualForm()) : "") +
+      (state.addMode === "barcode" ? card(barcodeForm()) : "") +
       (state.busy
         ? card(
             (state.photoPreview
@@ -2061,11 +2205,14 @@
         "</div>" +
         (closed
           ? ""
-          : '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--primary" data-action="' +
-            next.action +
-            '">' +
-            esc(next.cta) +
-            "</button>" +
+          : '<div class="btn-stack" style="margin-top:14px">' +
+            (next.id === "food" && photoAllowed()
+              ? '<label class="btn btn--primary" for="photoInput">' + esc(next.cta) + "</label>"
+              : '<button class="btn btn--primary" data-action="' +
+                next.action +
+                '">' +
+                esc(next.cta) +
+                "</button>") +
             (next.id === "move"
               ? '<button class="btn btn--outline btn--slim" data-action="route-rest">Сегодня отдых</button>'
               : "") +
@@ -2096,26 +2243,11 @@
   }
 
   function openRouteFood() {
-    var food = dayRoute().filter(function (x) {
-      return x.id === "food";
-    })[0];
-    if (food && food.on) {
-      state.nutTab = "eaten";
-      return go("nutrition");
-    }
-    if (online) {
-      var pick = document.getElementById("photoInput");
-      if (pick) {
-        pick.value = "";
-        haptic("light");
-        pick.click();
-        return;
-      }
-    }
-    state.addMode = "text";
+    state.nutTab = "eaten";
+    state.addMode = null;
     state.notice = null;
     haptic("light");
-    render();
+    return go("nutrition");
   }
 
   function openRouteWater() {
@@ -2478,7 +2610,15 @@
       ? card(
           cardHead(
             !isToday ? "Итог " + formatDate(viewDate()) : left >= 0 ? "Осталось на сегодня" : "Перебор",
-            "Цель: " + GOAL_WORD[state.profile.goal] + " · норма " + target.kcal + " ккал",
+            "В сутки нужно " +
+              target.kcal +
+              " ккал · белок " +
+              target.proteinG +
+              " г · жир " +
+              target.fatG +
+              " г · углеводы " +
+              target.carbsG +
+              " г",
             eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
           ) +
             figure(
@@ -2531,9 +2671,8 @@
       "особенно с маслом и соусами. Итог сверяй по тренду веса в дневнике, а не по одному дню.</p>" +
       // Про штрихкод человек сам не догадается, а это единственный способ получить
       // цифры конкретной упаковки вместо среднего по категории.
-      '<p class="note note--plain">Снимаешь магазинное: заведи в кадр штрихкод. ' +
-      "По нему продукт находится в открытой базе с его собственными КБЖУ, а не считается " +
-      "по похожему.</p>"
+      '<p class="note note--plain">Магазинное: кнопка «Штрихкод», цифры под полосками. ' +
+      "Так находится эта упаковка, а не похожий продукт из справочника.</p>"
     );
   }
 
@@ -2599,8 +2738,12 @@
     else if (slug) {
       src = (folder || "food") === "ex" ? exSrc(slug) : "img/" + (folder || "food") + "/" + slug + ".webp";
     }
+    // Буква — постоянный фон под картинкой: нет файла или картинка не
+    // загрузилась (onerror снимает <img>) — видна монограмма, не пустой квадрат.
+    var letter = title ? esc(String(title).trim().charAt(0).toUpperCase()) : "";
     return (
       '<span class="thumb" aria-hidden="true">' +
+      letter +
       (src
         ? '<img class="thumb__img" loading="lazy" decoding="async" alt="" src="' +
           esc(src) +
@@ -2611,41 +2754,91 @@
   }
 
   function mealsListCard(meals, isToday) {
-    if (!meals.length) {
+    var grouped = {};
+    MEAL_SLOTS.forEach(function (s) {
+      grouped[s] = [];
+    });
+    meals.forEach(function (m, i) {
+      grouped[slotOfMeal(m, i, meals.length)].push(m);
+    });
+    var norm = macros();
+    var body = MEAL_SLOTS.map(function (slot) {
+      var items = grouped[slot];
+      var kcal = items.reduce(function (n, m) {
+        return n + (m.kcal || 0);
+      }, 0);
+      var slotTarget = norm && norm.kcal ? Math.round(norm.kcal * SLOT_SHARE[slot]) : 0;
+      var yesterday = sameAsList().filter(function (s) {
+        return s.slot === slot && s.meals && s.meals.length;
+      })[0];
+      var rows = items.length
+        ? '<ul class="log">' +
+          items
+            .map(function (m) {
+              var editing = state.lastMeal && state.lastMeal.id === m.id;
+              return (
+                '<li class="log--thumbed' +
+                (editing ? " log--edit" : "") +
+                '"' +
+                (isToday && online ? ' data-editmeal="' + esc(m.id) + '"' : "") +
+                ">" +
+                thumb(m.slug, m.name, "food", m.photoUrl) +
+                '<span class="meal__name">' +
+                esc(m.name) +
+                '<span class="meal__macro">' +
+                m.proteinG +
+                " / " +
+                m.fatG +
+                " / " +
+                m.carbsG +
+                ' г</span></span><span class="log__value">' +
+                m.kcal +
+                " ккал</span>" +
+                (isToday
+                  ? '<button class="log__del" data-delmeal="' +
+                    esc(m.id) +
+                    '" aria-label="Удалить">×</button>'
+                  : "") +
+                "</li>"
+              );
+            })
+            .join("") +
+          "</ul>"
+        : '<p class="empty" style="margin:8px 0 0">Пока пусто</p>';
+      var actions = isToday
+        ? '<div class="slot__actions">' +
+          '<button type="button" class="sets__add" data-action="add-to-slot" data-slot="' +
+          slot +
+          '">Добавить</button>' +
+          (yesterday && !items.length && !skippedSlots()[slot]
+            ? '<button type="button" class="sets__add" data-action="same-as-yes" data-slot="' +
+              slot +
+              '">Как вчера</button>'
+            : "") +
+          "</div>"
+        : "";
       return (
-        '<p class="empty">' +
-        (isToday ? "За сегодня ничего не записано." : "В этот день записей нет.") +
-        "</p>"
+        '<div class="slot">' +
+        '<div class="slot__head"><span class="slot__title">' +
+        SLOT_TITLE[slot] +
+        '</span><span class="slot__kcal">' +
+        (slotTarget ? kcal + " / " + slotTarget + " ккал" : kcal ? kcal + " ккал" : "") +
+        "</span></div>" +
+        (slotTarget
+          ? '<div class="bar__track" style="margin-top:9px"><span class="bar__fill" style="width:' +
+            Math.max(0, Math.min(100, (kcal * 100) / slotTarget)).toFixed(1) +
+            '%;background:var(--gold)"></span></div>'
+          : "") +
+        rows +
+        actions +
+        "</div>"
       );
-    }
+    }).join("");
     return card(
       cardHead(
-        isToday ? "Приёмы за сегодня" : "Приёмы за " + formatDate(viewDate()),
-        online ? "Общий дневник с ботом" : "Хранится на устройстве"
-      ) +
-        '<ul class="log">' +
-        meals
-          .map(function (m) {
-            return (
-              '<li class="log--thumbed">' +
-              thumb(m.slug, m.name, "food", m.photoUrl) +
-              '<span class="meal__name">' +
-              esc(m.name) +
-              '<span class="meal__macro">' +
-              m.proteinG +
-              " / " +
-              m.fatG +
-              " / " +
-              m.carbsG +
-              ' г</span></span><span class="log__value">' +
-              m.kcal +
-              ' ккал</span><button class="log__del" data-delmeal="' +
-              esc(m.id) +
-              '" aria-label="Удалить">×</button></li>'
-            );
-          })
-          .join("") +
-        "</ul>"
+        isToday ? "Дневник" : "Дневник за " + formatDate(viewDate()),
+        "Завтрак, обед, перекус, ужин. Нажми блюдо, чтобы поправить порцию."
+      ) + body
     );
   }
 
@@ -2666,38 +2859,176 @@
   }
 
   function loadFoods() {
-    if (state.foods || !online) return;
-    state.foods = [];
+    if (!online || state.foodsLoading) return;
+    if (state.foods && state.foods.length) return;
+    state.foodsLoading = true;
+    if (!state.foods) state.foods = [];
     KM_API.foods()
       .then(function (data) {
         state.foods = data.foods || [];
-        if (state.addMode === "food") render();
+        state.shelf = data.shelf || [];
+        state.foodsLoading = false;
+        var box = document.getElementById("foodList");
+        if (box) box.innerHTML = foodListHtml();
+        var hints = document.getElementById("partAddList");
+        if (hints) hints.innerHTML = partSuggestHtml();
       })
       .catch(function () {
+        state.foodsLoading = false;
         state.foods = null;
       });
   }
 
+  function foldFood(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, "е");
+  }
+
+  function foodSlugGuess(name) {
+    var map = {
+      а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ж: "zh", з: "z", и: "i", й: "y",
+      к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u",
+      ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e",
+      ю: "yu", я: "ya"
+    };
+    return foldFood(name)
+      .split("")
+      .map(function (ch) {
+        return map[ch] === undefined ? ch : map[ch];
+      })
+      .join("")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function foodScore(f, q) {
+    if (!q) return f.eaten ? 20 : f.role ? 1 : 0;
+    var name = foldFood(f.name);
+    var slug = f.slug || foodSlugGuess(f.name);
+    var qSlug = q.replace(/\s+/g, "-");
+    var score = 0;
+    var matched = false;
+    if (name === q) {
+      score += 1000;
+      matched = true;
+    }
+    if (name.indexOf(q) === 0) {
+      score += 400;
+      matched = true;
+    }
+    if (name.indexOf(q) !== -1) {
+      score += 80;
+      matched = true;
+    }
+    var als = f.aliases || [];
+    for (var i = 0; i < als.length; i++) {
+      var a = foldFood(als[i]);
+      if (a === q) {
+        score += 900;
+        matched = true;
+      } else if (a.indexOf(q) === 0) {
+        score += 300;
+        matched = true;
+      } else if (a.indexOf(q) !== -1) {
+        score += 40;
+        matched = true;
+      }
+    }
+    if (slug === qSlug) {
+      score += 500;
+      matched = true;
+    } else if (slug.indexOf(qSlug) === 0) {
+      score += 200;
+      matched = true;
+    } else if (slug.indexOf(qSlug) !== -1) {
+      score += 30;
+      matched = true;
+    }
+    // Бонус «уже ел это» — только поднимает совпавший продукт выше,
+    // сам по себе не даёт продукту попасть в список без реального совпадения.
+    if (!matched) return 0;
+    if (f.eaten) score += 80;
+    if (f.role) score += 5;
+    return score;
+  }
+
+  function foodMatches(f, q) {
+    return foodScore(f, q) > 0;
+  }
+
+  function knownFoodItems() {
+    var out = [];
+    var seen = {};
+    function take(p) {
+      if (!p || !p.name) return;
+      var key = String(p.name).toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      var grams = Number(p.grams) || Number(p.defaultG) || 100;
+      out.push({
+        name: p.name,
+        kcal100: grams ? (Number(p.kcal100) || (Number(p.kcal) * 100) / grams) : 0,
+        p100: grams ? (Number(p.p100) || (Number(p.proteinG) * 100) / grams) : 0,
+        f100: grams ? (Number(p.f100) || (Number(p.fatG) * 100) / grams) : 0,
+        c100: grams ? (Number(p.c100) || (Number(p.carbsG) * 100) / grams) : 0,
+        defaultG: grams,
+        slug: p.slug,
+        aliases: p.aliases || [],
+        eaten: true
+      });
+    }
+    (state.droppedParts || []).forEach(take);
+    ((state.day && state.day.knownFoods) || []).forEach(take);
+    ((state.day && state.day.meals) || []).forEach(function (m) {
+      (m.parts || []).forEach(take);
+    });
+    return out;
+  }
+
+  function catalogHits(query) {
+    var q = String(query || "").trim().toLowerCase();
+    var seen = {};
+    var list = [];
+    function take(f) {
+      if (!f || !f.name || seen[f.name]) return;
+      seen[f.name] = true;
+      list.push(f);
+    }
+    (state.foods || []).forEach(function (f) {
+      if (!q) {
+        if (f.role) take(f);
+        return;
+      }
+      if (foodMatches(f, q)) take(f);
+    });
+    if (q) {
+      knownFoodItems().forEach(function (f) {
+        if (foodMatches(f, q)) take(f);
+      });
+    }
+    if (q) {
+      list.sort(function (a, b) {
+        return foodScore(b, q) - foodScore(a, q);
+      });
+      if (list.length > 16) list = list.slice(0, 16);
+    }
+    return list;
+  }
+
   function foodListHtml() {
     if (!state.foods) return '<p class="muted">Справочник не загрузился. Попробуй позже.</p>';
-    if (!state.foods.length) return '<p class="muted">Загружаю справочник…</p>';
+    if (!state.foods.length) {
+      var early = knownFoodItems();
+      if (!early.length) return '<p class="muted">Загружаю справочник…</p>';
+    }
 
     var q = String(state.foodQuery || "").trim().toLowerCase();
-    var seen = {};
-    var list = state.foods.filter(function (f) {
-      if (seen[f.name]) return false;
-      seen[f.name] = true;
-      if (!q) return true;
-      if (f.name.toLowerCase().indexOf(q) !== -1) return true;
-      var als = f.aliases || [];
-      for (var i = 0; i < als.length; i++) {
-        if (String(als[i]).toLowerCase().indexOf(q) !== -1) return true;
-      }
-      return false;
-    });
+    var list = catalogHits(q);
 
-    if (!list.length) {
-      return '<p class="muted">В основных продуктах этого нет. Сладости и газировку добавь текстом или фото.</p>';
+    if (!list.length && q) {
+      return '<p class="muted">Такого продукта в справочнике нет. Добавь текстом или фото.</p>';
     }
 
     function foodRow(f) {
@@ -2724,6 +3055,7 @@
         fatG +
         " · У " +
         carbsG +
+        (f.eaten && !(grams >= 1) ? " · как в прошлый раз" : "") +
         "</span></span>" +
         '<button class="btn btn--outline food__add" style="width:auto" data-action="add-food" data-food="' +
         esc(f.name) +
@@ -2737,6 +3069,13 @@
       return '<ul class="foods">' + list.map(foodRow).join("") + "</ul>";
     }
 
+    var recent = knownFoodItems().slice(0, 8);
+    var recentHtml = recent.length
+      ? '<p class="pick__label">Недавно</p><ul class="foods">' +
+        recent.map(foodRow).join("") +
+        "</ul>"
+      : "";
+
     var groups = [
       { id: "protein", title: "Белок" },
       { id: "fat", title: "Жиры" },
@@ -2744,7 +3083,7 @@
       { id: "fiber", title: "Клетчатка" },
       { id: "water", title: "Вода" },
     ];
-    return groups
+    return recentHtml + groups
       .map(function (g) {
         var items = list.filter(function (f) {
           return f.role === g.id;
@@ -2774,6 +3113,57 @@
       .join("");
   }
 
+  function barcodeForm() {
+    loadFoods();
+    var shelf = state.shelf || [];
+    var shelfHtml = shelf.length
+      ? '<p class="pick__label">Часто с полки</p><ul class="foods">' +
+        shelf
+          .map(function (p) {
+            var g = p.servingG || 100;
+            var kcal = Math.round((p.kcal100 * g) / 100);
+            return (
+              '<li class="food"><span class="food__body"><strong>' +
+              esc(p.name) +
+              "</strong><span class=\"muted\">" +
+              kcal +
+              " ккал · " +
+              g +
+              " г · код " +
+              esc(p.code) +
+              "</span></span>" +
+              '<button class="btn btn--outline food__add" style="width:auto" data-action="add-barcode" data-code="' +
+              esc(p.code) +
+              '" data-grams="' +
+              g +
+              '">Записать</button></li>'
+            );
+          })
+          .join("") +
+        "</ul>"
+      : "";
+    return (
+      '<div style="margin-top:18px">' +
+      '<p class="note note--plain">Цифры под чёрными полосками на упаковке. Это та же банка, не «похожий йогурт».</p>' +
+      field(
+        "Штрихкод",
+        '<input class="input" type="text" inputmode="numeric" autocomplete="off" data-path="barcodeCode" placeholder="8851123237000" value="' +
+          esc(state.barcodeCode) +
+          '" />'
+      ) +
+      field(
+        "Граммы",
+        numInput("barcodeGrams", { min: 1, max: 3000, step: 10, placeholder: "порция с этикетки, если пусто" })
+      ) +
+      '<button class="btn btn--primary" data-action="add-barcode">Найти и записать</button>' +
+      (photoAllowed()
+        ? '<p class="muted" style="margin-top:12px"><label class="sets__add" for="photoInput">Или снять полоски фото</label></p>'
+        : "") +
+      shelfHtml +
+      "</div>"
+    );
+  }
+
   function foodForm() {
     loadFoods();
     var target = macros();
@@ -2781,20 +3171,19 @@
     var left = target ? target.kcal - eaten.kcal : 0;
     return (
       '<div style="margin-top:18px">' +
-      '<p class="note note--plain">Это справочник, не меню на день. Нажми «Записать», продукт уйдет в дневник. План под норму во вкладке «Меню».</p>' +
+      '<p class="note note--plain">Набери что съел. Граммы только если порция не та. Цифры уже в справочнике, вручную их вбивать не надо.</p>' +
       (target
         ? '<p class="lead" style="margin:10px 0 14px">Осталось ' +
           left +
           " ккал из " +
           target.kcal +
-          ". Цифра в строке это эта порция, не 100 г.</p>"
+          ". В строке эта порция, не 100 г.</p>"
         : "") +
       field(
-        "Продукт",
-        '<input class="input" type="text" data-path="foodQuery" placeholder="грудка, гречка, вода" value="' +
+        "Что съел",
+        '<input class="input" type="text" data-path="foodQuery" placeholder="рис, грудка, банан" value="' +
           esc(state.foodQuery) +
-          '" />',
-        "Основные продукты: белок, жиры, углеводы, клетчатка, вода."
+          '" />'
       ) +
       field(
         "Граммы",
@@ -2803,6 +3192,25 @@
       '<div id="foodList">' +
       foodListHtml() +
       "</div></div>"
+    );
+  }
+
+  function slotPickerHtml() {
+    var cur = writeSlot();
+    return (
+      '<div class="chips chips--wrap" style="margin:0 0 12px">' +
+      MEAL_SLOTS.map(function (s) {
+        return (
+          '<button type="button" class="chip" data-action="add-to-slot" data-slot="' +
+          s +
+          '" aria-pressed="' +
+          (s === cur ? "true" : "false") +
+          '">' +
+          SLOT_TITLE[s] +
+          "</button>"
+        );
+      }).join("") +
+      "</div>"
     );
   }
 
@@ -2867,14 +3275,20 @@
     if (!photoAllowed()) {
       return card(
         cardHead("Распознавание фото выключено", "У бота не задан ключ модели") +
+          slotPickerHtml() +
           '<div class="btn-stack">' +
-          '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
+          '<button class="btn btn--outline" data-action="add-barcode-form">Штрихкод</button>' +
           '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
-          '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
+          '<button class="btn btn--outline" data-action="add-manual-form">Цифры с упаковки</button>' +
           "</div>" +
-          (state.addMode === "food" ? foodForm() : "") +
-          (state.addMode === "text" ? textForm() : "") +
-          (state.addMode === "manual" ? manualForm() : "")
+          (state.addMode === "text"
+            ? textForm()
+            : state.addMode === "manual"
+              ? manualForm()
+              : state.addMode === "barcode"
+                ? barcodeForm()
+                : foodForm()),
+        { id: "add-meal" }
       );
     }
 
@@ -2887,21 +3301,27 @@
 
     return card(
       cardHead("Добавить приём пищи", limitLine) +
+        slotPickerHtml() +
         '<div class="btn-stack">' +
         // Кнопка, а не <label for>, и открытие через .click() из кода: в WebView
         // Telegram связка «label → input с display:none» часто не срабатывает,
         // причём молча. Само поле выбора файла лежит в index.html — см. комментарий там.
-        '<button class="btn btn--primary" data-action="pick-photo">Сфотографировать еду</button>' +
-        '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
+        '<label class="btn btn--primary" for="photoInput">Сфотографировать еду</label>' +
+        '<button class="btn btn--outline" data-action="add-barcode-form">Штрихкод</button>' +
         '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
-        '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
+        '<button class="btn btn--outline" data-action="add-manual-form">Цифры с упаковки</button>' +
         "</div>" +
-        (state.addMode === "food" ? foodForm() : "") +
-        (state.addMode === "text" ? textForm() : "") +
-        (state.addMode === "manual" ? manualForm() : "") +
-        '<p class="note note--plain">Фото и текст я сначала показываю разбором: что за ' +
-        "продукт, сколько весит, откуда взяты цифры. В дневник запись идёт только после " +
-        "твоего «да». Не согласишься, ничего не запишется.</p>"
+        (state.addMode === "text"
+          ? textForm() +
+            '<p class="muted" style="margin-top:10px"><button type="button" class="sets__add" data-action="add-food-form">К поиску</button></p>'
+          : state.addMode === "manual"
+            ? manualForm() +
+              '<p class="muted" style="margin-top:10px"><button type="button" class="sets__add" data-action="add-food-form">К поиску</button></p>'
+          : state.addMode === "barcode"
+            ? barcodeForm()
+            : foodForm()) +
+        '<p class="note note--plain">Фото и длинный текст сначала покажу разбором. В дневник запись идёт только после твоего «да».</p>',
+      { id: "add-meal" }
     );
   }
 
@@ -3974,59 +4394,6 @@
     );
   }
 
-  function extraClipHtml(e) {
-    var slug = KM_PLANS.slug(e);
-    var local = e.video || KM_PLANS.localVideo(e);
-    var media = local
-      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="' +
-        esc(exSrc(slug)) +
-        '" src="' +
-        esc(local) +
-        '"></video></div>'
-      : "";
-    return (
-      '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
-      thumb(slug, e.name, "ex") +
-      '<span class="acc__text"><span class="acc__title">' +
-      esc(e.name) +
-      '</span><span class="acc__sub">' +
-      esc(e.short) +
-      '</span></span><span class="acc__sign">+</span></button>' +
-      '<div class="acc__body">' +
-      media +
-      '<span class="eyebrow section__label">Как делать</span><ol class="steps-list">' +
-      e.steps
-        .map(function (s) {
-          return "<li>" + esc(s) + "</li>";
-        })
-        .join("") +
-      "</ol>" +
-      '<span class="eyebrow section__label">Частые ошибки</span><ul class="bullets">' +
-      e.mistakes
-        .map(function (s) {
-          return "<li>" + esc(s) + "</li>";
-        })
-        .join("") +
-      "</ul>" +
-      '<p class="note"><strong>Тяжело?</strong> ' +
-      esc(e.easier) +
-      "</p></div></div>"
-    );
-  }
-
-  function extraGymHtml() {
-    var extras = KM_PLANS.gymClips();
-    if (!extras || !extras.length) return "";
-    return (
-      card(
-        cardHead(
-          "Ещё из зала",
-          "Не часть выбранной программы и не пишется в журнал. Техника с тех клипов, что уже сняты."
-        )
-      ) + extras.map(extraClipHtml).join("")
-    );
-  }
-
   function sessionBarHtml() {
     var done = sessionDoneCount();
     var vol = sessionVolume();
@@ -4092,7 +4459,6 @@
   function exerciseHtml(e, idx) {
     var goal = workoutGoal();
     var slug = KM_PLANS.slug(e);
-    var local = KM_PLANS.localVideo(e);
     var d = KM_PLANS.dose(e);
     var sets = sessionSets(e);
     var hold = Boolean(d.secs);
@@ -4184,22 +4550,11 @@
       '" aria-label="Заметка" />' +
       historyHtml(e) +
       "</div>";
-    var media = local
-      ? '<div class="shot"><video class="shot__img" controls playsinline muted loop preload="metadata" poster="' +
+    var media = slug
+      ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="' +
         esc(exSrc(slug)) +
-        '" src="' +
-        esc(local) +
-        '"></video></div>'
-      : slug
-        ? '<div class="shot"><img class="shot__img" loading="lazy" decoding="async" alt="" src="' +
-          esc(exSrc(slug)) +
-          '" onerror="this.parentNode.remove()" /></div>'
-        : "";
-    var btn = local
-      ? ""
-      : '<div class="btn-stack" style="margin-top:12px"><button class="btn btn--outline btn--slim" data-link="' +
-        esc(e.video) +
-        '">Техника на видео</button></div>';
+        '" onerror="this.parentNode.remove()" /></div>'
+      : "";
     return (
       '<div class="acc acc--ex"><button class="acc__head" data-acc>' +
       thumb(slug, e.name, "ex") +
@@ -4239,7 +4594,6 @@
       (KM_PLANS.harder(e)
         ? '<p class="note"><strong>Легко?</strong> ' + esc(KM_PLANS.harder(e)) + "</p>"
         : "") +
-      btn +
       "</div></div>"
     );
   }
@@ -4331,6 +4685,269 @@
         : "") +
       "</div>"
     );
+  }
+
+  /* ── Фотопротокол прогресса тела ───────────────────────────────────────────
+     Снимки хранятся только на сервере бота: без него раздел не работает, как
+     справочник продуктов и распознавание фото еды. */
+
+  var PP_ANGLE_WORD = { front: "Спереди", side: "Сбоку", back: "Сзади" };
+
+  function loadProgressPhotos() {
+    if (state.progressPhotos || !online) return;
+    state.progressPhotos = [];
+    KM_API.progressPhotos()
+      .then(function (data) {
+        state.progressPhotos = data.photos || [];
+        state.ppUsage = data.usage || null;
+        state.ppLimit = data.limit || null;
+        render();
+      })
+      .catch(function () {
+        state.progressPhotos = null;
+      });
+  }
+
+  function ppFindPhoto(id) {
+    var list = state.progressPhotos || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  function ppFilteredPhotos() {
+    var list = (state.progressPhotos || []).slice().reverse(); // новые сверху
+    if (state.ppFilter === "all") return list;
+    return list.filter(function (p) {
+      return p.angle === state.ppFilter;
+    });
+  }
+
+  function ppUsageLine() {
+    var u = state.ppUsage;
+    var l = state.ppLimit;
+    if (!u || !l) return "";
+    var mb = Math.round((u.bytes / 1024 / 1024) * 10) / 10;
+    var mbLimit = Math.round(l.bytes / 1024 / 1024);
+    return u.count + " из " + l.count + " фото, " + mb + " из " + mbLimit + " МБ";
+  }
+
+  function ppOpenUpload(angle) {
+    if (!online) {
+      state.notice = { kind: "err", text: "Открой приложение из Telegram, иначе фото не сохранится." };
+      return render();
+    }
+    if (state.ppBusy) {
+      state.notice = { kind: "err", text: "Подожди, предыдущее фото ещё грузится." };
+      return render();
+    }
+    state.ppUploadAngle = angle;
+    var pick = document.getElementById("pp-file-" + angle);
+    if (!pick) {
+      state.notice = { kind: "err", text: "Поле выбора фото не нашлось. Обнови страницу." };
+      return render();
+    }
+    pick.value = "";
+    pick.click();
+  }
+
+  function ppUpload(file) {
+    var angle = state.ppUploadAngle;
+    if (!angle) return;
+    state.ppBusy = true;
+    state.notice = null;
+    render();
+    KM_API.addProgressPhoto(file, angle, state.ppDate)
+      .then(function (data) {
+        state.ppBusy = false;
+        state.ppUploadAngle = null;
+        if (data && data.photo) state.progressPhotos = (state.progressPhotos || []).concat([data.photo]);
+        if (data && data.usage) state.ppUsage = data.usage;
+        state.notice = { kind: "ok", text: "Фото добавлено." };
+        haptic("light");
+        render();
+      })
+      .catch(ppError);
+  }
+
+  function ppError(err) {
+    state.ppBusy = false;
+    state.ppUploadAngle = null;
+    state.notice = { kind: "err", text: (err && err.message) || "Не получилось. Попробуй ещё раз." };
+    haptic("heavy");
+    render();
+  }
+
+  function ppTogglePick(id) {
+    if (!id) return;
+    var idx = state.ppCompare.indexOf(id);
+    if (idx !== -1) {
+      state.ppCompare.splice(idx, 1);
+    } else {
+      if (state.ppCompare.length >= 2) state.ppCompare.shift();
+      state.ppCompare.push(id);
+    }
+    haptic("light");
+    render();
+  }
+
+  /** Удаление — только после явного подтверждения на карточке, не по одному тапу. */
+  function ppDeleteNow(id) {
+    if (!id) return;
+    state.ppConfirm = null;
+    KM_API.removeProgressPhoto(id)
+      .then(function (data) {
+        state.progressPhotos = (state.progressPhotos || []).filter(function (p) {
+          return p.id !== id;
+        });
+        state.ppCompare = state.ppCompare.filter(function (x) {
+          return x !== id;
+        });
+        if (data && data.usage) state.ppUsage = data.usage;
+        haptic("light");
+        render();
+      })
+      .catch(function (err) {
+        state.notice = { kind: "err", text: (err && err.message) || "Не удалось удалить. Попробуй ещё раз." };
+        haptic("heavy");
+        render();
+      });
+  }
+
+  function ppCompareHtml() {
+    if (state.ppCompare.length !== 2) return "";
+    var a = ppFindPhoto(state.ppCompare[0]);
+    var b = ppFindPhoto(state.ppCompare[1]);
+    if (!a || !b) return "";
+    return card(
+      cardHead("Сравнение", "Было и стало рядом") +
+        '<div class="pp-compare">' +
+        [a, b]
+          .map(function (p) {
+            return (
+              '<div class="pp-compare__item"><img src="' +
+              esc(p.url) +
+              '" alt="" loading="lazy" decoding="async" />' +
+              '<p class="pp-compare__cap">' +
+              esc(PP_ANGLE_WORD[p.angle] || "") +
+              ", " +
+              esc(formatDate(p.date)) +
+              "</p></div>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        '<div class="btn-stack" style="margin-top:12px">' +
+        '<button type="button" class="btn btn--outline btn--slim" data-action="pp-compare-close">Закрыть сравнение</button>' +
+        "</div>"
+    );
+  }
+
+  function ppCardHtml(p) {
+    var picked = state.ppCompare.indexOf(p.id) !== -1;
+    var confirming = state.ppConfirm === p.id;
+    return (
+      '<div class="pp-card' +
+      (picked ? " pp-card--picked" : "") +
+      '">' +
+      '<button type="button" class="pp-card__photo" data-action="pp-pick" data-id="' +
+      esc(p.id) +
+      '" aria-label="Выбрать для сравнения">' +
+      '<img src="' +
+      esc(p.url) +
+      '" alt="" loading="lazy" decoding="async" />' +
+      "</button>" +
+      '<span class="pp-card__tag">' +
+      esc(PP_ANGLE_WORD[p.angle] || "") +
+      "</span>" +
+      '<span class="pp-card__date">' +
+      esc(formatDate(p.date)) +
+      "</span>" +
+      (picked ? '<span class="pp-card__mark">✓</span>' : "") +
+      '<button type="button" class="pp-card__del" data-action="pp-del-ask" data-id="' +
+      esc(p.id) +
+      '" aria-label="Удалить">×</button>' +
+      (confirming
+        ? '<div class="pp-confirm"><p>Удалить фото навсегда</p><div class="pp-confirm__row">' +
+          '<button type="button" class="btn btn--outline btn--slim" data-action="pp-del-no">Отмена</button>' +
+          '<button type="button" class="btn btn--primary btn--slim" data-action="pp-del-yes" data-id="' +
+          esc(p.id) +
+          '">Удалить</button>' +
+          "</div></div>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  function progressPhotosSection() {
+    if (!online) {
+      return card(
+        cardHead("Фотопротокол недоступен", "Открой приложение из Telegram: снимки хранятся на сервере бота вместе с остальным дневником")
+      );
+    }
+
+    var uploading = state.ppBusy;
+    var list = ppFilteredPhotos();
+    var full = state.ppUsage && state.ppLimit ? state.ppUsage.count >= state.ppLimit.count : false;
+
+    var uploadCard = card(
+      cardHead("Добавить фото", "Спереди, сбоку и сзади: так заметнее перемена за недели") +
+        field(
+          "Дата съёмки",
+          '<input class="input" type="date" data-path="ppDate" value="' + esc(state.ppDate) + '" />'
+        ) +
+        '<div class="chips chips--wrap pp-upload-row">' +
+        ["front", "side", "back"]
+          .map(function (a) {
+            if (uploading || full) {
+              return '<span class="chip" aria-disabled="true">' + esc(PP_ANGLE_WORD[a]) + "</span>";
+            }
+            return (
+              '<label class="chip" for="pp-file-' +
+              a +
+              '">' +
+              esc(PP_ANGLE_WORD[a]) +
+              "</label>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        (uploading ? '<p class="muted" style="margin-top:10px">Загружаю снимок…</p>' : "") +
+        (full
+          ? '<p class="muted" style="margin-top:10px">Лимит фото исчерпан. Удали старые, чтобы добавить новое.</p>'
+          : "") +
+        (state.ppUsage && state.ppLimit
+          ? '<p class="note note--plain" style="margin-top:10px">' + esc(ppUsageLine()) + "</p>"
+          : "")
+    );
+
+    var filterCard = card(
+      cardHead("Фильтр", "Показать по ракурсу") +
+        chips(
+          "pp_filter",
+          state.ppFilter,
+          [["all", "Все"], ["front", "Спереди"], ["side", "Сбоку"], ["back", "Сзади"]],
+          true
+        )
+    );
+
+    var gridCard;
+    if (!state.progressPhotos) {
+      gridCard = card('<p class="muted">Загружаю фото…</p>');
+    } else if (!list.length) {
+      gridCard = card(cardHead("Пока пусто", "Добавь первое фото, и через несколько недель будет с чем сравнить"));
+    } else {
+      gridCard = card(
+        cardHead("Снимки", list.length + " фото") +
+          '<p class="note note--plain">Нажми на снимок, чтобы выбрать его для сравнения. Выбери два.</p>' +
+          '<div class="pp-grid">' +
+          list.map(ppCardHtml).join("") +
+          "</div>"
+      );
+    }
+
+    return uploadCard + ppCompareHtml() + filterCard + gridCard;
   }
 
   /* ── Экран: профиль ─────────────────────────────────────────────────────── */
@@ -4495,7 +5112,16 @@
       ? card(
           cardHead(
             left >= 0 ? "Осталось на сегодня" : "Перебор",
-            "Съедено " + eaten.kcal + " из " + m.kcal + " ккал · цель: " + GOAL_WORD[p.goal],
+            "В сутки " +
+              m.kcal +
+              " ккал · белок " +
+              m.proteinG +
+              " г · жир " +
+              m.fatG +
+              " г · углеводы " +
+              m.carbsG +
+              " г · " +
+              GOAL_WORD[p.goal],
             eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
           ) +
             figure(
@@ -4526,7 +5152,7 @@
     // подраздела: что сегодня, что в динамике, как выглядит.
     var tabs =
       '<div class="chips" data-seg="prof_tab">' +
-      [["day", "Сегодня"], ["progress", "Прогресс"], ["look", "Вид"]]
+      [["day", "Сегодня"], ["progress", "Прогресс"], ["photos", "Фото"], ["look", "Вид"]]
         .map(function (o) {
           return (
             '<button type="button" class="chip" data-value="' +
@@ -4554,6 +5180,10 @@
         recentWorkoutsCard() +
         renderDiary()
       );
+    }
+    if (state.profTab === "photos") {
+      loadProgressPhotos();
+      return noticeHtml() + tabs + progressPhotosSection();
     }
     if (state.profTab === "look") {
       return noticeHtml() + tabs + themeCard() + aboutCard();
@@ -4925,33 +5555,45 @@
   }
 
   function render() {
-    if (telegramUnsigned()) {
-      view.innerHTML = '<div class="screen">' + unsignedGate() + "</div>";
-      titleEl.textContent = "KINGMODE";
-      tabbar.hidden = true;
-      if (tg && tg.BackButton) tg.BackButton.hide();
-      return;
-    }
-    if (needJoin) {
-      view.innerHTML = '<div class="screen">' + joinGate(needJoin) + "</div>";
-      titleEl.textContent = "Вход";
-      tabbar.hidden = true;
-      if (tg && tg.BackButton) tg.BackButton.hide();
-      return;
-    }
-    view.innerHTML = '<div class="screen">' + SCREENS[state.screen]() + "</div>";
-    var tab = TABS.filter(function (t) {
-      return t[0] === state.screen;
-    })[0];
-    titleEl.textContent = tab ? tab[2] : state.screen === "setup" ? "Знакомство" : "KINGMODE";
-    tabbar.hidden = state.screen === "setup";
-    renderTabs();
+    try {
+      if (telegramUnsigned()) {
+        view.innerHTML = '<div class="screen">' + unsignedGate() + "</div>";
+        titleEl.textContent = "KINGMODE";
+        tabbar.hidden = true;
+        if (tg && tg.BackButton) tg.BackButton.hide();
+        return;
+      }
+      if (needJoin) {
+        view.innerHTML = '<div class="screen">' + joinGate(needJoin) + "</div>";
+        titleEl.textContent = "Вход";
+        tabbar.hidden = true;
+        if (tg && tg.BackButton) tg.BackButton.hide();
+        return;
+      }
+      view.innerHTML = '<div class="screen">' + SCREENS[state.screen]() + "</div>";
+      var tab = TABS.filter(function (t) {
+        return t[0] === state.screen;
+      })[0];
+      titleEl.textContent = tab ? tab[2] : state.screen === "setup" ? "Знакомство" : "KINGMODE";
+      tabbar.hidden = state.screen === "setup";
+      renderTabs();
 
-    if (tg && tg.BackButton) {
-      if (state.screen === "home" || state.screen === "setup") tg.BackButton.hide();
-      else tg.BackButton.show();
+      if (tg && tg.BackButton) {
+        if (state.screen === "home" || state.screen === "setup") tg.BackButton.hide();
+        else tg.BackButton.show();
+      }
+      playWaterFill();
+    } catch (err) {
+      view.innerHTML =
+        '<div class="screen">' +
+        card(
+          cardHead("Экран не собрался", "Данные на месте. Нажми обновить.") +
+            '<div class="btn-stack"><button class="btn btn--primary" data-action="reload-day">Обновить</button></div>'
+        ) +
+        "</div>";
+      tabbar.hidden = false;
+      renderTabs();
     }
-    playWaterFill();
   }
 
   function go(screen) {
@@ -5092,6 +5734,24 @@
       return;
     }
 
+    var editMeal = t.closest("[data-editmeal]");
+    if (editMeal && !t.closest("[data-delmeal]")) {
+      var editId = editMeal.getAttribute("data-editmeal");
+      var found = mealsToday().filter(function (m) {
+        return m.id === editId;
+      })[0];
+      if (found && online) {
+        state.lastMeal = { id: found.id, name: found.name, kcal: found.kcal, factor: 1 };
+        state.notice = null;
+        state.nutTab = "eaten";
+        if (state.screen !== "nutrition") state.screen = "nutrition";
+        haptic("light");
+        render();
+        scrollToId("portion-card");
+      }
+      return;
+    }
+
     var delMeal = t.closest("[data-delmeal]");
     if (delMeal) {
       var mealId = delMeal.getAttribute("data-delmeal");
@@ -5161,8 +5821,15 @@
       case "add-text-form":
       case "add-manual-form":
       case "add-food-form":
+      case "add-barcode-form":
         state.addMode = action.getAttribute("data-action").replace("add-", "").replace("-form", "");
-        if (state.addMode === "food") state.foodMore = {};
+        if (state.addMode === "food" || state.addMode === "barcode") {
+          state.foodMore = {};
+          if (state.screen !== "nutrition") {
+            state.screen = "nutrition";
+            state.nutTab = "eaten";
+          }
+        }
         state.notice = null;
         haptic("light");
         return render();
@@ -5228,7 +5895,8 @@
           KM_API.pick(
             withItems.map(function (u) {
               return { items: u.items };
-            })
+            }),
+            yesSlot || writeSlot()
           )
             .then(function (data) {
               var extra = data.copied && data.copied.length > 1 ? data.copied : null;
@@ -5247,6 +5915,7 @@
             .catch(mealError);
           return;
         }
+        if (yesSlot) state.addSlot = yesSlot;
         return repeatMeals(onlyNames);
       }
       case "same-as-toggle": {
@@ -5284,6 +5953,10 @@
           .catch(mealError);
         return;
       }
+      case "part-pick":
+        state.partAdd = action.getAttribute("data-food") || "";
+        state.partAddG = action.getAttribute("data-grams") || state.partAddG;
+        // fall through
       case "part-add": {
         var addName = String(state.partAdd || "").trim();
         var addG = num(state.partAddG);
@@ -5362,6 +6035,15 @@
         return render();
       case "add-food":
         return addMealFood(action.getAttribute("data-food"), Number(action.getAttribute("data-grams")));
+      case "add-barcode":
+        return addMealBarcode(action.getAttribute("data-code") || state.barcodeCode, Number(action.getAttribute("data-grams") || state.barcodeGrams));
+      case "add-to-slot":
+        state.addSlot = action.getAttribute("data-slot") || null;
+        state.nutTab = "eaten";
+        if (state.screen !== "nutrition") state.screen = "nutrition";
+        haptic("light");
+        render();
+        return scrollToId("add-meal");
       case "day-prev":
         return openDay(shiftDate(viewDate(), -1));
       case "day-next":
@@ -5371,7 +6053,6 @@
       case "route-water":
         return openRouteWater();
       case "route-workout":
-        if (isRestToday() && !workoutLoggedToday()) return markRestDay();
         workoutPick = false;
         return go("workout");
       case "route-rest":
@@ -5446,6 +6127,24 @@
         haptic("medium");
         render();
         return window.scrollTo(0, 0);
+      case "pp-upload-front":
+      case "pp-upload-side":
+      case "pp-upload-back":
+        return ppOpenUpload(action.getAttribute("data-action").replace("pp-upload-", ""));
+      case "pp-pick":
+        return ppTogglePick(action.getAttribute("data-id"));
+      case "pp-del-ask":
+        state.ppConfirm = action.getAttribute("data-id");
+        haptic("light");
+        return render();
+      case "pp-del-no":
+        state.ppConfirm = null;
+        return render();
+      case "pp-del-yes":
+        return ppDeleteNow(action.getAttribute("data-id"));
+      case "pp-compare-close":
+        state.ppCompare = [];
+        return render();
     }
   });
 
@@ -5476,6 +6175,10 @@
       if (path === "foodQuery" || path === "foodGrams") {
         var box = document.getElementById("foodList");
         if (box) box.innerHTML = foodListHtml();
+      }
+      if (path === "partAdd" || path === "partAddG") {
+        var hints = document.getElementById("partAddList");
+        if (hints) hints.innerHTML = partSuggestHtml();
       }
       if (path.indexOf("profile.") === 0) {
         var result = document.getElementById("result");
@@ -5513,6 +6216,15 @@
       if (!sessNote.notes) sessNote.notes = {};
       sessNote.notes[t.getAttribute("data-ex-note")] = String(t.value || "").slice(0, 80);
       persist();
+      return;
+    }
+
+    var ppAngle = t.getAttribute && t.getAttribute("data-pp-angle");
+    if (ppAngle) {
+      var ppFile = t.files && t.files[0];
+      t.value = "";
+      state.ppUploadAngle = ppAngle;
+      if (ppFile) ppUpload(ppFile);
       return;
     }
 
@@ -5570,6 +6282,9 @@
         state.profTab = value;
         state.notice = null;
         state.addMode = null;
+        return render();
+      case "pp_filter":
+        state.ppFilter = value;
         return render();
       case "theme":
         state.theme = value;
@@ -5734,7 +6449,7 @@
       state.busy = busyKind;
       state.notice = null;
       render();
-      KM_API.manual(meal)
+      KM_API.manual(meal, writeSlot())
         .then(function (data) {
           applyMealResult(data, "Записал: " + meal.name + ", " + meal.kcal + " ккал.");
         })
@@ -5764,7 +6479,7 @@
     state.repeatAsk = null;
     state.notice = null;
     render();
-    KM_API.repeat(names)
+    KM_API.repeat(names, writeSlot())
       .then(function (data) {
         var extra = data.copied && data.copied.length > 1 ? data.copied : null;
         var kcal = extra
@@ -5780,12 +6495,38 @@
       .catch(mealError);
   }
 
-  function addMealFood(name, grams) {
-    if (!name || !state.day) return;
+  function addMealBarcode(code, grams) {
+    var raw = String(code || "").replace(/\D/g, "");
+    if (!raw) {
+      state.notice = { kind: "err", text: "Набери цифры под полосками на упаковке." };
+      return render();
+    }
+    if (!state.day) {
+      state.notice = { kind: "err", text: "Дневник ещё грузится. Подожди секунду и нажми ещё раз." };
+      return render();
+    }
     state.busy = "food";
     state.notice = null;
     render();
-    KM_API.food(name, grams)
+    KM_API.barcode(raw, grams >= 1 ? grams : undefined, writeSlot())
+      .then(function (data) {
+        state.barcodeCode = "";
+        state.barcodeGrams = "";
+        applyMealResult(data, "Записал по штрихкоду: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
+      })
+      .catch(mealError);
+  }
+
+  function addMealFood(name, grams) {
+    if (!name) return;
+    if (!state.day) {
+      state.notice = { kind: "err", text: "Дневник ещё грузится. Подожди секунду и нажми ещё раз." };
+      return render();
+    }
+    state.busy = "food";
+    state.notice = null;
+    render();
+    KM_API.food(name, grams, writeSlot())
       .then(function (data) {
         state.foodQuery = "";
         state.foodGrams = "";
@@ -5909,6 +6650,31 @@
     }
   } catch (e) {
     /* метка не критична */
+  }
+
+  // WebView Telegram иногда держит старую вкладку живой даже после полного
+  // переоткрытия — на iOS это уже ловили (см. server.ts). Баннер зовёт
+  // обновиться явно, вместо того чтобы по новой объяснять «закрой и открой».
+  try {
+    var openedBuild = KM_API.build ? KM_API.build() : "";
+    if (openedBuild && KM_API.checkFresh) {
+      KM_API.checkFresh().then(function (liveBuild) {
+        if (liveBuild && liveBuild !== openedBuild && !document.getElementById("updateBar")) {
+          var bar = document.createElement("div");
+          bar.id = "updateBar";
+          bar.className = "update-bar";
+          bar.innerHTML =
+            "<span>Открыта старая версия приложения</span>" +
+            '<button type="button">Обновить</button>';
+          bar.querySelector("button").onclick = function () {
+            location.href = location.pathname + "?r=" + Date.now();
+          };
+          document.body.appendChild(bar);
+        }
+      });
+    }
+  } catch (e) {
+    /* проверка версии не критична */
   }
 
   render();
