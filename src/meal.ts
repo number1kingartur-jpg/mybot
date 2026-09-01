@@ -112,6 +112,7 @@ export const IDENTIFY_PROMPT =
 const GEMINI_MODELS = [
   "gemini-flash-lite-latest",
   "gemini-flash-latest",
+  "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
 ];
 
