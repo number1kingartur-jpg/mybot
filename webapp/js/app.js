@@ -5307,7 +5307,7 @@
         "<li>Тема оформления и цель по весу хранятся на устройстве и ни на что не влияют.</li>" +
         "<li>Фото уходит на сервер бота для распознавания и не сохраняется.</li>" +
         "</ul>" +
-        '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--outline btn--slim" data-action="open-calc">Циклы 5/3/1 и DUP</button></div>' +
+        '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--outline btn--slim" data-action="open-calc">Программа тренировок и расчёт весов</button></div>' +
         '<p class="note note--plain">Версия приложения: ' +
         (when
           ? String(when.getDate()).padStart(2, "0") +
