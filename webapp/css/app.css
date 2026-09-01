@@ -2505,7 +2505,9 @@ label.btn {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 14px;
-  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  /* Тот же WebView, что и у .shell: env(safe-area-inset-top) возвращает 0,
+     полоса вылезает под шапку Telegram. Тот же фиксированный запасной отступ. */
+  padding-top: max(54px, env(safe-area-inset-top, 0px) + 10px);
   background: var(--gold);
   color: #14110b;
   font-size: 13px;
