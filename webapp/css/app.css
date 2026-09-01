@@ -183,6 +183,9 @@ button {
   max-width: 520px;
   margin: 0 auto;
   padding: 0 var(--pad);
+  /* Без этого заголовок наверху уезжает под системную строку статуса телефона
+     (часы, батарея) — виден обрезанным на некоторых устройствах и режимах. */
+  padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: calc(var(--tabbar-h) + 26px + env(safe-area-inset-bottom, 0px));
 }
 
