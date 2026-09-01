@@ -115,6 +115,37 @@ const GEMINI_MODELS = [
   "gemini-3.1-flash-lite",
 ];
 
+/**
+ * Жёсткая схема ответа вместо просьбы в тексте промпта отвечать "ТОЛЬКО JSON".
+ * Раньше отклонение от формата (лишний текст, markdown-обёртка, недопустимый
+ * JSON) ловилось только после ответа как MealPhotoUnreadableError("invalid_json")
+ * — со схемой модель физически не может ответить в другой форме.
+ */
+const IDENTIFY_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    items: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING" },
+          grams: { type: "NUMBER" },
+          kcal100: { type: "NUMBER" },
+          p100: { type: "NUMBER" },
+          f100: { type: "NUMBER" },
+          c100: { type: "NUMBER" },
+          packaged: { type: "BOOLEAN" },
+          barcode: { type: "STRING" },
+        },
+        required: ["name", "grams"],
+      },
+    },
+    note: { type: "STRING" },
+  },
+  required: ["items"],
+};
+
 const photoCache = new Map<string, MealAnalysis>();
 const PHOTO_CACHE_MAX = 100;
 
@@ -734,7 +765,12 @@ async function geminiRequest(apiKey: string, parts: object[], model: string): Pr
     contents: [{ parts }],
     // Запас на ответ: в позиции теперь до шести полей (КБЖУ с этикетки), и на
     // тарелке из пяти составляющих обрезанный JSON стоил бы всего разбора.
-    generationConfig: { temperature: 0.15, maxOutputTokens: 900 },
+    generationConfig: {
+      temperature: 0.15,
+      maxOutputTokens: 900,
+      responseMimeType: "application/json",
+      responseSchema: IDENTIFY_RESPONSE_SCHEMA,
+    },
   });
   const { status, raw } = await httpsJson(
     {
