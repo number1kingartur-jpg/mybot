@@ -1554,6 +1554,23 @@ async function handleApi(
   json(res, 404, { error: "unknown_endpoint" });
 }
 
+/**
+ * Пинг мёртвой руки: если задан HEALTHCHECK_PING_URL (healthchecks.io и
+ * похожие), процесс подтверждает живость раз в 5 минут. Без переменной
+ * ничего не делает — сервис по умолчанию без внешнего мониторинга.
+ */
+function startHeartbeat(): void {
+  const url = process.env.HEALTHCHECK_PING_URL?.trim();
+  if (!url) return;
+  const ping = () => {
+    fetch(url).catch((e) => {
+      console.error("heartbeat ping:", e instanceof Error ? e.message : String(e));
+    });
+  };
+  ping();
+  setInterval(ping, 5 * 60_000).unref();
+}
+
 export function startWebappServer(botToken: string): http.Server | null {
   if (process.env.WEBAPP_SERVER === "0") {
     console.log("🌐 HTTP-сервер выключен (WEBAPP_SERVER=0)");
@@ -1631,6 +1648,7 @@ export function startWebappServer(botToken: string): http.Server | null {
     } else {
       console.log("   Access gate: OFF");
     }
+    startHeartbeat();
   });
   server.on("error", (e) => console.error("HTTP server:", e instanceof Error ? e.message : e));
 
