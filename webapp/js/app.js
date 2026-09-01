@@ -6636,9 +6636,15 @@
     tg.expand();
     // Полноэкранный режим (Bot API 8.0+) — без шапки Telegram вокруг, как у
     // настоящего приложения, а не страницы в чате. Старые клиенты метод не
-    // знают, поэтому только если он реально есть.
+    // знают, поэтому только если он реально есть. onEvent — единственный
+    // способ узнать, что клиент молча отказал: сам вызов ничего не бросает.
     if (typeof tg.requestFullscreen === "function") {
       try {
+        if (typeof tg.onEvent === "function") {
+          tg.onEvent("fullscreenFailed", function (e) {
+            console.warn("[KM] fullscreen failed:", e && e.error, "platform:", tg.platform, "version:", tg.version);
+          });
+        }
         tg.requestFullscreen();
       } catch (e) {
         // Старый клиент может кинуть исключение вместо отсутствия метода —
