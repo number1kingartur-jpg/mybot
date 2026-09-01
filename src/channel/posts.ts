@@ -50,12 +50,29 @@ function interleave(...waves: ChannelPost[][]): ChannelPost[] {
   return out;
 }
 
+/**
+ * Проверено вручную 01.09.2026: у этих постов фото не подходит совсем,
+ * либо фейковый ИИ-человек (не Артур), либо не по теме (зеркальное селфи
+ * в зале вместо еды, рынка, вида или дороги). Держим id вне очереди,
+ * пока не найдется или не снимется настоящее подходящее фото.
+ */
+const PHOTO_MISMATCH_HOLD = new Set([
+  "w7_jumprope",
+  "w7_sleep_deep",
+  "w8_beach_walk",
+  "w8_street_food",
+  "w8_view_hill",
+  "w8_night_food",
+  "w8_coast_road",
+  "w8_market_morning",
+]);
+
 const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(
   CHANNEL_POSTS_WAVE5,
   CHANNEL_POSTS_WAVE6,
   CHANNEL_POSTS_WAVE7,
   CHANNEL_POSTS_WAVE8
-);
+).filter((p) => !PHOTO_MISMATCH_HOLD.has(p.id));
 
 /** Уникальная концовка по id, а не общий шаблон на все посты. */
 function withClosing(post: ChannelPost): ChannelPost {
