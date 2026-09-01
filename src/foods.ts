@@ -448,6 +448,53 @@ export function foodSlug(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function foldFood(s: string): string {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е");
+}
+
+/**
+ * Насколько запрос попал в продукт. Нужно, чтобы «рис» давал рис, а не
+ * рисовую кашу десятой строкой, и чтобы «ris» / «cola» находили то же самое.
+ */
+export function foodCatalogScore(food: FoodItem, query: string): number {
+  const q = foldFood(query);
+  if (!q) return food.role ? 1 : 0;
+  const name = foldFood(food.name);
+  const slug = foodSlug(food.name);
+  const qSlug = q.replace(/\s+/g, "-");
+  let score = 0;
+  if (name === q) score += 1000;
+  if (name.startsWith(q)) score += 400;
+  if (name.includes(q)) score += 80;
+  for (const raw of food.aliases) {
+    const alias = foldFood(raw);
+    if (alias === q) score += 900;
+    else if (alias.startsWith(q)) score += 300;
+    else if (alias.includes(q)) score += 40;
+  }
+  if (slug === qSlug) score += 500;
+  else if (slug.startsWith(qSlug)) score += 200;
+  else if (slug.includes(qSlug)) score += 30;
+  if (food.role) score += 5;
+  return score;
+}
+
+/**
+ * Список справочника: без запроса только основные, по запросу — всё, что
+ * система знает, по убыванию попадания. Иначе после крестика «салат» или кола
+ * не находятся, а латиница «ris» не даёт рис.
+ */
+export function foodsForCatalog(query: string): FoodItem[] {
+  const q = foldFood(query);
+  if (!q) return FOODS.filter((f) => f.role);
+  return FOODS.filter((f) => foodCatalogScore(f, q) > 0).sort(
+    (a, b) => foodCatalogScore(b, q) - foodCatalogScore(a, q)
+  );
+}
+
 /**
  * Файл картинки. У марки своей картинки часто нет, тогда берём категорию.
  * У варианта вроде зелёного яблока картинка своя: variantOf здесь нельзя,

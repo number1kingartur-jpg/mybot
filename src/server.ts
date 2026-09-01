@@ -8,6 +8,7 @@ import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_
 import {
   registerUser, getUser, updateUser, setNutrition,
   addMeal, removeMeal, scaleMeal, getMeals, getMeal, mealTotals, mealStreak, frequentMeals, progressSnapshot,
+  knownFoodParts, findKnownFoodPart,
   addBodyweight, getBodyweight, removeBodyweight,
   addWater, getWater, waterTargetMl,
   addWorkout, getAllWorkouts, getWorkouts, checkPr, lastLogs, cleanWorkoutMemo, getMealsForDays,
@@ -17,15 +18,17 @@ import {
   type NutritionProfile, type Lift, type Program, type ProgressPhotoEntry,
 } from "./db";
 import {
-  analyzeMealPhoto, analyzeMealText, editMeal, isCompleteShake, mealFromHistory, mealPartLines,
+  analyzeMealPhoto, analyzeMealText, editMeal, isCompleteShake, mealFromHistory, mealFromKnownPart, mealFromProductFacts, mealPartLines,
   mealVisionEnabled, mergeShakeFromUsual, MealPhotoUnreadableError,
 } from "./meal";
+import { factsByBarcode, validGtin } from "./product-db";
+import { STORE_SHELF } from "./store-shelf";
 import { lastCompleteShake, resolveUsualShakeMeal, usualShakeBrief } from "./meal-shake";
 import { dropPending, latestPending, peekPending, putPending, takePending, updatePending } from "./pending";
 import { FOODS, imageSlug, macrosFromItems, matchFood, resolveMealThumb } from "./foods";
 import { hasFoodImage } from "./food-images";
 import { publicMealPhoto, readMealThumb, saveMealThumb } from "./meal-thumbs";
-import { bangkokHour, sameAsAllSlots, shiftDate, slotByHour, splitOffer } from "./meal-same";
+import { bangkokHour, sameAsAllSlots, shiftDate, slotByHour, splitOffer, type MealSlot } from "./meal-same";
 import { calc531, calcGzclp } from "./calc/templates";
 import { calculatePeriodization, type Goal, type PeriodizationModel, type GenResult } from "./calc/periodization";
 import { parseSplit, plansForProgram, splitLevel, type Place, type SplitId } from "./simple";
@@ -115,8 +118,23 @@ function today(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
 }
 
-function mealHour(date: string): number | undefined {
-  return date === today() ? bangkokHour() : undefined;
+const SLOT_HOUR: Record<MealSlot, number> = {
+  breakfast: 8,
+  lunch: 13,
+  snack: 17,
+  dinner: 20,
+};
+
+function parseSlot(raw: unknown): MealSlot | undefined {
+  const s = String(raw ?? "");
+  if (s === "breakfast" || s === "lunch" || s === "snack" || s === "dinner") return s;
+  return undefined;
+}
+
+function mealHour(date: string, slot?: MealSlot): number | undefined {
+  if (date !== today()) return undefined;
+  if (slot) return SLOT_HOUR[slot];
+  return bangkokHour();
 }
 
 function weekKey(dateStr: string): string {
@@ -313,6 +331,7 @@ function dayState(userId: number, date: string) {
       carbsG: m.carbsG,
       slug: resolveMealThumb(m.name, m.slug),
       photoUrl: publicMealPhoto(m.photoUrl),
+      hour: m.hour,
       parts: m.parts,
     })),
     totals: mealTotals(userId, date),
@@ -321,6 +340,7 @@ function dayState(userId: number, date: string) {
     streak: mealStreak(userId, today()),
     progress: progressSnapshot(userId, today()),
     frequent: frequentMeals(userId, today()),
+    knownFoods: knownFoodParts(userId),
     usualShake: usualShakeBrief(userId),
     mealRemind: { on: !u?.mealRemindPaused, hours: [8, 13, 19] },
     sameAs:
@@ -891,7 +911,7 @@ async function handleApi(
 
   if (req.method === "GET" && urlPath === "/api/foods") {
     json(res, 200, {
-      foods: FOODS.filter((f) => f.role).map((f) => ({
+      foods: FOODS.map((f) => ({
         name: f.name,
         kcal100: f.kcal100,
         p100: f.p100,
@@ -902,6 +922,16 @@ async function handleApi(
         role: f.role,
         slug: hasFoodImage(imageSlug(f)) ? imageSlug(f) : undefined,
         aliases: f.aliases,
+      })),
+      shelf: STORE_SHELF.map((p) => ({
+        code: p.code,
+        name: p.name,
+        kcal100: p.kcal100,
+        p100: p.p100,
+        f100: p.f100,
+        c100: p.c100,
+        servingG: p.servingG,
+        country: p.country,
       })),
     });
     return;
@@ -1070,7 +1100,7 @@ async function handleApi(
    * перестал бы быть расчётом.
    */
   if (req.method === "POST" && urlPath === "/api/meal/confirm") {
-    const body = await readJson(req) as { token?: string };
+    const body = await readJson(req) as { token?: string; slot?: string };
     const found = takePending(user.id, String(body.token ?? ""));
     if (!found) {
       json(res, 410, {
@@ -1083,7 +1113,7 @@ async function handleApi(
     const row = addMeal({
       userId: user.id, date: found.date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
-      hour: mealHour(found.date),
+      hour: mealHour(found.date, parseSlot(body.slot)),
       parts: meal.parts,
     });
     console.log(`api meal confirm: ${found.source}, ${meal.kcal} ккал, user=${user.id}`);
@@ -1113,11 +1143,24 @@ async function handleApi(
       json(res, 410, { error: "pending_gone", message: "Разбор устарел — сфотографируй или напиши заново." });
       return;
     }
+    const addName = String(body.add?.name ?? "").trim();
+    const addGrams = Number(body.add?.grams);
+    const known = body.add && addName && !macrosFromItems([{ name: addName, grams: addGrams }])
+      ? findKnownFoodPart(user.id, addName)
+      : null;
     const edit =
       body.drop !== undefined
         ? { drop: Number(body.drop) }
         : body.add
-          ? { add: { name: String(body.add.name ?? ""), grams: Number(body.add.grams) } }
+          ? {
+              add: {
+                name: addName,
+                grams: addGrams,
+                known: known
+                  ? { ...known, source: known.source ?? "catalog" as const }
+                  : undefined,
+              },
+            }
           : { grams: { index: Number(body.index), value: Number(body.grams) } };
     const meal = editMeal(found.meal, edit);
     if (!meal) {
@@ -1180,7 +1223,7 @@ async function handleApi(
 
   /** Записать отмеченное: коктейль без винограда, без повторного распознавания. */
   if (req.method === "POST" && urlPath === "/api/meal/pick") {
-    const body = await readJson(req) as { units?: { items?: { name?: string; grams?: number }[] }[] };
+    const body = await readJson(req) as { units?: { items?: { name?: string; grams?: number }[] }[]; slot?: string };
     const units = (Array.isArray(body.units) ? body.units : []).slice(0, 8);
     const added: { name: string; kcal: number }[] = [];
     for (const unit of units) {
@@ -1201,7 +1244,7 @@ async function handleApi(
         carbsG: meal.carbsG,
         slug: meal.slug,
         photoUrl: publicMealPhoto(meal.photoUrl),
-        hour: mealHour(date),
+        hour: mealHour(date, parseSlot(body.slot)),
         parts: meal.parts,
       });
       added.push({ name: meal.name, kcal: meal.kcal });
@@ -1223,14 +1266,18 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/meal/food") {
-    const body = await readJson(req) as { name?: string; grams?: number };
+    const body = await readJson(req) as { name?: string; grams?: number; slot?: string };
     const name = String(body.name ?? "").trim().slice(0, 60);
     const grams = Math.round(Number(body.grams));
     if (!name || !(grams >= 1 && grams <= 3000)) {
       json(res, 400, { error: "bad_food" });
       return;
     }
-    const meal = macrosFromItems([{ name, grams }]);
+    const meal = macrosFromItems([{ name, grams }])
+      ?? (() => {
+        const known = findKnownFoodPart(user.id, name);
+        return known ? mealFromKnownPart({ ...known, source: known.source ?? "catalog" }, grams) : null;
+      })();
     if (!meal || meal.kcal <= 0) {
       json(res, 422, { error: "unknown_food", message: "Такого продукта нет в справочнике." });
       return;
@@ -1238,7 +1285,37 @@ async function handleApi(
     const row = addMeal({
       userId: user.id, date,
       name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
-      hour: mealHour(date),
+      hour: mealHour(date, parseSlot(body.slot)),
+      parts: meal.parts,
+    });
+    json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/meal/barcode") {
+    const body = await readJson(req) as { code?: string; grams?: number; slot?: string };
+    const code = validGtin(String(body.code ?? ""));
+    if (!code) {
+      json(res, 400, {
+        error: "bad_barcode",
+        message: "Набери все цифры под полосками, без пробелов. Обычно 8, 12 или 13 знаков.",
+      });
+      return;
+    }
+    const facts = await factsByBarcode(code);
+    const grams = Number(body.grams);
+    const meal = facts ? mealFromProductFacts(facts, Number.isFinite(grams) && grams >= 1 ? grams : undefined) : null;
+    if (!meal) {
+      json(res, 422, {
+        error: "unknown_barcode",
+        message: "Этого кода нет в открытой базе. Сними этикетку или введи КБЖУ с упаковки.",
+      });
+      return;
+    }
+    const row = addMeal({
+      userId: user.id, date,
+      name: meal.name, kcal: meal.kcal, proteinG: meal.proteinG, fatG: meal.fatG, carbsG: meal.carbsG, slug: meal.slug, photoUrl: publicMealPhoto(meal.photoUrl),
+      hour: mealHour(date, parseSlot(body.slot)),
       parts: meal.parts,
     });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
@@ -1251,6 +1328,7 @@ async function handleApi(
    * ничего не уточнит, а фото и текст стоят запроса к модели.
    */
   if (req.method === "POST" && urlPath === "/api/meal/usual-shake") {
+    const body = await readJson(req) as { slot?: string };
     const meal = resolveUsualShakeMeal(user.id);
     if (!meal?.parts?.length) {
       json(res, 422, { error: "no_shake", message: "Коктейль не собрался. Напиши состав текстом." });
@@ -1268,7 +1346,7 @@ async function handleApi(
       carbsG: meal.carbsG,
       slug: meal.slug,
       photoUrl: publicMealPhoto(meal.photoUrl),
-      hour: mealHour(date),
+      hour: mealHour(date, parseSlot(body.slot)),
       parts: meal.parts,
     });
     console.log(`api meal usual-shake: ${meal.kcal} kcal, user=${user.id}`);
@@ -1281,7 +1359,7 @@ async function handleApi(
   }
 
   if (req.method === "POST" && urlPath === "/api/meal/repeat") {
-    const body = await readJson(req) as { name?: string; names?: string[] };
+    const body = await readJson(req) as { name?: string; names?: string[]; slot?: string };
     const names = (Array.isArray(body.names) ? body.names : body.name ? [body.name] : [])
       .map((n) => String(n ?? "").trim())
       .filter(Boolean)
@@ -1304,7 +1382,7 @@ async function handleApi(
         carbsG: prev.carbsG,
         slug: prev.slug,
         photoUrl: publicMealPhoto(prev.photoUrl),
-        hour: mealHour(date),
+        hour: mealHour(date, parseSlot(body.slot)),
         parts: prev.parts,
       };
       addMeal({ userId: user.id, date, ...meal });
@@ -1334,7 +1412,7 @@ async function handleApi(
     // творог и получит картинку — иначе ручная запись выглядит безымянной.
     const known = matchFood(name);
     const meal = { name, kcal, proteinG, fatG, carbsG, slug: known ? resolveMealThumb(name, imageSlug(known)) : resolveMealThumb(name) };
-    const row = addMeal({ userId: user.id, date, ...meal, hour: mealHour(date) });
+    const row = addMeal({ userId: user.id, date, ...meal, hour: mealHour(date, parseSlot(body.slot)) });
     json(res, 200, { meal, mealId: row.id, ...dayState(user.id, date) });
     return;
   }

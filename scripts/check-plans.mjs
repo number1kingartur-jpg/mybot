@@ -25,6 +25,7 @@ import {
   SEX_NOTE,
   exerciseHarder,
   exerciseSlug,
+  exerciseVideoUrl,
 } from "../dist/simple.js";
 
 let failed = 0;
@@ -171,6 +172,28 @@ for (const split of SPLITS) {
         }
       });
     });
+  }
+}
+
+for (const split of SPLITS) {
+  for (const place of PLACES) {
+    for (const plan of APP.forProgram(place, split)) {
+      for (const a of plan.items) {
+        if (a.video && /\.mp4(\?|$)/i.test(a.video)) {
+          const file = path.join("webapp", ...String(a.video).split("/"));
+          check(`${place}/${split}/${a.name}: файл видео`, fs.existsSync(file), a.video);
+        }
+      }
+    }
+    for (const plan of plansForProgram(place, split)) {
+      for (const e of plan.items) {
+        const url = exerciseVideoUrl(e);
+        if (url.includes("video/ex/")) {
+          const file = path.join("webapp", "video", "ex", `${exerciseSlug(e)}.mp4`);
+          check(`бот ${place}/${split}/${e.name}: локальное видео`, fs.existsSync(file), file);
+        }
+      }
+    }
   }
 }
 

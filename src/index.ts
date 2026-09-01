@@ -23,7 +23,7 @@ import { dayMenuSummary, goalPickerText, mealDetailText, scaledMealKcal, MEAL_KE
 import {
   parseSplit, plansForProgram, programById, type Place, type Level, type SimpleExercise, type Goal as SimpleGoal,
   schemeFor, restFor, doseLabel, progressionRule, enduranceNote, SEX_NOTE,
-  exerciseHarder, exerciseVideoUrl, isDirectVideo,
+  exerciseHarder,
 } from "./simple";
 import { parseWorkout, parseGroups, type ParsedExercise } from "./parser";
 import { CATALOG } from "./exercises";
@@ -685,7 +685,7 @@ async function sendSimpleWelcome(ctx: { reply: (t: string, o?: object) => Promis
   await ctx.reply(
     `<b>💪 Привет, ${esc(name)}!</b>\n${HR}\n\n` +
     `Я помогу тебе держать форму, даже если ты никогда не тренировался:\n\n` +
-    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — пошагово и видео техники.\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — пошагово, ошибки, лёгкий вариант.\n\n` +
     `📈 <b>Мой прогресс</b> — сколько тренировок, календарь, серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько есть, чтобы худеть или набирать.\n\n` +
     `📥 <b>Гайды</b> — файлы: 7 дней похудения, 7 ошибок в зале, КБЖУ за 10 минут.\n\n` +
@@ -947,7 +947,7 @@ function buildSimpleWorkoutText(userId: number): string {
     items +
     diffAdvice(userId, place) +
     `\n\n👇 <b>Под каждым упражнением:</b>\n` +
-    `📖 <i>Как делать</i> — пошагово + видео\n` +
+    `📖 <i>Как делать</i> — шаги и ошибки\n` +
     `🟢 <i>Легче</i> — если тяжело\n` +
     `🔥 <i>Сложнее</i> — если легко\n\n` +
     `<i>${esc(enduranceNote(goal))}</i>`
@@ -973,9 +973,6 @@ function buildExerciseGuideText(e: SimpleExercise, goal: SimpleGoal): string {
   const steps = e.steps.map((s, i) => `${i + 1}. ${esc(s)}`).join("\n");
   const mistakes = e.mistakes.map((m) => `${DOT} ${esc(m)}`).join("\n");
   const harder = exerciseHarder(e);
-  const videoHint = isDirectVideo(exerciseVideoUrl(e))
-    ? "Кнопка ниже — короткое видео техники (2–3 мин)."
-    : "Видео — поиск на YouTube.";
   return (
     `📖 <b>${esc(e.name.toUpperCase())}</b>\n` +
     `<i>${esc(schemeFor(e, goal))}</i>\n${HR}\n\n` +
@@ -983,15 +980,12 @@ function buildExerciseGuideText(e: SimpleExercise, goal: SimpleGoal): string {
     `⚠️ <b>Частые ошибки:</b>\n${mistakes}\n\n` +
     `🟢 <b>Если тяжело:</b> ${esc(e.easier)}\n\n` +
     (harder ? `🔥 <b>Если легко:</b> ${esc(harder)}\n\n` : "") +
-    `<i>${videoHint} После просмотра — «← К тренировке».</i>`
+    `<i>«← К тренировке» вернёт к списку.</i>`
   );
 }
 
-function buildExerciseGuideKeyboard(idx: number, e: SimpleExercise): InlineKeyboard {
+function buildExerciseGuideKeyboard(idx: number, _e: SimpleExercise): InlineKeyboard {
   const kb = new InlineKeyboard();
-  const videoUrl = exerciseVideoUrl(e);
-  const videoLabel = isDirectVideo(videoUrl) ? "▶️ Видео техники" : "▶️ Найти видео";
-  kb.url(videoLabel, videoUrl).row();
   kb.text("🟢 Показать лёгкий вариант", `seas_${idx}`).row();
   kb.text("🔥 Показать сложный вариант", `shar_${idx}`).row();
   kb.text("← К тренировке", "simple_back");
@@ -1239,7 +1233,7 @@ bot.hears("❓ Помощь", async (ctx) => {
   resetSession(ctx.from!.id);
   await ctx.reply(
     `❓ <b>КАК ПОЛЬЗОВАТЬСЯ</b>\n${HR}\n\n` +
-    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — инструкция откроется прямо в этом сообщении (без прокрутки). Видео — короткое, по кнопке «▶️ Видео техники».\n\n` +
+    `🏋️ <b>Тренировка на сегодня</b> — готовый план дома или в зале. Жми <b>📖</b> под упражнением — шаги, ошибки, лёгкий вариант.\n\n` +
     `📈 <b>Мой прогресс</b> — календарь и серия недель без пропусков.\n\n` +
     `🍗 <b>Питание</b> — сколько калорий и белка тебе нужно под твою цель.\n\n` +
     `⚖️ <b>Вес тела</b> — записывай вес, увидишь график.\n\n` +

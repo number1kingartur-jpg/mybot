@@ -10,7 +10,7 @@ import {
   photoEdibleGrams,
 } from "./foods";
 import { analyzeMealFromTextLocal } from "./meal-fallback";
-import { factsByBarcode, isOffImage, productDbEnabled, validGtin } from "./product-db";
+import { factsByBarcode, isOffImage, productDbEnabled, validGtin, type ProductFacts } from "./product-db";
 
 /**
  * Модель не считает КБЖУ — она называет блюдо и граммы, числа берёт справочник.
@@ -247,7 +247,7 @@ export interface MealEdit {
   /** Новый вес позиции: `{ index, value }`. */
   grams?: { index: number; value: number };
   /** Новая позиция из справочника: имя и граммы. */
-  add?: { name: string; grams: number };
+  add?: { name: string; grams: number; known?: MealPart };
 }
 
 /**
@@ -390,6 +390,59 @@ function noteFromParts(parts: MealPart[], was: string | undefined): string {
  *
  * Возвращает `null` на недопустимой правке: пустой приём записывать нечего.
  */
+/** Вес позиции меняет КБЖУ пропорционально: у цифр с упаковки другого источника нет. */
+export function partAtGrams(part: MealPart, grams: number): MealPart {
+  const value = Math.round(grams);
+  const ratio = value / (part.grams || value);
+  return {
+    ...part,
+    source: part.source ?? "catalog",
+    grams: value,
+    kcal: Math.round(part.kcal * ratio),
+    proteinG: Math.round(part.proteinG * ratio * 10) / 10,
+    fatG: Math.round(part.fatG * ratio * 10) / 10,
+    carbsG: Math.round(part.carbsG * ratio * 10) / 10,
+  };
+}
+
+/**
+ * Упаковка по штрихкоду: свои КБЖУ, не среднее из справочника.
+ * Граммы не передали — берём порцию с этикетки, иначе 100 г.
+ */
+export function mealFromProductFacts(facts: ProductFacts, grams?: number): MealAnalysis | null {
+  const g = Math.round(Number(grams) > 0 ? Number(grams) : facts.servingG || 100);
+  if (!(g >= 1 && g <= 3000)) return null;
+  return macrosFromItems([
+    {
+      name: facts.name,
+      grams: g,
+      kcal100: facts.kcal100,
+      p100: facts.p100,
+      f100: facts.f100,
+      c100: facts.c100,
+      packaged: true,
+      fromDb: true,
+      photoUrl: facts.imageUrl,
+    },
+  ]);
+}
+
+/** Одна уже съеденная позиция — снова в дневник, без второго захода в справочник. */
+export function mealFromKnownPart(part: MealPart, grams: number): MealAnalysis | null {
+  const p = partAtGrams(part, grams);
+  if (!(p.kcal >= 1)) return null;
+  return {
+    name: p.name,
+    kcal: p.kcal,
+    proteinG: Math.round(p.proteinG),
+    fatG: Math.round(p.fatG),
+    carbsG: Math.round(p.carbsG),
+    slug: p.slug,
+    photoUrl: p.photoUrl,
+    parts: [p],
+  };
+}
+
 export function editMeal(meal: MealAnalysis, edit: MealEdit): MealAnalysis | null {
   const parts = (meal.parts ?? []).map((p) => ({ ...p }));
   if (!parts.length) return null;
@@ -406,23 +459,19 @@ export function editMeal(meal: MealAnalysis, edit: MealEdit): MealAnalysis | nul
     const value = Math.round(edit.grams.value);
     if (!Number.isInteger(i) || i < 0 || i >= parts.length) return null;
     if (!(value >= 1 && value <= 3000)) return null;
-    const part = parts[i];
-    const ratio = value / (part.grams || value);
-    parts[i] = {
-      ...part,
-      grams: value,
-      kcal: Math.round(part.kcal * ratio),
-      proteinG: Math.round(part.proteinG * ratio * 10) / 10,
-      fatG: Math.round(part.fatG * ratio * 10) / 10,
-      carbsG: Math.round(part.carbsG * ratio * 10) / 10,
-    };
+    parts[i] = partAtGrams(parts[i], value);
   } else if (edit.add) {
     const name = String(edit.add.name ?? "").trim();
     const grams = Math.round(Number(edit.add.grams));
     if (!name || !(grams >= 1 && grams <= 3000)) return null;
     const extra = macrosFromItems([{ name, grams }]);
-    if (!extra?.parts?.length) return null;
-    parts.push(...extra.parts.map((p) => ({ ...p })));
+    if (extra?.parts?.length) {
+      parts.push(...extra.parts.map((p) => ({ ...p })));
+    } else if (edit.add.known) {
+      parts.push(partAtGrams(edit.add.known, grams));
+    } else {
+      return null;
+    }
   } else {
     return null;
   }

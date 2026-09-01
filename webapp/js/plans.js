@@ -208,7 +208,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Провисшая поясница", "Таз домиком вверх"],
         easier: "Встань на колени вместо носков.",
-        video: "https://www.youtube.com/watch?v=ASdvN_XEl_c"
+        video: "video/ex/planka.mp4"
       }
     ]
   };
@@ -286,7 +286,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Отрыв пяток", "Круглая спина", "Колени внутрь"],
         easier: "Приседай без гантели или на скамью (сел-встал).",
-        video: "https://www.youtube.com/watch?v=MeIiIdhvieg"
+        video: "video/ex/prisedaniya-s-gantelyu-u-grudi.mp4"
       },
       {
         name: "Жим гантелей лёжа",
@@ -299,7 +299,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Слишком тяжёлые гантели в первый раз", "Гантели гуляют в стороны", "Отрыв таза от скамьи"],
         easier: "Возьми самые лёгкие гантели или начни с отжиманий с колен.",
-        video: "https://www.youtube.com/watch?v=VmB1G1L26I8"
+        video: "video/ex/zhim-ganteley-lezha.mp4"
       },
       {
         name: "Тяга гантели в наклоне",
@@ -313,7 +313,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Круглая спина", "Рывки корпусом", "Тяга к груди вместо пояса"],
         easier: "Возьми гантель легче: техника важнее веса.",
-        video: "https://www.youtube.com/watch?v=roCP6w-fX20"
+        video: "video/ex/tyaga-ganteli-v-naklone.mp4"
       },
       {
         name: "Молоты двумя руками",
@@ -346,7 +346,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Круглая спина: главная ошибка", "Приседание вместо наклона", "Гантели далеко от ног"],
         easier: "Возьми лёгкие гантели или отработай движение вообще без веса.",
-        video: "https://www.youtube.com/watch?v=2SHsk9AzF0k"
+        video: "video/ex/rumynskaya-tyaga-s-gantelyami.mp4"
       },
       {
         name: "Жим гантелей вверх сидя",
@@ -373,7 +373,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Тяга за голову", "Раскачивание корпусом", "Тяга руками, а не спиной"],
         easier: "Поставь меньший вес на плитке тренажёра.",
-        video: "https://www.youtube.com/watch?v=CAwf7n6Luuc"
+        video: "video/ex/tyaga-verhnego-bloka-k-grudi.mp4"
       },
       {
         name: "Выпады с гантелями",
@@ -386,7 +386,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Короткий шаг", "Колено за носок", "Потеря равновесия: смотри вперёд, не вниз"],
         easier: "Сначала без гантелей. Для равновесия можно у стены.",
-        video: "https://www.youtube.com/watch?v=3XDriUn0udo"
+        video: "video/ex/vypady-s-gantelyami.mp4"
       },
       {
         name: "Разгибание рук с канатом",
@@ -477,7 +477,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Круглая поясница", "Штанга уходит вперед", "Рывок спиной"],
         easier: "Румынская тяга с гантелями.",
-        video: "video/ex/stanovaya-tyaga.mp4"
+        video: "https://www.youtube.com/watch?v=op9kVnSso6Q"
       },
       {
         name: "Жим гантелей стоя",
@@ -502,7 +502,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Киппинг", "Короткая амплитуда", "Рывок ногами"],
         easier: "Тяга верхнего блока или негативы с лавки.",
-        video: "video/ex/podtyagivaniya.mp4"
+        video: "https://www.youtube.com/watch?v=eGo4IYlbE5g"
       },
       {
         name: "Махи гирей",
@@ -515,7 +515,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Присед вместо хейджа", "Дожим руками", "Круглая поясница"],
         easier: "Румынская тяга с гантелями.",
-        video: "video/ex/mahi-girey.mp4"
+        video: "https://www.youtube.com/watch?v=YSxHifyh6fw"
       },
       {
         name: "Сведение рук в кроссовере",
@@ -527,7 +527,7 @@ var KM_PLANS = (function () {
         ],
         mistakes: ["Прямые локти на замке", "Шаг всем телом вместо сведения", "Плечи вперед"],
         easier: "Жим гантелей лежа.",
-        video: "video/ex/svedenie-ruk-v-krossovere.mp4"
+        video: "https://www.youtube.com/watch?v=taI4XduLpTk"
       }
     ]
   };

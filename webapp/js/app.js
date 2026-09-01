@@ -34,13 +34,17 @@
     menu: { id: "ru", meal: null, pick: null, swaps: {} },
     manual: { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" },
     mealText: "",
-    addMode: null, // null | "text" | "manual" — какая форма добавления раскрыта
+    barcodeCode: "",
+    barcodeGrams: "",
+    addSlot: null, // breakfast | lunch | snack | dinner — куда писать, как в FatSecret
+    addMode: null, // null | "text" | "manual" | "barcode" — какая форма добавления раскрыта
     busy: null, // "photo" | "text" | "manual" | "food"
     notice: null, // { kind: "ok" | "err", text }
     day: null, // ответ сервера: meals, totals, photo, вес, программа
     linkError: null, // почему сервер не ответил; null = связь есть или её и не ждём
     viewDate: null, // какой день открыт в «Съедено»; null = сегодня
     foods: null, // справочник продуктов, грузится один раз
+    foodsLoading: false,
     foodQuery: "",
     foodGrams: "",
     foodMore: {},
@@ -62,6 +66,7 @@
     samePick: null,
     partAdd: "",
     partAddG: "",
+    droppedParts: [],
     repeatAsk: null,
     // Фотопротокол прогресса: снимки хранятся на сервере, не на устройстве, поэтому
     // здесь только то, что показывает экран, а не источник правды.
@@ -233,8 +238,16 @@
     var o = opts || {};
     var cls = "card" + (o.gold ? " card--gold" : "") + (o.tap ? " card--tap" : "");
     var attrs = o.tap ? ' data-go="' + o.tap + '"' : "";
+    if (o.id) attrs += ' id="' + esc(o.id) + '"';
     var tag = o.tap ? "button" : "div";
     return "<" + tag + ' class="' + cls + '"' + attrs + ">" + inner + "</" + tag + ">";
+  }
+
+  function scrollToId(id) {
+    requestAnimationFrame(function () {
+      var el = document.getElementById(id);
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function cardHead(title, sub, badge) {
@@ -466,6 +479,58 @@
 
   var online = KM_API.available();
 
+  var MEAL_SLOTS = ["breakfast", "lunch", "snack", "dinner"];
+  var SLOT_TITLE = { breakfast: "Завтрак", lunch: "Обед", snack: "Перекус", dinner: "Ужин" };
+
+  function bangkokHourNow() {
+    try {
+      var parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        hour12: false
+      }).formatToParts(new Date());
+      var h = parts.filter(function (p) {
+        return p.type === "hour";
+      })[0];
+      return h ? Number(h.value) : new Date().getHours();
+    } catch (e) {
+      return new Date().getHours();
+    }
+  }
+
+  function slotByHour(hour) {
+    var h = ((Number(hour) % 24) + 24) % 24;
+    if (h >= 5 && h < 11) return "breakfast";
+    if (h >= 11 && h < 16) return "lunch";
+    if (h >= 16 && h < 19) return "snack";
+    return "dinner";
+  }
+
+  function inferSlots(count) {
+    if (count <= 0) return [];
+    if (count === 1) return ["breakfast"];
+    if (count === 2) return ["breakfast", "dinner"];
+    if (count === 3) return ["breakfast", "lunch", "dinner"];
+    var slots = [];
+    var i;
+    for (i = 0; i < count; i++) {
+      if (i === 0) slots.push("breakfast");
+      else if (i === 1) slots.push("lunch");
+      else if (i === count - 1) slots.push("dinner");
+      else slots.push("snack");
+    }
+    return slots;
+  }
+
+  function slotOfMeal(meal, index, total) {
+    if (meal && meal.hour !== undefined && meal.hour >= 0 && meal.hour <= 23) return slotByHour(meal.hour);
+    return inferSlots(total)[index] || "dinner";
+  }
+
+  function writeSlot() {
+    return state.addSlot || (dayIsToday() ? slotByHour(bangkokHourNow()) : null);
+  }
+
   function mealsToday() {
     if (state.day) return state.day.meals;
     var d = today();
@@ -542,6 +607,7 @@
           }
           persist();
         }
+        loadFoods();
         if (!silent) render();
         else if (state.screen === "home" || state.screen === "nutrition" || state.screen === "profile") render();
       })
@@ -609,7 +675,7 @@
     state.busy = "food";
     state.notice = null;
     render();
-    KM_API.usualShake()
+    KM_API.usualShake(writeSlot())
       .then(function (data) {
         state.pending = null;
         clearPhotoPreview();
@@ -633,7 +699,7 @@
     state.day = data;
     state.busy = null;
     state.notice = { kind: "ok", text: okText };
-    state.addMode = null;
+    state.addMode = state.addMode === "food" ? "food" : null;
     state.mealText = "";
     state.samePick = null;
     state.manual = { name: "", kcal: "", proteinG: "", fatG: "", carbsG: "" };
@@ -689,7 +755,7 @@
     });
     chain
       .then(function () {
-        return KM_API.confirmMeal(p.token);
+        return KM_API.confirmMeal(p.token, writeSlot());
       })
       .then(function (data) {
         state.pending = null;
@@ -732,7 +798,26 @@
       });
   }
 
+  function rememberParts(parts) {
+    if (!parts || !parts.length) return;
+    if (!state.droppedParts) state.droppedParts = [];
+    var seen = {};
+    state.droppedParts.forEach(function (p) {
+      if (p && p.name) seen[String(p.name).toLowerCase()] = true;
+    });
+    parts.forEach(function (p) {
+      if (!p || !p.name) return;
+      var key = String(p.name).toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      state.droppedParts.push(p);
+      if (state.droppedParts.length > 40) state.droppedParts.shift();
+    });
+  }
+
   function dropPendingPart(index) {
+    var rows = state.pending && state.pending.meal && state.pending.meal.parts;
+    if (rows && rows[index]) rememberParts([rows[index]]);
     editPendingPart(function (token) {
       return KM_API.dropPart(token, index);
     });
@@ -753,6 +838,7 @@
     var p = state.pending;
     if (!p) return;
     var parts = (p.meal && p.meal.parts) || [];
+    rememberParts(parts);
     state.mealText = parts.length
       ? parts
           .map(function (x) {
@@ -772,6 +858,7 @@
   /** Окно убрать, состав не оставлять: ни в дневник, ни в поле ввода. */
   function dismissPending() {
     var p = state.pending;
+    if (p && p.meal && p.meal.parts) rememberParts(p.meal.parts);
     if (p && online) KM_API.rejectMeal(p.token).catch(function () {});
     state.pending = null;
     state.mealText = "";
@@ -838,6 +925,35 @@
     );
   }
 
+  function partSuggestHtml() {
+    var q = foldFood(state.partAdd || "");
+    if (!q) return "";
+    var hits = catalogHits(q).slice(0, 6);
+    if (!hits.length) return "";
+    return (
+      '<ul class="foods foods--suggest">' +
+      hits
+        .map(function (f) {
+          var grams = num(state.partAddG);
+          var g = grams >= 1 && grams <= 3000 ? Math.round(grams) : f.defaultG || 100;
+          return (
+            '<li class="food">' +
+            thumb(f.slug || "", f.name) +
+            '<span class="food__text"><span class="food__name">' +
+            esc(f.name) +
+            "</span></span>" +
+            '<button type="button" class="btn btn--outline food__add" style="width:auto" data-action="part-pick" data-food="' +
+            esc(f.name) +
+            '" data-grams="' +
+            g +
+            '">Добавить</button></li>'
+          );
+        })
+        .join("") +
+      "</ul>"
+    );
+  }
+
   function pendingTeaserCard() {
     var p = state.pending;
     if (!p || !p.meal || state.screen === "nutrition") return "";
@@ -860,6 +976,7 @@
    * позициям, источник цифр (справочник или упаковка) и слова модели.
    */
   function pendingCard() {
+    loadFoods();
     var p = state.pending;
     if (!p || !p.meal) return "";
     var m = p.meal;
@@ -950,6 +1067,9 @@
             esc(state.partAddG || "") +
             '" />' +
             '<button type="button" class="btn btn--outline food__add" data-action="part-add">Добавить</button>' +
+            "</div>" +
+            '<div id="partAddList">' +
+            partSuggestHtml() +
             "</div></div>"
           : "") +
         (m.said ? '<p class="note note--plain">Вижу так: ' + esc(m.said) + "</p>" : "") +
@@ -1028,8 +1148,8 @@
           " ккал" +
           (last.factor !== 1 ? " (порция ×" + (Math.round(last.factor * 100) / 100).toString().replace(".", ",") + ")" : "")
       ) +
-        '<p class="lead">Состав блюда модель видит, а вес только предполагает. Если порция ' +
-        "была другой, поправь множителем: КБЖУ пересчитаются в той же пропорции.</p>" +
+        '<p class="lead">Состав тот же, меняется размер. КБЖУ пересчитаются в той же пропорции. ' +
+        "Открывается и из дневника: нажми блюдо, не только свежую запись.</p>" +
         '<div class="chips chips--wrap">' +
         steps
           .map(function (s) {
@@ -1047,7 +1167,8 @@
         "</div>" +
         '<div class="btn-stack" style="margin-top:12px">' +
         '<button class="btn btn--outline btn--slim" data-action="portion-done">Всё верно</button>' +
-        "</div>"
+        "</div>",
+      { id: "portion-card" }
     );
   }
 
@@ -1216,7 +1337,8 @@
     photo: "M4 8.5A2.5 2.5 0 0 1 6.5 6h1L9 4h6l1.5 2h1A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5zM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
     repeat: "M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6M17 4v3h-3M7 20v-3h3",
     water: "M12 3.5s6 6.6 6 10.4A6 6 0 0 1 6 13.9C6 10.1 12 3.5 12 3.5z",
-    text: "M5 6.5h14M5 12h14M5 17.5h9"
+    text: "M5 6.5h14M5 12h14M5 17.5h9",
+    barcode: "M4 4h2v16H4zm4 0h1v16H8zm3 0h2v16h-2zm4 0h1v16h-1zm3 0h3v16h-3z"
   };
 
   function tile(action, icon, label, gold) {
@@ -1816,16 +1938,30 @@
     var last = lastWeighIn();
     var place = state.workout.place;
     var plan = planList()[state.workout.plan] || planList()[0];
-    var eaten = eatenTotals();
+    var stale = Boolean(state.day && !dayIsToday());
+    var eaten = stale
+      ? { kcal: 0, proteinG: 0, fatG: 0, carbsG: 0, count: 0 }
+      : eatenTotals();
     var w = water();
 
     var left = m ? m.kcal - eaten.kcal : 0;
     var over = m ? left < 0 : false;
-    var heroCard = m
+    var heroCard = stale
+      ? card(cardHead("Осталось на сегодня", "Обновляю данные…"))
+      : m
       ? card(
           cardHead(
             over ? "Перебор" : "Осталось на сегодня",
-            "Норма " + m.kcal + " ккал · " + GOAL_WORD[state.profile.goal],
+            "В сутки " +
+              m.kcal +
+              " ккал · белок " +
+              m.proteinG +
+              " г · жир " +
+              m.fatG +
+              " г · углеводы " +
+              m.carbsG +
+              " г · " +
+              GOAL_WORD[state.profile.goal],
             eaten.count ? eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов") : null
           ) +
             ring(
@@ -1860,7 +1996,9 @@
       // ситуацию. Плитки с вопросом здесь быть не должно — она обещает кнопку,
       // а приводит к тексту, и человек нажимает её впустую.
       (online
-        ? tile("pick-photo", "photo", "Фото еды", true) +
+        ? (photoAllowed() ? tile("pick-photo", "photo", "Фото еды", true) : "") +
+          tile("add-barcode-form", "barcode", "Штрихкод") +
+          tile("add-food-form", "text", "Справочник", !photoAllowed()) +
           tile("usual-shake", "repeat", "Коктейль", Boolean(state.day && state.day.usualShake)) +
           tile("add-text-form", "text", "Текстом")
         : tile("add-manual-form", "text", "Ввести вручную", true) + tile("reload-day", "repeat", "Связь с ботом")) +
@@ -1869,6 +2007,7 @@
       '<p class="muted">Коктейль: одна кнопка. Фото тарелки или текст: «250 мл белка, 3 банана, 2 скупа протеина».</p>' +
       (state.addMode === "text" ? card(textForm()) : "") +
       (state.addMode === "manual" ? card(manualForm()) : "") +
+      (state.addMode === "barcode" ? card(barcodeForm()) : "") +
       (state.busy
         ? card(
             (state.photoPreview
@@ -2063,11 +2202,14 @@
         "</div>" +
         (closed
           ? ""
-          : '<div class="btn-stack" style="margin-top:14px"><button class="btn btn--primary" data-action="' +
-            next.action +
-            '">' +
-            esc(next.cta) +
-            "</button>" +
+          : '<div class="btn-stack" style="margin-top:14px">' +
+            (next.id === "food" && photoAllowed()
+              ? '<label class="btn btn--primary" for="photoInput">' + esc(next.cta) + "</label>"
+              : '<button class="btn btn--primary" data-action="' +
+                next.action +
+                '">' +
+                esc(next.cta) +
+                "</button>") +
             (next.id === "move"
               ? '<button class="btn btn--outline btn--slim" data-action="route-rest">Сегодня отдых</button>'
               : "") +
@@ -2098,26 +2240,11 @@
   }
 
   function openRouteFood() {
-    var food = dayRoute().filter(function (x) {
-      return x.id === "food";
-    })[0];
-    if (food && food.on) {
-      state.nutTab = "eaten";
-      return go("nutrition");
-    }
-    if (online) {
-      var pick = document.getElementById("photoInput");
-      if (pick) {
-        pick.value = "";
-        haptic("light");
-        pick.click();
-        return;
-      }
-    }
-    state.addMode = "text";
+    state.nutTab = "eaten";
+    state.addMode = null;
     state.notice = null;
     haptic("light");
-    render();
+    return go("nutrition");
   }
 
   function openRouteWater() {
@@ -2480,7 +2607,15 @@
       ? card(
           cardHead(
             !isToday ? "Итог " + formatDate(viewDate()) : left >= 0 ? "Осталось на сегодня" : "Перебор",
-            "Цель: " + GOAL_WORD[state.profile.goal] + " · норма " + target.kcal + " ккал",
+            "В сутки нужно " +
+              target.kcal +
+              " ккал · белок " +
+              target.proteinG +
+              " г · жир " +
+              target.fatG +
+              " г · углеводы " +
+              target.carbsG +
+              " г",
             eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
           ) +
             figure(
@@ -2533,9 +2668,8 @@
       "особенно с маслом и соусами. Итог сверяй по тренду веса в дневнике, а не по одному дню.</p>" +
       // Про штрихкод человек сам не догадается, а это единственный способ получить
       // цифры конкретной упаковки вместо среднего по категории.
-      '<p class="note note--plain">Снимаешь магазинное: заведи в кадр штрихкод. ' +
-      "По нему продукт находится в открытой базе с его собственными КБЖУ, а не считается " +
-      "по похожему.</p>"
+      '<p class="note note--plain">Магазинное: кнопка «Штрихкод», цифры под полосками. ' +
+      "Так находится эта упаковка, а не похожий продукт из справочника.</p>"
     );
   }
 
@@ -2613,41 +2747,84 @@
   }
 
   function mealsListCard(meals, isToday) {
-    if (!meals.length) {
+    var grouped = {};
+    MEAL_SLOTS.forEach(function (s) {
+      grouped[s] = [];
+    });
+    meals.forEach(function (m, i) {
+      grouped[slotOfMeal(m, i, meals.length)].push(m);
+    });
+    var body = MEAL_SLOTS.map(function (slot) {
+      var items = grouped[slot];
+      var kcal = items.reduce(function (n, m) {
+        return n + (m.kcal || 0);
+      }, 0);
+      var yesterday = sameAsList().filter(function (s) {
+        return s.slot === slot && s.meals && s.meals.length;
+      })[0];
+      var rows = items.length
+        ? '<ul class="log">' +
+          items
+            .map(function (m) {
+              var editing = state.lastMeal && state.lastMeal.id === m.id;
+              return (
+                '<li class="log--thumbed' +
+                (editing ? " log--edit" : "") +
+                '"' +
+                (isToday && online ? ' data-editmeal="' + esc(m.id) + '"' : "") +
+                ">" +
+                thumb(m.slug, m.name, "food", m.photoUrl) +
+                '<span class="meal__name">' +
+                esc(m.name) +
+                '<span class="meal__macro">' +
+                m.proteinG +
+                " / " +
+                m.fatG +
+                " / " +
+                m.carbsG +
+                ' г</span></span><span class="log__value">' +
+                m.kcal +
+                " ккал</span>" +
+                (isToday
+                  ? '<button class="log__del" data-delmeal="' +
+                    esc(m.id) +
+                    '" aria-label="Удалить">×</button>'
+                  : "") +
+                "</li>"
+              );
+            })
+            .join("") +
+          "</ul>"
+        : '<p class="empty" style="margin:8px 0 0">Пока пусто</p>';
+      var actions = isToday
+        ? '<div class="slot__actions">' +
+          '<button type="button" class="sets__add" data-action="add-to-slot" data-slot="' +
+          slot +
+          '">Добавить</button>' +
+          (yesterday && !items.length && !skippedSlots()[slot]
+            ? '<button type="button" class="sets__add" data-action="same-as-yes" data-slot="' +
+              slot +
+              '">Как вчера</button>'
+            : "") +
+          "</div>"
+        : "";
       return (
-        '<p class="empty">' +
-        (isToday ? "За сегодня ничего не записано." : "В этот день записей нет.") +
-        "</p>"
+        '<div class="slot">' +
+        '<div class="slot__head"><span class="slot__title">' +
+        SLOT_TITLE[slot] +
+        '</span><span class="slot__kcal">' +
+        (kcal ? kcal + " ккал" : "") +
+        "</span></div>" +
+        rows +
+        actions +
+        "</div>"
       );
-    }
+    }).join("");
     return card(
       cardHead(
-        isToday ? "Приёмы за сегодня" : "Приёмы за " + formatDate(viewDate()),
-        online ? "Общий дневник с ботом" : "Хранится на устройстве"
-      ) +
-        '<ul class="log">' +
-        meals
-          .map(function (m) {
-            return (
-              '<li class="log--thumbed">' +
-              thumb(m.slug, m.name, "food", m.photoUrl) +
-              '<span class="meal__name">' +
-              esc(m.name) +
-              '<span class="meal__macro">' +
-              m.proteinG +
-              " / " +
-              m.fatG +
-              " / " +
-              m.carbsG +
-              ' г</span></span><span class="log__value">' +
-              m.kcal +
-              ' ккал</span><button class="log__del" data-delmeal="' +
-              esc(m.id) +
-              '" aria-label="Удалить">×</button></li>'
-            );
-          })
-          .join("") +
-        "</ul>"
+        isToday ? "Дневник" : "Дневник за " + formatDate(viewDate()),
+        "Завтрак, обед, перекус, ужин. Нажми блюдо, чтобы поправить порцию."
+      ) + body
     );
   }
 
@@ -2668,38 +2845,148 @@
   }
 
   function loadFoods() {
-    if (state.foods || !online) return;
-    state.foods = [];
+    if (!online || state.foodsLoading) return;
+    if (state.foods && state.foods.length) return;
+    state.foodsLoading = true;
+    if (!state.foods) state.foods = [];
     KM_API.foods()
       .then(function (data) {
         state.foods = data.foods || [];
-        if (state.addMode === "food") render();
+        state.shelf = data.shelf || [];
+        state.foodsLoading = false;
+        var box = document.getElementById("foodList");
+        if (box) box.innerHTML = foodListHtml();
+        var hints = document.getElementById("partAddList");
+        if (hints) hints.innerHTML = partSuggestHtml();
       })
       .catch(function () {
+        state.foodsLoading = false;
         state.foods = null;
       });
   }
 
+  function foldFood(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, "е");
+  }
+
+  function foodSlugGuess(name) {
+    var map = {
+      а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ж: "zh", з: "z", и: "i", й: "y",
+      к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u",
+      ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e",
+      ю: "yu", я: "ya"
+    };
+    return foldFood(name)
+      .split("")
+      .map(function (ch) {
+        return map[ch] === undefined ? ch : map[ch];
+      })
+      .join("")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function foodScore(f, q) {
+    if (!q) return f.eaten ? 20 : f.role ? 1 : 0;
+    var name = foldFood(f.name);
+    var slug = f.slug || foodSlugGuess(f.name);
+    var qSlug = q.replace(/\s+/g, "-");
+    var score = f.eaten ? 80 : 0;
+    if (name === q) score += 1000;
+    if (name.indexOf(q) === 0) score += 400;
+    if (name.indexOf(q) !== -1) score += 80;
+    var als = f.aliases || [];
+    for (var i = 0; i < als.length; i++) {
+      var a = foldFood(als[i]);
+      if (a === q) score += 900;
+      else if (a.indexOf(q) === 0) score += 300;
+      else if (a.indexOf(q) !== -1) score += 40;
+    }
+    if (slug === qSlug) score += 500;
+    else if (slug.indexOf(qSlug) === 0) score += 200;
+    else if (slug.indexOf(qSlug) !== -1) score += 30;
+    if (f.role) score += 5;
+    return score;
+  }
+
+  function foodMatches(f, q) {
+    return foodScore(f, q) > 0;
+  }
+
+  function knownFoodItems() {
+    var out = [];
+    var seen = {};
+    function take(p) {
+      if (!p || !p.name) return;
+      var key = String(p.name).toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      var grams = Number(p.grams) || Number(p.defaultG) || 100;
+      out.push({
+        name: p.name,
+        kcal100: grams ? (Number(p.kcal100) || (Number(p.kcal) * 100) / grams) : 0,
+        p100: grams ? (Number(p.p100) || (Number(p.proteinG) * 100) / grams) : 0,
+        f100: grams ? (Number(p.f100) || (Number(p.fatG) * 100) / grams) : 0,
+        c100: grams ? (Number(p.c100) || (Number(p.carbsG) * 100) / grams) : 0,
+        defaultG: grams,
+        slug: p.slug,
+        aliases: p.aliases || [],
+        eaten: true
+      });
+    }
+    (state.droppedParts || []).forEach(take);
+    ((state.day && state.day.knownFoods) || []).forEach(take);
+    ((state.day && state.day.meals) || []).forEach(function (m) {
+      (m.parts || []).forEach(take);
+    });
+    return out;
+  }
+
+  function catalogHits(query) {
+    var q = String(query || "").trim().toLowerCase();
+    var seen = {};
+    var list = [];
+    function take(f) {
+      if (!f || !f.name || seen[f.name]) return;
+      seen[f.name] = true;
+      list.push(f);
+    }
+    (state.foods || []).forEach(function (f) {
+      if (!q) {
+        if (f.role) take(f);
+        return;
+      }
+      if (foodMatches(f, q)) take(f);
+    });
+    if (q) {
+      knownFoodItems().forEach(function (f) {
+        if (foodMatches(f, q)) take(f);
+      });
+    }
+    if (q) {
+      list.sort(function (a, b) {
+        return foodScore(b, q) - foodScore(a, q);
+      });
+      if (list.length > 16) list = list.slice(0, 16);
+    }
+    return list;
+  }
+
   function foodListHtml() {
     if (!state.foods) return '<p class="muted">Справочник не загрузился. Попробуй позже.</p>';
-    if (!state.foods.length) return '<p class="muted">Загружаю справочник…</p>';
+    if (!state.foods.length) {
+      var early = knownFoodItems();
+      if (!early.length) return '<p class="muted">Загружаю справочник…</p>';
+    }
 
     var q = String(state.foodQuery || "").trim().toLowerCase();
-    var seen = {};
-    var list = state.foods.filter(function (f) {
-      if (seen[f.name]) return false;
-      seen[f.name] = true;
-      if (!q) return true;
-      if (f.name.toLowerCase().indexOf(q) !== -1) return true;
-      var als = f.aliases || [];
-      for (var i = 0; i < als.length; i++) {
-        if (String(als[i]).toLowerCase().indexOf(q) !== -1) return true;
-      }
-      return false;
-    });
+    var list = catalogHits(q);
 
-    if (!list.length) {
-      return '<p class="muted">В основных продуктах этого нет. Сладости и газировку добавь текстом или фото.</p>';
+    if (!list.length && q) {
+      return '<p class="muted">Такого продукта в справочнике нет. Добавь текстом или фото.</p>';
     }
 
     function foodRow(f) {
@@ -2726,6 +3013,7 @@
         fatG +
         " · У " +
         carbsG +
+        (f.eaten && !(grams >= 1) ? " · как в прошлый раз" : "") +
         "</span></span>" +
         '<button class="btn btn--outline food__add" style="width:auto" data-action="add-food" data-food="' +
         esc(f.name) +
@@ -2739,6 +3027,13 @@
       return '<ul class="foods">' + list.map(foodRow).join("") + "</ul>";
     }
 
+    var recent = knownFoodItems().slice(0, 8);
+    var recentHtml = recent.length
+      ? '<p class="pick__label">Недавно</p><ul class="foods">' +
+        recent.map(foodRow).join("") +
+        "</ul>"
+      : "";
+
     var groups = [
       { id: "protein", title: "Белок" },
       { id: "fat", title: "Жиры" },
@@ -2746,7 +3041,7 @@
       { id: "fiber", title: "Клетчатка" },
       { id: "water", title: "Вода" },
     ];
-    return groups
+    return recentHtml + groups
       .map(function (g) {
         var items = list.filter(function (f) {
           return f.role === g.id;
@@ -2776,6 +3071,57 @@
       .join("");
   }
 
+  function barcodeForm() {
+    loadFoods();
+    var shelf = state.shelf || [];
+    var shelfHtml = shelf.length
+      ? '<p class="pick__label">Часто с полки</p><ul class="foods">' +
+        shelf
+          .map(function (p) {
+            var g = p.servingG || 100;
+            var kcal = Math.round((p.kcal100 * g) / 100);
+            return (
+              '<li class="food"><span class="food__body"><strong>' +
+              esc(p.name) +
+              "</strong><span class=\"muted\">" +
+              kcal +
+              " ккал · " +
+              g +
+              " г · код " +
+              esc(p.code) +
+              "</span></span>" +
+              '<button class="btn btn--outline food__add" style="width:auto" data-action="add-barcode" data-code="' +
+              esc(p.code) +
+              '" data-grams="' +
+              g +
+              '">Записать</button></li>'
+            );
+          })
+          .join("") +
+        "</ul>"
+      : "";
+    return (
+      '<div style="margin-top:18px">' +
+      '<p class="note note--plain">Цифры под чёрными полосками на упаковке. Это та же банка, не «похожий йогурт».</p>' +
+      field(
+        "Штрихкод",
+        '<input class="input" type="text" inputmode="numeric" autocomplete="off" data-path="barcodeCode" placeholder="8851123237000" value="' +
+          esc(state.barcodeCode) +
+          '" />'
+      ) +
+      field(
+        "Граммы",
+        numInput("barcodeGrams", { min: 1, max: 3000, step: 10, placeholder: "порция с этикетки, если пусто" })
+      ) +
+      '<button class="btn btn--primary" data-action="add-barcode">Найти и записать</button>' +
+      (photoAllowed()
+        ? '<p class="muted" style="margin-top:12px"><label class="sets__add" for="photoInput">Или снять полоски фото</label></p>'
+        : "") +
+      shelfHtml +
+      "</div>"
+    );
+  }
+
   function foodForm() {
     loadFoods();
     var target = macros();
@@ -2783,20 +3129,19 @@
     var left = target ? target.kcal - eaten.kcal : 0;
     return (
       '<div style="margin-top:18px">' +
-      '<p class="note note--plain">Это справочник, не меню на день. Нажми «Записать», продукт уйдет в дневник. План под норму во вкладке «Меню».</p>' +
+      '<p class="note note--plain">Набери что съел. Граммы только если порция не та. Цифры уже в справочнике, вручную их вбивать не надо.</p>' +
       (target
         ? '<p class="lead" style="margin:10px 0 14px">Осталось ' +
           left +
           " ккал из " +
           target.kcal +
-          ". Цифра в строке это эта порция, не 100 г.</p>"
+          ". В строке эта порция, не 100 г.</p>"
         : "") +
       field(
-        "Продукт",
-        '<input class="input" type="text" data-path="foodQuery" placeholder="грудка, гречка, вода" value="' +
+        "Что съел",
+        '<input class="input" type="text" data-path="foodQuery" placeholder="рис, грудка, банан" value="' +
           esc(state.foodQuery) +
-          '" />',
-        "Основные продукты: белок, жиры, углеводы, клетчатка, вода."
+          '" />'
       ) +
       field(
         "Граммы",
@@ -2805,6 +3150,25 @@
       '<div id="foodList">' +
       foodListHtml() +
       "</div></div>"
+    );
+  }
+
+  function slotPickerHtml() {
+    var cur = writeSlot();
+    return (
+      '<div class="chips chips--wrap" style="margin:0 0 12px">' +
+      MEAL_SLOTS.map(function (s) {
+        return (
+          '<button type="button" class="chip" data-action="add-to-slot" data-slot="' +
+          s +
+          '" aria-pressed="' +
+          (s === cur ? "true" : "false") +
+          '">' +
+          SLOT_TITLE[s] +
+          "</button>"
+        );
+      }).join("") +
+      "</div>"
     );
   }
 
@@ -2869,14 +3233,20 @@
     if (!photoAllowed()) {
       return card(
         cardHead("Распознавание фото выключено", "У бота не задан ключ модели") +
+          slotPickerHtml() +
           '<div class="btn-stack">' +
-          '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
+          '<button class="btn btn--outline" data-action="add-barcode-form">Штрихкод</button>' +
           '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
-          '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
+          '<button class="btn btn--outline" data-action="add-manual-form">Цифры с упаковки</button>' +
           "</div>" +
-          (state.addMode === "food" ? foodForm() : "") +
-          (state.addMode === "text" ? textForm() : "") +
-          (state.addMode === "manual" ? manualForm() : "")
+          (state.addMode === "text"
+            ? textForm()
+            : state.addMode === "manual"
+              ? manualForm()
+              : state.addMode === "barcode"
+                ? barcodeForm()
+                : foodForm()),
+        { id: "add-meal" }
       );
     }
 
@@ -2889,21 +3259,27 @@
 
     return card(
       cardHead("Добавить приём пищи", limitLine) +
+        slotPickerHtml() +
         '<div class="btn-stack">' +
         // Кнопка, а не <label for>, и открытие через .click() из кода: в WebView
         // Telegram связка «label → input с display:none» часто не срабатывает,
         // причём молча. Само поле выбора файла лежит в index.html — см. комментарий там.
         '<label class="btn btn--primary" for="photoInput">Сфотографировать еду</label>' +
-        '<button class="btn btn--outline" data-action="add-food-form">Из справочника</button>' +
+        '<button class="btn btn--outline" data-action="add-barcode-form">Штрихкод</button>' +
         '<button class="btn btn--outline" data-action="add-text-form">Добавить текстом</button>' +
-        '<button class="btn btn--outline" data-action="add-manual-form">Ввести вручную</button>' +
+        '<button class="btn btn--outline" data-action="add-manual-form">Цифры с упаковки</button>' +
         "</div>" +
-        (state.addMode === "food" ? foodForm() : "") +
-        (state.addMode === "text" ? textForm() : "") +
-        (state.addMode === "manual" ? manualForm() : "") +
-        '<p class="note note--plain">Фото и текст я сначала показываю разбором: что за ' +
-        "продукт, сколько весит, откуда взяты цифры. В дневник запись идёт только после " +
-        "твоего «да». Не согласишься, ничего не запишется.</p>"
+        (state.addMode === "text"
+          ? textForm() +
+            '<p class="muted" style="margin-top:10px"><button type="button" class="sets__add" data-action="add-food-form">К поиску</button></p>'
+          : state.addMode === "manual"
+            ? manualForm() +
+              '<p class="muted" style="margin-top:10px"><button type="button" class="sets__add" data-action="add-food-form">К поиску</button></p>'
+          : state.addMode === "barcode"
+            ? barcodeForm()
+            : foodForm()) +
+        '<p class="note note--plain">Фото и длинный текст сначала покажу разбором. В дневник запись идёт только после твоего «да».</p>',
+      { id: "add-meal" }
     );
   }
 
@@ -4694,7 +5070,16 @@
       ? card(
           cardHead(
             left >= 0 ? "Осталось на сегодня" : "Перебор",
-            "Съедено " + eaten.kcal + " из " + m.kcal + " ккал · цель: " + GOAL_WORD[p.goal],
+            "В сутки " +
+              m.kcal +
+              " ккал · белок " +
+              m.proteinG +
+              " г · жир " +
+              m.fatG +
+              " г · углеводы " +
+              m.carbsG +
+              " г · " +
+              GOAL_WORD[p.goal],
             eaten.count + " " + plural(eaten.count, "приём", "приёма", "приёмов")
           ) +
             figure(
@@ -5307,6 +5692,24 @@
       return;
     }
 
+    var editMeal = t.closest("[data-editmeal]");
+    if (editMeal && !t.closest("[data-delmeal]")) {
+      var editId = editMeal.getAttribute("data-editmeal");
+      var found = mealsToday().filter(function (m) {
+        return m.id === editId;
+      })[0];
+      if (found && online) {
+        state.lastMeal = { id: found.id, name: found.name, kcal: found.kcal, factor: 1 };
+        state.notice = null;
+        state.nutTab = "eaten";
+        if (state.screen !== "nutrition") state.screen = "nutrition";
+        haptic("light");
+        render();
+        scrollToId("portion-card");
+      }
+      return;
+    }
+
     var delMeal = t.closest("[data-delmeal]");
     if (delMeal) {
       var mealId = delMeal.getAttribute("data-delmeal");
@@ -5376,8 +5779,15 @@
       case "add-text-form":
       case "add-manual-form":
       case "add-food-form":
+      case "add-barcode-form":
         state.addMode = action.getAttribute("data-action").replace("add-", "").replace("-form", "");
-        if (state.addMode === "food") state.foodMore = {};
+        if (state.addMode === "food" || state.addMode === "barcode") {
+          state.foodMore = {};
+          if (state.screen !== "nutrition") {
+            state.screen = "nutrition";
+            state.nutTab = "eaten";
+          }
+        }
         state.notice = null;
         haptic("light");
         return render();
@@ -5443,7 +5853,8 @@
           KM_API.pick(
             withItems.map(function (u) {
               return { items: u.items };
-            })
+            }),
+            yesSlot || writeSlot()
           )
             .then(function (data) {
               var extra = data.copied && data.copied.length > 1 ? data.copied : null;
@@ -5462,6 +5873,7 @@
             .catch(mealError);
           return;
         }
+        if (yesSlot) state.addSlot = yesSlot;
         return repeatMeals(onlyNames);
       }
       case "same-as-toggle": {
@@ -5499,6 +5911,10 @@
           .catch(mealError);
         return;
       }
+      case "part-pick":
+        state.partAdd = action.getAttribute("data-food") || "";
+        state.partAddG = action.getAttribute("data-grams") || state.partAddG;
+        // fall through
       case "part-add": {
         var addName = String(state.partAdd || "").trim();
         var addG = num(state.partAddG);
@@ -5577,6 +5993,15 @@
         return render();
       case "add-food":
         return addMealFood(action.getAttribute("data-food"), Number(action.getAttribute("data-grams")));
+      case "add-barcode":
+        return addMealBarcode(action.getAttribute("data-code") || state.barcodeCode, Number(action.getAttribute("data-grams") || state.barcodeGrams));
+      case "add-to-slot":
+        state.addSlot = action.getAttribute("data-slot") || null;
+        state.nutTab = "eaten";
+        if (state.screen !== "nutrition") state.screen = "nutrition";
+        haptic("light");
+        render();
+        return scrollToId("add-meal");
       case "day-prev":
         return openDay(shiftDate(viewDate(), -1));
       case "day-next":
@@ -5586,7 +6011,6 @@
       case "route-water":
         return openRouteWater();
       case "route-workout":
-        if (isRestToday() && !workoutLoggedToday()) return markRestDay();
         workoutPick = false;
         return go("workout");
       case "route-rest":
@@ -5709,6 +6133,10 @@
       if (path === "foodQuery" || path === "foodGrams") {
         var box = document.getElementById("foodList");
         if (box) box.innerHTML = foodListHtml();
+      }
+      if (path === "partAdd" || path === "partAddG") {
+        var hints = document.getElementById("partAddList");
+        if (hints) hints.innerHTML = partSuggestHtml();
       }
       if (path.indexOf("profile.") === 0) {
         var result = document.getElementById("result");
@@ -5979,7 +6407,7 @@
       state.busy = busyKind;
       state.notice = null;
       render();
-      KM_API.manual(meal)
+      KM_API.manual(meal, writeSlot())
         .then(function (data) {
           applyMealResult(data, "Записал: " + meal.name + ", " + meal.kcal + " ккал.");
         })
@@ -6009,7 +6437,7 @@
     state.repeatAsk = null;
     state.notice = null;
     render();
-    KM_API.repeat(names)
+    KM_API.repeat(names, writeSlot())
       .then(function (data) {
         var extra = data.copied && data.copied.length > 1 ? data.copied : null;
         var kcal = extra
@@ -6025,12 +6453,38 @@
       .catch(mealError);
   }
 
-  function addMealFood(name, grams) {
-    if (!name || !state.day) return;
+  function addMealBarcode(code, grams) {
+    var raw = String(code || "").replace(/\D/g, "");
+    if (!raw) {
+      state.notice = { kind: "err", text: "Набери цифры под полосками на упаковке." };
+      return render();
+    }
+    if (!state.day) {
+      state.notice = { kind: "err", text: "Дневник ещё грузится. Подожди секунду и нажми ещё раз." };
+      return render();
+    }
     state.busy = "food";
     state.notice = null;
     render();
-    KM_API.food(name, grams)
+    KM_API.barcode(raw, grams >= 1 ? grams : undefined, writeSlot())
+      .then(function (data) {
+        state.barcodeCode = "";
+        state.barcodeGrams = "";
+        applyMealResult(data, "Записал по штрихкоду: " + data.meal.name + ", " + data.meal.kcal + " ккал.");
+      })
+      .catch(mealError);
+  }
+
+  function addMealFood(name, grams) {
+    if (!name) return;
+    if (!state.day) {
+      state.notice = { kind: "err", text: "Дневник ещё грузится. Подожди секунду и нажми ещё раз." };
+      return render();
+    }
+    state.busy = "food";
+    state.notice = null;
+    render();
+    KM_API.food(name, grams, writeSlot())
       .then(function (data) {
         state.foodQuery = "";
         state.foodGrams = "";

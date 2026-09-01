@@ -799,6 +799,34 @@ export function getMealsForDays(userId: number, days = 7): MealEntry[] {
     .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
 }
 
+export type KnownFoodPart = NonNullable<MealEntry["parts"]>[number];
+
+/**
+ * Позиции, которые человек уже ел: справочник должен их отдавать по имени,
+ * даже если это не «основной» продукт и даже если цифры были с упаковки.
+ */
+export function knownFoodParts(userId: number, days = 60, limit = 40): KnownFoodPart[] {
+  const seen = new Set<string>();
+  const out: KnownFoodPart[] = [];
+  for (const m of getMealsForDays(userId, days)) {
+    for (const p of m.parts ?? []) {
+      const key = p.name.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+/** Последняя такая позиция в истории: чтобы вернуть то, что сняли крестиком. */
+export function findKnownFoodPart(userId: number, name: string): KnownFoodPart | null {
+  const q = name.trim().toLowerCase();
+  if (!q) return null;
+  return knownFoodParts(userId, 60, 200).find((p) => p.name.trim().toLowerCase() === q) ?? null;
+}
+
 /**
  * Серия: сколько дней подряд, считая назад от переданного дня, есть хотя бы одна
  * запись еды. Текущий день не обрывает серию, пока он не закончился: пустое утро

@@ -299,8 +299,10 @@ window.KM_API = (function () {
       return request("POST", "/api/meal/text", { text: text });
     },
     /* «Да, это оно»: наружу уходит токен, цифры сервер держит у себя. */
-    confirmMeal: function (token) {
-      return request("POST", "/api/meal/confirm", { token: token });
+    confirmMeal: function (token, slot) {
+      var body = { token: token };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/confirm", body);
     },
     rejectMeal: function (token) {
       return request("POST", "/api/meal/reject", { token: token });
@@ -318,21 +320,37 @@ window.KM_API = (function () {
     revise: function (name, items) {
       return request("POST", "/api/meal/revise", items && items.length ? { items: items } : { name: name });
     },
-    pick: function (units) {
-      return request("POST", "/api/meal/pick", { units: units });
+    pick: function (units, slot) {
+      var body = { units: units };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/pick", body);
     },
-    food: function (name, grams) {
-      return request("POST", "/api/meal/food", { name: name, grams: grams });
+    food: function (name, grams, slot) {
+      var body = { name: name, grams: grams };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/food", body);
     },
-    manual: function (meal) {
-      return request("POST", "/api/meal/manual", meal);
+    barcode: function (code, grams, slot) {
+      var body = { code: code };
+      if (grams >= 1) body.grams = grams;
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/barcode", body);
     },
-    repeat: function (name) {
+    manual: function (meal, slot) {
+      var body = meal || {};
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/manual", body);
+    },
+    repeat: function (name, slot) {
       var names = Array.isArray(name) ? name : [name];
-      return request("POST", "/api/meal/repeat", { names: names });
+      var body = { names: names };
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/repeat", body);
     },
-    usualShake: function () {
-      return request("POST", "/api/meal/usual-shake", {});
+    usualShake: function (slot) {
+      var body = {};
+      if (slot) body.slot = slot;
+      return request("POST", "/api/meal/usual-shake", body);
     },
     scaleMeal: function (id, factor) {
       return request("PATCH", "/api/meal", { id: id, factor: factor });
