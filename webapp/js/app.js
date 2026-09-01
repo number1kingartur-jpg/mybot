@@ -3070,11 +3070,16 @@
     }
 
     var recent = knownFoodItems().slice(0, 8);
-    var recentHtml = recent.length
+    var recentOpen = state.foodMore && state.foodMore.recent;
+    var recentHtml = !recent.length
+      ? ""
+      : recentOpen
       ? '<p class="pick__label">Недавно</p><ul class="foods">' +
         recent.map(foodRow).join("") +
         "</ul>"
-      : "";
+      : '<button type="button" class="sets__add" data-action="food-more" data-group="recent">Недавно (' +
+        recent.length +
+        ")</button>";
 
     var groups = [
       { id: "protein", title: "Белок" },
