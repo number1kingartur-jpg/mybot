@@ -83,6 +83,47 @@ function webAppSecret(botToken: string): Buffer {
   return crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
 }
 
+/**
+ * Сессионный токен для PWA (открыто с домашнего экрана, не из Telegram).
+ * Вне Telegram нет initData, чем подтвердить пользователя — нечем совсем.
+ * Токен выдаётся ОДИН РАЗ по настоящей initData (см. /api/session/mint)
+ * и дальше живёт сам, дольше суток обычной сессии — иначе PWA-вход
+ * пришлось бы повторять каждый день.
+ */
+const SESSION_TOKEN_TTL_SEC = 90 * 24 * 60 * 60;
+
+export function signSessionToken(user: WebAppUser, botToken: string): string {
+  const expiry = Math.floor(Date.now() / 1000) + SESSION_TOKEN_TTL_SEC;
+  const payload = { id: user.id, firstName: user.firstName, username: user.username, exp: expiry };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", webAppSecret(botToken)).update(payloadB64).digest("hex");
+  return `${payloadB64}.${sig}`;
+}
+
+/** null — токен неверный, битый или просроченный. */
+export function verifySessionToken(token: string, botToken: string): WebAppUser | null {
+  if (!token || !botToken || token.length > 2048) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payloadB64, sig] = parts;
+  if (!/^[0-9a-f]{64}$/i.test(sig)) return null;
+
+  const expected = crypto.createHmac("sha256", webAppSecret(botToken)).update(payloadB64).digest("hex");
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(sig, "hex");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+
+  let payload: { id?: number; firstName?: string; username?: string; exp?: number };
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(payload.exp) || Math.floor(Date.now() / 1000) > payload.exp!) return null;
+  if (!Number.isFinite(payload.id) || payload.id! <= 0) return null;
+  return { id: payload.id!, firstName: payload.firstName ?? "", username: payload.username };
+}
+
 export function signProgressPhotoToken(id: string, userId: number, botToken: string): string {
   const expiry = Math.floor(Date.now() / 1000) + PHOTO_TOKEN_TTL_SEC;
   const sig = crypto

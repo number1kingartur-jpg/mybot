@@ -75,6 +75,49 @@ window.KM_API = (function () {
     return cached;
   }
 
+  // PWA с домашнего экрана: initData у Telegram нет физически (открыто не из
+  // Telegram), вход держится на токене, один раз выданном сервером, пока
+  // приложение ещё открывалось из Telegram. Без него PWA-режим не пускал бы
+  // никого, и весь смысл своей иконки на экране пропадал.
+  var SESSION_KEY = "km_session_token";
+
+  function readSessionToken() {
+    try {
+      return localStorage.getItem(SESSION_KEY) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function storeSessionToken(token) {
+    try {
+      localStorage.setItem(SESSION_KEY, token);
+    } catch (e) {
+      /* приватный режим браузера — токен просто не переживёт закрытие вкладки */
+    }
+  }
+
+  /** Вызывается один раз при запуске внутри Telegram: меняет initData на
+      долгоживущий токен про запас, для следующего открытия уже с домашнего
+      экрана, без Telegram вокруг. Тихо ничего не делает при неудаче —
+      обычный вход по initData как работал, так и работает. */
+  function mintSessionIfNeeded() {
+    if (!readInitData()) return;
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", base + "/api/session/mint", true);
+    xhr.setRequestHeader("X-Telegram-Init-Data", readInitData());
+    xhr.onload = function () {
+      if (xhr.status !== 200) return;
+      try {
+        var data = JSON.parse(xhr.responseText || "{}");
+        if (data.token) storeSessionToken(data.token);
+      } catch (e) {
+        /* не удалось — не критично, при следующем визите из Telegram попробуем снова */
+      }
+    };
+    xhr.send();
+  }
+
   // Приложение раздаётся самим ботом, поэтому база — свой же origin.
   // Если статика лежит отдельно (например, на GitHub Pages), адрес API можно
   // передать в ссылке: ?api=https://бот.up.railway.app
@@ -86,9 +129,10 @@ window.KM_API = (function () {
     /* старый браузер — работаем с тем же origin */
   }
 
-  /** Есть ли смысл дёргать сервер: подпись Telegram обязательна. */
+  /** Есть ли смысл дёргать сервер: нужна подпись Telegram либо, в PWA-режиме
+      с домашнего экрана, уже выданный ранее сессионный токен. */
   function available() {
-    return Boolean(readInitData());
+    return Boolean(readInitData() || readSessionToken());
   }
 
   /** Версия открытого кода: сервер подставляет её в адрес файла (?v=…). */
@@ -152,7 +196,13 @@ window.KM_API = (function () {
     return new Promise(function (resolve, reject) {
       var xhr = new XMLHttpRequest();
       xhr.open(method, base + path, true);
-      xhr.setRequestHeader("X-Telegram-Init-Data", readInitData());
+      var initData = readInitData();
+      if (initData) {
+        xhr.setRequestHeader("X-Telegram-Init-Data", initData);
+      } else {
+        var token = readSessionToken();
+        if (token) xhr.setRequestHeader("X-Session-Token", token);
+      }
       if (body) xhr.setRequestHeader("Content-Type", "application/json");
       xhr.timeout = 60000; // распознавание фото занимает секунды, иногда десятки
       xhr.onload = function () {
@@ -271,6 +321,7 @@ window.KM_API = (function () {
     checkFresh: checkFresh,
     diag: diag,
     build: build,
+    mintSession: mintSessionIfNeeded,
     state: function (date, refresh) {
       var q = [];
       if (date) q.push("date=" + encodeURIComponent(date));

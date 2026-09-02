@@ -2,7 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import http from "http";
 import path from "path";
-import { verifyInitData, signProgressPhotoToken, verifyProgressPhotoToken, type WebAppUser } from "./webapp-auth";
+import { verifyInitData, signProgressPhotoToken, verifyProgressPhotoToken, signSessionToken, verifySessionToken, type WebAppUser } from "./webapp-auth";
 import { accessEnabled, accessChatId, checkAccess } from "./access";
 import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_PHOTO_MAX_COUNT, PROGRESS_PHOTO_MAX_BYTES, beginProgressPhotoUpload, endProgressPhotoUpload } from "./guard";
 import {
@@ -210,7 +210,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 function cors(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Session-Token");
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
@@ -220,6 +220,16 @@ function auth(req: http.IncomingMessage, botToken: string): WebAppUser | null {
   // Отказ авторизации логируем без самой подписи: иначе по молчащему приложению
   // невозможно понять, дошёл ли запрос и почему не был принят
   if (!initData) {
+    // PWA с домашнего экрана: initData у Telegram нет физически, вход по
+    // сессионному токену, выданному один раз через /api/session/mint,
+    // пока была настоящая initData.
+    const rawToken = req.headers["x-session-token"];
+    const sessionToken = Array.isArray(rawToken) ? rawToken[0] : rawToken;
+    if (sessionToken) {
+      const user = verifySessionToken(sessionToken, botToken);
+      if (!user) console.warn(`api auth: сессионный токен не принят, ${req.method} ${req.url}`);
+      return user;
+    }
     console.warn(`api auth: нет подписи, ${req.method} ${req.url}`);
     return null;
   }
@@ -656,6 +666,21 @@ async function handleApi(
   // от «приложение работает»: жалобу нечем было проверить.
   console.log(`api ${req.method} ${urlPath} user=${user.id}`);
   const date = today();
+
+  if (req.method === "POST" && urlPath === "/api/session/mint") {
+    // Только по настоящей initData, не по уже выданному токену — иначе
+    // токен продлевал бы сам себя вечно, а 90 дней перестали бы что-то значить.
+    const raw = req.headers["x-telegram-init-data"];
+    const initData = Array.isArray(raw) ? raw[0] : raw;
+    if (!initData || !verifyInitData(initData, botToken)) {
+      drain(req);
+      json(res, 401, { error: "unauthorized", message: "Нужна настоящая подпись Telegram, не токен." });
+      return;
+    }
+    drain(req);
+    json(res, 200, { token: signSessionToken(user, botToken) });
+    return;
+  }
 
   if (req.method === "GET" && urlPath === "/api/state") {
     json(res, 200, dayState(user.id, safeDate(query.get("date")) ?? date));

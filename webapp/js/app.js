@@ -6731,4 +6731,9 @@
 
   render();
   loadDay(true);
+  try {
+    if (KM_API.mintSession) KM_API.mintSession();
+  } catch (e) {
+    /* не критично: обычный вход через Telegram работает и без этого */
+  }
 })();
