@@ -123,6 +123,12 @@ async function telegramMember(chatId: string, userId: number, botToken: string):
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     const api = (await res.json()) as { ok?: boolean; result?: { status?: string } };
+    // Telegram отвечает валидным JSON с ok:false на 429 (лимит скорости —
+    // как раз наплыв людей сразу после поста в канале), протухший токен,
+    // битый chat_id. Это тоже «не удалось проверить», а не «точно не
+    // подписан» — иначе именно самый вероятный сбой в проде остаётся
+    // непойманным и снова кэшируется как отказ на 30 секунд.
+    if (api?.ok !== true) return undefined;
     return parseMemberApi(api);
   } catch {
     return undefined;
