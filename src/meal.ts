@@ -892,7 +892,6 @@ export async function analyzeMealPhoto(imageBuffer: Buffer, mime = "image/jpeg")
   } catch (e) {
     if (e instanceof MealPhotoUnreadableError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
-    if (isQuotaError(msg)) throw new Error(`service_unavailable: ${msg}`);
     throw new Error(`service_unavailable: ${msg}`);
   }
 }
