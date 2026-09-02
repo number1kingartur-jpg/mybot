@@ -108,7 +108,13 @@ export function parseMemberApi(api: {
   return isMemberStatus(api.result?.status);
 }
 
-async function telegramMember(chatId: string, userId: number, botToken: string): Promise<boolean> {
+/**
+ * `undefined` значит «не удалось проверить» (сеть, таймаут, битый ответ) —
+ * это не то же самое, что «точно не подписан». Раньше сбой сети тоже давал
+ * false и реального подписчика выгоняло на экран «вступи в канал» из-за
+ * временной проблемы связи, а не из-за отсутствия подписки.
+ */
+async function telegramMember(chatId: string, userId: number, botToken: string): Promise<boolean | undefined> {
   const url = new URL(`https://api.telegram.org/bot${botToken}/getChatMember`);
   url.searchParams.set("chat_id", chatId);
   url.searchParams.set("user_id", String(userId));
@@ -119,7 +125,7 @@ async function telegramMember(chatId: string, userId: number, botToken: string):
     const api = (await res.json()) as { ok?: boolean; result?: { status?: string } };
     return parseMemberApi(api);
   } catch {
-    return false;
+    return undefined;
   } finally {
     clearTimeout(timer);
   }
@@ -166,6 +172,11 @@ export async function checkAccess(opts: {
   if (hit === false) return { ok: false, body: joinBody(chatId) };
 
   const allowed = await telegramMember(chatId, opts.userId, opts.botToken);
+  if (allowed === undefined) {
+    // Проверка не удалась технически: не кэшируем и не блокируем — иначе
+    // сетевой сбой у Telegram выглядит для человека как «меня не пускают».
+    return { ok: true };
+  }
   remember(opts.userId, allowed);
   if (allowed) return { ok: true };
   return { ok: false, body: joinBody(chatId) };
