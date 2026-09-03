@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import http from "http";
 import path from "path";
+import zlib from "zlib";
 import { verifyInitData, signProgressPhotoToken, verifyProgressPhotoToken, signSessionToken, verifySessionToken, type WebAppUser } from "./webapp-auth";
 import { accessEnabled, accessChatId, checkAccess } from "./access";
 import { beginPhoto, clientIp, endPhoto, resolveUnder, safeJson, take, PROGRESS_PHOTO_MAX_COUNT, PROGRESS_PHOTO_MAX_BYTES, beginProgressPhotoUpload, endProgressPhotoUpload } from "./guard";
@@ -500,6 +501,29 @@ function validProfile(x: unknown): NutritionProfile | null {
   return { sex, goal, activity, age, heightCm, weightKg: Math.round(weightKg * 10) / 10 };
 }
 
+/** Кэш сжатых версий по полному пути файла — js/css/html не меняются, пока не
+ *  сменится BUILD_ID (для js/css — новый адрес; для html — новый процесс), так
+ *  что жать один и тот же байт-в-байт файл на каждый запрос незачем. */
+const compressedCache = new Map<string, { gzip: Buffer; br: Buffer }>();
+
+function getCompressed(key: string, raw: Buffer): { gzip: Buffer; br: Buffer } {
+  const hit = compressedCache.get(key);
+  if (hit) return hit;
+  const out = {
+    gzip: zlib.gzipSync(raw, { level: 6 }),
+    br: zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6 } }),
+  };
+  compressedCache.set(key, out);
+  return out;
+}
+
+function pickEncoding(req: http.IncomingMessage): "br" | "gzip" | null {
+  const ae = String(req.headers["accept-encoding"] || "");
+  if (/\bbr\b/.test(ae)) return "br";
+  if (/\bgzip\b/.test(ae)) return "gzip";
+  return null;
+}
+
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPath: string): void {
   if (urlPath.startsWith("/img/meal/")) {
     const shot = readMealThumb(urlPath);
@@ -551,6 +575,20 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
     let html = fs.readFileSync(full, "utf-8");
     html = html.replace(/(src|href)="((?:js|css)\/[^"?]+)"/g, `$1="$2?v=${BUILD_ID}"`);
     const body = Buffer.from(html, "utf-8");
+    const htmlEnc = pickEncoding(req);
+    if (htmlEnc) {
+      const { gzip, br } = getCompressed(full + "#" + BUILD_ID, body);
+      const out = htmlEnc === "br" ? br : gzip;
+      res.writeHead(200, {
+        "Content-Type": MIME[ext],
+        "Content-Encoding": htmlEnc,
+        "Vary": "Accept-Encoding",
+        "Content-Length": out.length,
+        "Cache-Control": "no-store",
+      });
+      res.end(out);
+      return;
+    }
     res.writeHead(200, {
       "Content-Type": MIME[ext],
       "Content-Length": body.length,
@@ -590,6 +628,20 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
     }
     headers["Content-Length"] = stat.size;
     headers["Accept-Ranges"] = "bytes";
+  }
+  if (isVersionedAsset) {
+    const raw = fs.readFileSync(full);
+    const enc = pickEncoding(req);
+    if (enc) {
+      const { gzip, br } = getCompressed(full, raw);
+      const out = enc === "br" ? br : gzip;
+      res.writeHead(200, { ...headers, "Content-Encoding": enc, "Vary": "Accept-Encoding", "Content-Length": out.length });
+      res.end(out);
+      return;
+    }
+    res.writeHead(200, { ...headers, "Content-Length": raw.length });
+    res.end(raw);
+    return;
   }
   res.writeHead(200, headers);
   fs.createReadStream(full).pipe(res);
