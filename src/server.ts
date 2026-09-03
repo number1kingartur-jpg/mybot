@@ -1604,6 +1604,15 @@ export function startWebappServer(botToken: string): http.Server | null {
   const port = Number(process.env.PORT ?? 8080);
 
   const server = http.createServer((req, res) => {
+    // Базовые security-заголовки (security-baseline skill) — только те, что не
+    // рискуют сломать встраивание в Telegram. X-Frame-Options/frame-ancestors
+    // сознательно НЕ ставим: Mini App открывается внутри Telegram (веб/десктоп/
+    // мобильные клиенты), и заблокировать чужой фрейм здесь значит заблокировать
+    // сам Telegram — проверить на всех клиентах отсюда невозможно, поэтому не
+    // рискуем тем, что уже работает для живых пользователей.
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+
     const url = new URL(req.url ?? "/", "http://localhost");
     const urlPath = url.pathname;
 
