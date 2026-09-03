@@ -531,6 +531,13 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
     return;
   }
   const isAsset = ext === ".png" || ext === ".jpg" || ext === ".webp" || ext === ".svg" || ext === ".ico";
+  // js/css отдельно: они уже приходят с ?v=BUILD_ID в адресе (см. подстановку
+  // ниже, в ветке .html) — тот самый способ, которым обошли iOS-баг с залипанием
+  // старого JS в кэше Telegram WebView (см. следующий комментарий). Раз адрес
+  // меняется на каждом деплое, старая версия по старому адресу безвредна —
+  // её можно кэшировать надолго и immutable, а не тянуть 257 КБ заново на
+  // каждое открытие приложения.
+  const isVersionedAsset = ext === ".js" || ext === ".css";
   // Картинки блюд не меняются: имя файла считается из названия продукта. Неделя
   // кэша важнее суток — в справочнике их сотня, и на мобильной сети каждый
   // повторный заход иначе тянет их заново.
@@ -555,7 +562,11 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, urlPat
 
   const headers: http.OutgoingHttpHeaders = {
     "Content-Type": MIME[ext] ?? "application/octet-stream",
-    "Cache-Control": isAsset || ext === ".mp4" ? `public, max-age=${maxAge}` : "no-cache",
+    "Cache-Control": isVersionedAsset
+      ? "public, max-age=31536000, immutable"
+      : isAsset || ext === ".mp4"
+        ? `public, max-age=${maxAge}`
+        : "no-cache",
   };
   if (ext === ".mp4") {
     const stat = fs.statSync(full);
