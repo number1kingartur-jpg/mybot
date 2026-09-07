@@ -6,6 +6,7 @@ import { CHANNEL_POSTS_WAVE5 } from "./posts-wave5";
 import { CHANNEL_POSTS_WAVE6 } from "./posts-wave6";
 import { CHANNEL_POSTS_WAVE7 } from "./posts-wave7";
 import { CHANNEL_POSTS_WAVE8 } from "./posts-wave8";
+import { CHANNEL_POSTS_WAVE9 } from "./posts-wave9";
 
 export interface ChannelPost {
   id: string;
@@ -71,7 +72,8 @@ const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(
   CHANNEL_POSTS_WAVE5,
   CHANNEL_POSTS_WAVE6,
   CHANNEL_POSTS_WAVE7,
-  CHANNEL_POSTS_WAVE8
+  CHANNEL_POSTS_WAVE8,
+  CHANNEL_POSTS_WAVE9
 ).filter((p) => !PHOTO_MISMATCH_HOLD.has(p.id));
 
 /** Уникальная концовка по id, а не общий шаблон на все посты. */
