@@ -68,6 +68,18 @@ const PHOTO_MISMATCH_HOLD = new Set([
   "w8_market_morning",
 ]);
 
+/**
+ * Волна 9 (07.09.2026): решено публиковать без фото, а не подбирать случайное
+ * архивное фото под абстрактную психологическую тему. Подобранное "лишь бы было"
+ * фото несет тот же риск несоответствия, что и PHOTO_MISMATCH_HOLD выше, только
+ * на входе, а не после ручной проверки. check-channel-posts.mjs пропускает для
+ * этих id требование archiveImage/photo-map. Если найдутся подходящие настоящие
+ * кадры, нужно добавить archiveImage и убрать id отсюда.
+ */
+export const TEXT_ONLY_POSTS = new Set(
+  CHANNEL_POSTS_WAVE9.map((p) => p.id)
+);
+
 const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(
   CHANNEL_POSTS_WAVE5,
   CHANNEL_POSTS_WAVE6,

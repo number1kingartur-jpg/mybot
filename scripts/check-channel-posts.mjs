@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "fs";
 import { extname, join } from "path";
 import { createHash } from "crypto";
-import { CHANNEL_POSTS } from "../dist/channel/posts.js";
+import { CHANNEL_POSTS, TEXT_ONLY_POSTS } from "../dist/channel/posts.js";
 
 const footer = "Что сделать на этой неделе";
 const dupEnds = new Map();
@@ -18,7 +18,7 @@ for (const p of CHANNEL_POSTS) {
     console.error(`FAIL: post ${p.id} has old generic footer`);
     process.exit(1);
   }
-  if (!p.archiveImage) {
+  if (!p.archiveImage && !TEXT_ONLY_POSTS.has(p.id)) {
     console.error(`FAIL: post ${p.id} has no archiveImage`);
     process.exit(1);
   }
@@ -36,6 +36,7 @@ if (dup.length) {
 
 const hashes = new Map();
 for (const p of CHANNEL_POSTS) {
+  if (TEXT_ONLY_POSTS.has(p.id)) continue;
   const rel = map[p.id];
   if (!rel) {
     console.error(`FAIL: no photo-map entry for ${p.id}`);
