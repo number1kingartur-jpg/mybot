@@ -7,6 +7,7 @@ import { CHANNEL_POSTS_WAVE6 } from "./posts-wave6";
 import { CHANNEL_POSTS_WAVE7 } from "./posts-wave7";
 import { CHANNEL_POSTS_WAVE8 } from "./posts-wave8";
 import { CHANNEL_POSTS_WAVE9 } from "./posts-wave9";
+import { CHANNEL_POSTS_WAVE10 } from "./posts-wave10";
 
 export interface ChannelPost {
   id: string;
@@ -77,7 +78,7 @@ const PHOTO_MISMATCH_HOLD = new Set([
  * кадры, нужно добавить archiveImage и убрать id отсюда.
  */
 export const TEXT_ONLY_POSTS = new Set(
-  CHANNEL_POSTS_WAVE9.map((p) => p.id)
+  [...CHANNEL_POSTS_WAVE9, ...CHANNEL_POSTS_WAVE10].map((p) => p.id)
 );
 
 const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(
@@ -85,7 +86,8 @@ const CHANNEL_POSTS_RAW: ChannelPost[] = interleave(
   CHANNEL_POSTS_WAVE6,
   CHANNEL_POSTS_WAVE7,
   CHANNEL_POSTS_WAVE8,
-  CHANNEL_POSTS_WAVE9
+  CHANNEL_POSTS_WAVE9,
+  CHANNEL_POSTS_WAVE10
 ).filter((p) => !PHOTO_MISMATCH_HOLD.has(p.id));
 
 /** Уникальная концовка по id, а не общий шаблон на все посты. */

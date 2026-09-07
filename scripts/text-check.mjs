@@ -19,6 +19,7 @@ const FILES = [
   "src/channel/posts-wave5.ts",
   "src/channel/posts-wave6.ts",
   "src/channel/posts-wave9.ts",
+  "src/channel/posts-wave10.ts",
 ];
 
 const DASH = /[\u2013\u2014]/;
