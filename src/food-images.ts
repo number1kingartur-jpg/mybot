@@ -80,4 +80,8 @@ export const IMAGE_FALLBACK: Record<string, string> = {
   "Семена чиа": "orehi",
   "Льняное семя": "orehi",
   "Отруби": "ovsyanka-na-moloke",
+  "Молоко миндальное": "moloko-rossiyskoe",
+  "Молоко овсяное": "moloko-rossiyskoe",
+  "Сливки": "moloko-rossiyskoe",
+  "Йогурт питьевой": "kefir",
 };
