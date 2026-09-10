@@ -627,9 +627,20 @@ export function isShakePowder(name: string): boolean {
   return !!food && SHAKE_POWDER.has(food.name);
 }
 
-/** Старые записи коктейля хранят слаг овсянки или банана. По имени чиним. */
+/**
+ * Старые записи коктейля хранят слаг овсянки или банана. По имени чиним.
+ *
+ * Составное имя типа «Протеин, банан, овсянка и ещё 3» ловится регуляркой
+ * ниже. Но isShakeMeal() в parts.ts схлопывает такое имя в короткое
+ * «Коктейль» (см. meal.ts, meal-shake.ts) ещё до того, как оно долетает
+ * сюда — тогда в тексте уже нет слова «протеин», регулярка мимо, и наружу
+ * уходит старый слаг (та самая крупа вместо коктейля). Точное имя
+ * «Коктейль» само по себе уже доказательство: его выставляет только
+ * проверенный isShakeMeal()/isCompleteShake(), больше никто.
+ */
 export function mealImageSlug(name: string, slug?: string): string | undefined {
   const n = name.toLowerCase();
+  if (n === "коктейль") return SHAKE_SLUG;
   const powder = /протеин|гейнер|белок яичн|жидк\w* белка|жидк\w* белок/.test(n);
   if (powder && /банан|овсян|арахис|молок|креатин|и ещё/.test(n)) return SHAKE_SLUG;
   return slug;

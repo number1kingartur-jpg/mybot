@@ -64,6 +64,14 @@ check(
   mealImageSlug("Белок яичный жидкий ~200 г, Молоко ~100 г и ещё 4", "ovsyanye-hlopya-suhie") === SHAKE_SLUG
 );
 check(
+  "коктейль, схлопнутый в короткое имя, не берёт старую крупу",
+  mealImageSlug("Коктейль", "ovsyanye-hlopya-suhie") === SHAKE_SLUG
+);
+check(
+  "молочный коктейль (отдельный продукт) не путается с шейкером Артура",
+  mealImageSlug("Молочный коктейль", "molochnyy-koktely") !== SHAKE_SLUG
+);
+check(
   "файл картинки коктейля на месте",
   fs.existsSync(path.join("webapp", "img", "food", `${SHAKE_SLUG}.webp`))
 );
